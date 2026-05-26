@@ -18,7 +18,7 @@
 import { type ExtensionAPI, type ExtensionContext, type ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
-import { StateManager } from "./state.js";
+import { createStateManager, nextPhase as stateNextPhase, type StateManagerAPI } from "./state.js";
 import { takeCapabilitySnapshot, detectSubagentBackend } from "./capabilities.js";
 import { classifyError, createErrorRecord, getRecoveryAction } from "./errors.js";
 import { registerGoalShellTool } from "./shell.js";
@@ -46,7 +46,7 @@ function log(msg: string) {
 
 export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   log("=== Extension initializing ===");
-  const stateManager = new StateManager(pi);
+  const stateManager = createStateManager(pi);
 
   // ── Register tools ───────────────────────────────────────────────
 
@@ -287,7 +287,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     }
 
     // Not validate → advance to next phase in order
-    const nextPhase = StateManager.nextPhase(state.phase);
+    const nextPhase = stateNextPhase(state.phase);
     stateManager.setPhase(nextPhase);
     stateManager.persistAll();
 
@@ -593,7 +593,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
 // ── Helpers ────────────────────────────────────────────────────────
 
 function getLastArtifactForPhase(
-  state: ReturnType<StateManager["getState"]>,
+  state: ReturnType<StateManagerAPI["getState"]>,
   phase: Phase,
 ): PhaseArtifact | null {
   if (!state) return null;
