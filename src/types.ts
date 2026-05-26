@@ -117,7 +117,7 @@ export interface EvaluatorVerdict {
     description: string;
   }>;
   next_cycle_directive: {
-    focus: Phase | "capability_repair";
+    focus: Phase | "capability_repair" | "external_blocked_complete";
     reason: string;
   };
   safety_notes: string[];
@@ -136,7 +136,7 @@ export const EvaluatorVerdictSchema = Type.Object({
     }),
   ),
   next_cycle_directive: Type.Object({
-    focus: StringEnum([...PHASE_ORDER, "capability_repair"] as const),
+    focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete"] as const),
     reason: Type.String(),
   }),
   safety_notes: Type.Array(Type.String()),
@@ -164,7 +164,8 @@ export type RunStatus =
   | "running"
   | "paused_by_user"
   | "recovering"
-  | "succeeded";
+  | "succeeded"
+  | "completed_external_blockers";
 
 export interface EvaluatorConfig {
   model: string;
@@ -177,7 +178,9 @@ export interface GoalConstraints {
   neverStopUntilEvaluatorGoalMet: true;
   requireAllFourPhasesEachCycle: true;
   allowDestructiveOps: boolean;
+  allowGitFinalization: boolean;
   requireOperatorApprovalForDangerousOps: true;
+  subagentTimeoutMs: number;
 }
 
 export interface RunConfig {
@@ -249,7 +252,7 @@ export const EvaluatorPromptSchema = Type.Object({
       description: Type.String(),
     }),
   ),
-  next_focus: StringEnum([...PHASE_ORDER, "capability_repair"] as const),
+  next_focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete"] as const),
   next_focus_reason: Type.String(),
   safety_notes: Type.Array(Type.String()),
 });

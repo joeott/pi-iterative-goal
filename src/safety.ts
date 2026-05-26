@@ -37,7 +37,9 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bcp\b(?!.*--dry-run)/,
   /\bmkdir\b/,
   /\btouch\b/,
-  /\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|branch\s+-[dD]|stash|cherry-pick|revert|tag|init)/i,
+  /\bgit\s+(push|pull|merge|rebase|reset|stash|cherry-pick|revert|tag|init)/i,
+  /\bgit\s+branch\s+-[dD]/i,
+  /\bgit\s+checkout\s+(?!-b)/i,
   /\bnpm\s+(install|uninstall|update|ci|link|publish)/i,
   /\byarn\s+(add|remove|install|publish)/i,
   /\bpnpm\s+(add|remove|install|publish)/i,
@@ -103,6 +105,14 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*make\s+(-n|--dry-run)/i,
 ];
 
+// ── Git finalization (allowed when allowGitFinalization=true) ────────
+
+const GIT_FINALIZATION_PATTERNS: RegExp[] = [
+  /\bgit\s+add\b(?!\s+-A)/i,
+  /\bgit\s+commit\b/i,
+  /\bgit\s+checkout\s+-b\b/i,
+];
+
 // ── Command classification ──────────────────────────────────────────
 
 export function isAlwaysBlocked(command: string): SafetyCheckResult {
@@ -125,12 +135,27 @@ export function isSafeReadOnly(command: string): boolean {
   return SAFE_PATTERNS.some((p) => p.test(command));
 }
 
+export function isGitFinalization(command: string): boolean {
+  return GIT_FINALIZATION_PATTERNS.some((p) => p.test(command));
+}
+
 export function checkCommand(
   command: string,
   allowDestructive: boolean,
+  allowGitFinalization: boolean = false,
 ): SafetyCheckResult {
   const blocked = isAlwaysBlocked(command);
   if (!blocked.allowed) return blocked;
+
+  if (!allowDestructive && isGitFinalization(command)) {
+    if (allowGitFinalization) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: `Git finalization blocked. Enable allowGitFinalization or produce a patch file instead (git diff > .pi/iterative-goal/final.patch). Command: ${command.slice(0, 100)}`,
+    };
+  }
 
   if (!allowDestructive && isDestructive(command)) {
     return {

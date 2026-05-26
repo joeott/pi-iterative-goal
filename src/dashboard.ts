@@ -31,6 +31,7 @@ function statusIcon(status: string): string {
     case "paused_by_user": return "⏸";
     case "recovering": return "🔄";
     case "succeeded": return "✓";
+    case "completed_external_blockers": return "⊘";
     default: return "•";
   }
 }

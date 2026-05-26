@@ -44,6 +44,7 @@ export interface StateManagerAPI {
   setPhase(phase: Phase): void;
   incrementCycle(): void;
   markSucceeded(): void;
+  markCompletedBlocked(): void;
   clear(): void;
   persistAll(): void;
   restore(ctx: ExtensionContext): IterativeGoalState | null;
@@ -221,7 +222,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           neverStopUntilEvaluatorGoalMet: true,
           requireAllFourPhasesEachCycle: true,
           allowDestructiveOps: false,
+          allowGitFinalization: false,
           requireOperatorApprovalForDangerousOps: true,
+          subagentTimeoutMs: 300_000,
         },
       };
 
@@ -292,6 +295,18 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       persistAll();
       appendEvent({
         type: "goal_met",
+        runId: state.runId,
+        cycles: state.cycle,
+        timestamp: new Date().toISOString(),
+      });
+    },
+
+    markCompletedBlocked(): void {
+      if (!state) return;
+      state.status = "completed_external_blockers";
+      persistAll();
+      appendEvent({
+        type: "completed_external_blockers",
         runId: state.runId,
         cycles: state.cycle,
         timestamp: new Date().toISOString(),

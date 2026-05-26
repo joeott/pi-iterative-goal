@@ -40,10 +40,25 @@ You MUST return valid JSON matching this schema:
   "accepted_evidence": string[],
   "rejected_evidence": string[],
   "remaining_work": [{ "priority": "critical"|"high"|"medium"|"low", "description": string }],
-  "next_focus": "research"|"plan"|"implement"|"validate"|"capability_repair",
+  "next_focus": "research"|"plan"|"implement"|"validate"|"capability_repair"|"external_blocked_complete",
   "next_focus_reason": string,
   "safety_notes": string[]
 }
+
+EXTERNAL BLOCKED COMPLETION:
+If ALL in-harness criteria are satisfied (tests pass, gates pass, implementation matches plan,
+safety preserved) BUT external blockers remain that the harness cannot resolve (e.g., git push
+permissions, CI/CD pipeline access, operator approval needed, missing credentials), set:
+  "goal_met": false,
+  "next_focus": "external_blocked_complete",
+  "next_focus_reason": "All harness work complete. External blockers: [list them]"
+The harness will terminate gracefully and report to the operator.
+Do NOT keep requesting implementation cycles when no in-harness work remains.
+
+VOCABULARY:
+Use "PASS"/"FAIL" for gates/tests, "BLOCKED_EXTERNAL" for external blockers,
+"BLOCKED_HARNESS" for harness policy blocks. Do NOT use "Final" or "complete"
+for in-progress states.
 
 No preamble. No markdown. JSON only.`;
 
@@ -155,6 +170,7 @@ export async function runExternalEvaluator(
 
   // Build evaluation prompt
   const evidence = buildEvidenceSummary(state);
+  const manifest = buildValidationManifest(state);
   const prompt = [
     EVALUATOR_SYSTEM_PROMPT,
     "",
@@ -185,6 +201,9 @@ export async function runExternalEvaluator(
           ),
         ].join("\n")
       : "No prior verdict.",
+    "",
+    "--- VALIDATION MANIFEST ---",
+    manifest,
     "",
     "--- ERRORS THIS CYCLE ---",
     state.errors
@@ -311,10 +330,44 @@ function buildEvidenceSummary(state: IterativeGoalState): string {
     parts.push(
       `## Validation (cycle ${lastValidation.cycle})`,
       `Status: ${lastValidation.status}`,
-      lastValidation.content.slice(0, 2000),
+      lastValidation.content.slice(0, 4000),
       "",
     );
   }
 
   return parts.join("\n") || "No evidence collected yet.";
+}
+
+function buildValidationManifest(state: IterativeGoalState): string {
+  const manifest: Record<string, unknown> = {
+    cycle: state.cycle,
+    status: state.status,
+    artifacts: {
+      research: state.artifacts.research.length,
+      plans: state.artifacts.plans.length,
+      implementations: state.artifacts.implementations.length,
+      validations: state.artifacts.validations.length,
+      evaluatorReports: state.artifacts.evaluatorReports.length,
+    },
+    currentCycleArtifacts: Object.fromEntries(
+      (["research", "plans", "implementations", "validations"] as const).map(key => [
+        key,
+        (state.artifacts[key] as Array<{ cycle: number; status: string }>)
+          .filter(a => a.cycle === state.cycle)
+          .map(a => ({ cycle: a.cycle, status: a.status })),
+      ]),
+    ),
+    unresolvedErrors: state.errors
+      .filter(e => !e.resolved)
+      .map(e => ({ phase: e.phase, kind: e.kind, cycle: e.cycle })),
+    evaluatorHistory: state.artifacts.evaluatorReports.map((v, i) => ({
+      report: i + 1,
+      goal_met: v.goal_met,
+      confidence: v.confidence,
+      blockers: v.completion_blockers.length,
+      focus: v.next_cycle_directive.focus,
+    })),
+    externalBlockers: state.evaluator.lastVerdict?.completion_blockers ?? [],
+  };
+  return JSON.stringify(manifest, null, 2);
 }
