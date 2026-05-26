@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@m
 import { Container, Text, Box, Spacer } from "@mariozechner/pi-tui";
 import type { IterativeGoalState, PhaseArtifact } from "./types.js";
 import { PHASE_ORDER } from "./types.js";
-import { type StateManager } from "./state.js";
+import { type StateManagerAPI } from "./state.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -39,12 +39,12 @@ function statusIcon(status: string): string {
 
 class DashboardComponent {
   private state: IterativeGoalState | null;
-  private stateManager: StateManager;
+  private stateManager: StateManagerAPI;
   private onClose: () => void;
   private cachedWidth?: number;
   private cachedLines?: string[];
 
-  constructor(state: IterativeGoalState | null, stateManager: StateManager, onClose: () => void) {
+  constructor(state: IterativeGoalState | null, stateManager: StateManagerAPI, onClose: () => void) {
     this.state = state;
     this.stateManager = stateManager;
     this.onClose = onClose;
@@ -236,7 +236,7 @@ function padRight(text: string, width: number): string {
 
 export function registerDashboardCommands(
   pi: ExtensionAPI,
-  stateManager: StateManager,
+  stateManager: StateManagerAPI,
 ): void {
   pi.registerCommand("goal-dashboard", {
     description: "Show iterative-goal dashboard",
