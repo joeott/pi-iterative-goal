@@ -65,6 +65,7 @@ export function renderResearchPrompt(
     `- Do NOT stop or declare completion. Completion is evaluator-only.`,
     ``,
     `When finished, call goal_report_phase_result with phase="research" and your findings.`,
+    `If goal_report_phase_result is not in your available tool list, write your findings as the final assistant message. The harness will synthesize it automatically.`,
   ].join("\n");
 }
 
@@ -125,6 +126,7 @@ export function renderPlanPrompt(
     ``,
     `If information is missing, state assumptions and choose the safest non-destructive next step.`,
     `Do NOT stop. Call goal_report_phase_result when done.`,
+    `If goal_report_phase_result is not in your available tool list, write your plan as the final assistant message. The harness will synthesize it automatically.`,
   ].join("\n");
 }
 
@@ -161,6 +163,10 @@ export function renderImplementPrompt(
     `- If destructive operations are needed, they require operator approval.`,
     `- Do NOT stop if a tool is missing; use fallback or record blocker.`,
     `- Do NOT declare goal completion. The evaluator decides.`,
+    `- Do NOT delegate to subagents for operations known to be harness-blocked (e.g., git writes).`,
+    `- Subagents must return within 5 minutes or be considered failed. Fall back to single-agent work.`,
+    ``,
+    `If goal_report_phase_result is not in your available tool list, write your implementation summary as the final assistant message. The harness will synthesize it automatically.`,
   ].join("\n");
 }
 
@@ -188,21 +194,37 @@ export function renderValidatePrompt(
     capSummary,
     ``,
     `Validation Instructions:`,
-    `1. Collect validation evidence for the implementation in this cycle:`,
-    `   - Run focused tests`,
-    `   - Run broad gates if available`,
-    `   - Check repo lock status`,
-    `   - Check PR/CI status if applicable`,
-    `   - Verify safety invariants`,
-    `2. List any known failures or blockers.`,
-    `3. Do NOT self-certify goal completion.`,
-    `4. Call goal_report_phase_result with your validation summary.`,
-    `5. The external evaluator will review and decide.`,
+    `1. Collect validation evidence and PERSIST IT TO FILES:`,
+    `   a. Run tests and capture full output:`,
+    `      goal_shell command="<test command> 2>&1 | tee .pi/iterative-goal/test-results-cycle-${state.cycle}.txt"`,
+    `   b. Run gate checks and capture output:`,
+    `      goal_shell command="<gate command> 2>&1 | tee .pi/iterative-goal/gate-results-cycle-${state.cycle}.txt"`,
+    `   c. Capture repo state:`,
+    `      goal_shell command="git status && git log --oneline -5 > .pi/iterative-goal/repo-state-cycle-${state.cycle}.txt"`,
+    `2. Create a validation summary in your phase result with structured counts (tests passed/failed, gates passed/failed).`,
+    `3. List any known failures or blockers, distinguishing EXTERNAL vs HARNESS blockers.`,
+    `4. Do NOT self-certify goal completion.`,
+    `5. Call goal_report_phase_result with your validation summary.`,
+    `6. If git commit operations are blocked, generate a patch file instead:`,
+    `   goal_shell command="git diff > .pi/iterative-goal/final-cycle-${state.cycle}.patch"`,
+    ``,
+    `STATUS VOCABULARY (use these exact terms in reports):`,
+    `- PASS / FAIL — for individual gates and tests`,
+    `- BLOCKED_EXTERNAL — items requiring credentials, operator action, or permissions outside the harness`,
+    `- BLOCKED_HARNESS — items blocked by harness safety policy (e.g., git writes)`,
+    `- NOT_RUN — items not yet attempted`,
+    `For overall status use one of:`,
+    `- HARNESS_VALIDATED — all in-harness work passes, no blockers`,
+    `- HARNESS_VALIDATED_EXTERNAL_BLOCKERS — all in-harness work passes, external blockers remain`,
+    `- IN_PROGRESS — implementation or validation still needed`,
+    `Do NOT use "Final", "complete", or "all waves complete" unless the evaluator has accepted the goal.`,
     ``,
     `IMPORTANT:`,
     `- The evaluator is the ONLY entity that can declare the goal complete.`,
     `- Even if everything looks perfect, you must report and let the evaluator judge.`,
     `- Include both positive evidence and remaining issues.`,
+    ``,
+    `If goal_report_phase_result is not in your available tool list, write your validation summary as the final assistant message. The harness will synthesize it automatically.`,
   ].join("\n");
 }
 
@@ -214,16 +236,25 @@ export function renderPhasePrompt(
   snapshot: CapabilitySnapshot,
   subagentBackend: SubagentBackend,
 ): string {
+  const verdict = state.evaluator.lastVerdict;
+  const meta = `[HARNESS_META] runId=${state.runId} cycle=${state.cycle} phase=${phase} status=${state.status}${verdict ? ` lastVerdict=${verdict.goal_met}/${verdict.confidence}` : ""}\n\n`;
+
+  let body: string;
   switch (phase) {
     case "research":
-      return renderResearchPrompt(state, snapshot, subagentBackend);
+      body = renderResearchPrompt(state, snapshot, subagentBackend);
+      break;
     case "plan":
-      return renderPlanPrompt(state, snapshot, subagentBackend);
+      body = renderPlanPrompt(state, snapshot, subagentBackend);
+      break;
     case "implement":
-      return renderImplementPrompt(state, snapshot, subagentBackend);
+      body = renderImplementPrompt(state, snapshot, subagentBackend);
+      break;
     case "validate":
-      return renderValidatePrompt(state, snapshot, subagentBackend);
+      body = renderValidatePrompt(state, snapshot, subagentBackend);
+      break;
   }
+  return meta + body;
 }
 
 // ── Resume prompt (after compaction or session reload) ──────────────

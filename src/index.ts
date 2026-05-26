@@ -44,6 +44,11 @@ function log(msg: string) {
 
 // ── Main Extension ──────────────────────────────────────────────────
 
+function harnessMetaPrefix(state: { runId: string; cycle: number; phase: string; status: string; evaluator: { lastVerdict?: { goal_met: boolean; confidence: number } } }): string {
+  const verdict = state.evaluator.lastVerdict;
+  return `[HARNESS_META] runId=${state.runId} cycle=${state.cycle} phase=${state.phase} status=${state.status}${verdict ? ` lastVerdict=${verdict.goal_met}/${verdict.confidence}` : ""}\n\n`;
+}
+
 export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   log("=== Extension initializing ===");
   const stateManager = createStateManager(pi);
@@ -259,6 +264,24 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         return;
       }
 
+      // External-blocked completion: all harness work done, external blockers remain
+      if (verdict.next_cycle_directive.focus === "external_blocked_complete") {
+        stateManager.markCompletedBlocked();
+        updateStatusBar(ctx, state);
+        updateWidget(ctx, state);
+        pi.sendMessage(
+          {
+            customType: "iterative-goal-completed-blocked",
+            content: `## Harness Work Complete — External Blockers Remain\n\n**Goal**: ${state.goal}\n**Cycles**: ${state.cycle}\n**Evaluator confidence**: ${verdict.confidence}\n\n**External Blockers**:\n${verdict.completion_blockers.map(b => `- ${b}`).join("\n")}\n\n**Accepted Evidence**:\n${verdict.accepted_evidence.map(e => `- ${e}`).join("\n")}\n\nAll in-harness implementation and validation is complete. Resolve external blockers manually.`,
+            display: true,
+          },
+          { triggerTurn: false },
+        );
+        ctx.ui.notify("Iterative goal: harness work complete. External blockers remain.");
+        log(`COMPLETED_EXTERNAL_BLOCKERS after ${state.cycle} cycles. Blockers: ${verdict.completion_blockers.join("; ")}`);
+        return;
+      }
+
       // goal_met=false → next cycle
       stateManager.incrementCycle();
       stateManager.setPhase("research");
@@ -368,7 +391,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     if (event.toolName === "bash") {
       const command = event.input?.command as string | undefined;
       if (command) {
-        const result = checkCommand(command, state.constraints.allowDestructiveOps);
+        const result = checkCommand(command, state.constraints.allowDestructiveOps, state.constraints.allowGitFinalization ?? false);
         if (!result.allowed) {
           log(`Blocked bash command: ${result.reason}`);
           return {
