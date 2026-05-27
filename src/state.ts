@@ -151,6 +151,38 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     updateLatestMd();
   }
 
+  /** Migrate v1 state or incomplete v2 state to current v2 format. */
+  function migrateState(raw: any): IterativeGoalState {
+    // v1 states lack lock, phaseAttempts, evaluatorState, finalizationPolicy, modelHealth
+    if (!raw.lock) {
+      raw.lock = {
+        activeRunId: raw.runId ?? null,
+        activePhaseId: null,
+        phaseLeaseOwner: "",
+        phaseStartedAt: new Date().toISOString(),
+        phaseStatus: raw.status === "running" ? "paused" : "verdict_recorded",
+        queuedPhaseIds: [],
+      };
+    }
+    if (!raw.phaseAttempts) raw.phaseAttempts = [];
+    if (!raw.evaluatorState) raw.evaluatorState = null;
+    if (!raw.finalizationPolicy) {
+      raw.finalizationPolicy = {
+        allowGitFinalization: raw.constraints?.allowGitFinalization ?? false,
+        allowCommit: false,
+        allowPush: false,
+        allowPR: false,
+        fallback: "patch",
+      };
+    }
+    if (!raw.config?.modelHealth) {
+      if (!raw.config) raw.config = {};
+      raw.config.modelHealth = {};
+    }
+    raw.version = 2;
+    return raw as IterativeGoalState;
+  }
+
   function persistToSession(): void {
     if (!state) return;
     const envelope: PersistenceEnvelope = {
@@ -584,6 +616,17 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       if (state) {
         state.lock.phaseStatus = "verdict_recorded";
         persistLock();
+        // Archive active-run.json so restore can never resurrect it
+        try {
+          if (stateDir) {
+            const activePath = path.join(stateDir, "active-run.json");
+            if (fs.existsSync(activePath)) {
+              const archiveDir = path.join(stateDir, "legacy");
+              fs.mkdirSync(archiveDir, { recursive: true });
+              fs.renameSync(activePath, path.join(archiveDir, `active-run-${new Date().toISOString().replace(/[:.]/g, "-")}.json`));
+            }
+          }
+        } catch {}
       }
       state = null;
     },
@@ -607,7 +650,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       if (lastEntry && (lastEntry as any).details) {
         const envelope = (lastEntry as any).details as PersistenceEnvelope;
         if (envelope.state) {
-          state = envelope.state;
+          state = migrateState(envelope.state);
           stateDir = path.join(ctx.cwd, ".pi", "iterative-goal");
           if (state.runId) {
             ensureRunDirs();
@@ -636,7 +679,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             try {
               const envelope = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PersistenceEnvelope;
               if (envelope.state) {
-                state = envelope.state;
+                state = migrateState(envelope.state);
                 ensureRunDirs();
                 return state;
               }
@@ -657,7 +700,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             try {
               const envelope = JSON.parse(fs.readFileSync(sp, "utf-8")) as PersistenceEnvelope;
               if (envelope.state) {
-                state = envelope.state;
+                state = migrateState(envelope.state);
                 runDir = path.join(runsDir, runId);
                 return state;
               }

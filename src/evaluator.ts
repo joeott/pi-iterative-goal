@@ -169,34 +169,22 @@ function isStaleHeartbeat(lastHeartbeat: string | null): boolean {
 
 function checkAllowlistViolations(
   state: IterativeGoalState,
-  planContent: string,
+  _planContent: string,
 ): { violation: boolean; plannedFiles: string[]; actualFiles: string[]; extraFiles: string[] } {
-  // Extract planned files from plan content
-  const filePattern = /(?:modify|change|edit|create|update)\s+["']?([^\s"',]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))["']?/gi;
-  const plannedFiles: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = filePattern.exec(planContent)) !== null) {
-    plannedFiles.push(match[1].trim());
-  }
-
-  // Also look for file paths on their own line or in lists
-  const pathPattern = /(?:^|\s)[`"']?([a-zA-Z0-9_\-/.]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))[`"']?/gm;
-  while ((match = pathPattern.exec(planContent)) !== null) {
-    const p = match[1].trim();
-    if (p.includes("/") || p.includes(".")) plannedFiles.push(p);
-  }
-
-  const uniquePlanned = [...new Set(plannedFiles)];
-
-  // Get actual changed files from exec
-  // This is populated by the harness after the implement phase
-  // For now, return the planned set
-  return {
-    violation: false,
-    plannedFiles: uniquePlanned,
-    actualFiles: [],
-    extraFiles: [],
-  };
+  // Read from persistent verification file written by the implement phase
+  try {
+    const verifyPath = `.pi/iterative-goal/runs/${state.runId}/cycles/${state.cycle}/implement/implementation-verification.json`;
+    if (fs.existsSync(verifyPath)) {
+      const d = JSON.parse(fs.readFileSync(verifyPath, "utf-8"));
+      return {
+        violation: d.allowlistViolation ?? (d.extraFiles?.length > 0),
+        plannedFiles: d.plannedFiles ?? [],
+        actualFiles: d.changedFiles ?? [],
+        extraFiles: d.extraFiles ?? [],
+      };
+    }
+  } catch { /* file may not exist yet */ }
+  return { violation: false, plannedFiles: [], actualFiles: [], extraFiles: [] };
 }
 
 // ── Main evaluator call ─────────────────────────────────────────────

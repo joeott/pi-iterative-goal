@@ -1,0 +1,29 @@
+# Context 003: PR creation for v3 hardening
+
+- **Date & Time**: 2026-05-27T00:00:00Z
+- **Task Summary**: Create PR for post-PR#3 v3 hardening changes.
+- **Changes Made**:
+  - Prepared branch for v3 hardening follow-up
+  - Will commit hardened harness changes, smoke test script, and context note
+  - Excluding runtime `.pi/` artifacts from version control
+- **Files Modified**:
+  - src/types.ts
+  - src/state.ts
+  - src/index.ts
+  - src/phases.ts
+  - src/evaluator.ts
+  - package-lock.json
+  - scripts/smoke-goal-harness.mjs
+  - ai_docs/context_002_v3_hardening_report.md
+  - ai_docs/context_003_pr_creation.md
+- **Commands Executed**:
+  - npm run build
+  - node -e "import('./dist/index.js').then(()=>console.log('ok'))"
+  - node scripts/smoke-goal-harness.mjs
+  - git status --short
+- **Outcomes**:
+  - Build passed
+  - Import smoke test passed
+  - Local smoke harness tests passed
+- **Next Steps**:
+  - Create branch, commit changes, push, open PR, inspect PR checks
