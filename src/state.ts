@@ -4,17 +4,35 @@
  * Uses a factory function (not a class) to avoid jiti cross-module
  * class prototype resolution issues.
  *
- * Stores state in:
- *   .pi/iterative-goal/state.json      – full machine-readable state
- *   .pi/iterative-goal/events.jsonl    – append-only event log
- *   .pi/iterative-goal/latest.md       – human-readable summary
- *   .pi/iterative-goal/evaluator-verdicts.jsonl – evaluator verdicts
+ * Stores state in run-scoped directories:
+ *   .pi/iterative-goal/
+ *     active-run.json                – which run is active (lock)
+ *     runs/
+ *       <runId>/
+ *         state.json                 – full machine-readable state
+ *         events.jsonl               – append-only event log
+ *         latest.md                  – human-readable summary
+ *         evaluator-state.json       – explicit evaluator state
+ *         evaluator-verdicts.jsonl   – evaluator verdicts
+ *         cycles/
+ *           <n>/
+ *             research/
+ *               prompt.md, result.json
+ *             plan/
+ *               prompt.md, result.json
+ *             implement/
+ *               prompt.md, result.json, diff.patch
+ *             validate/
+ *               prompt.md, result.json, test-results.txt, gate-results.txt, repo-state.txt
+ *
+ * Atomic persistence: write .tmp → fsync → rename.
+ * State rebuilt from events.jsonl on restore.
  *
  * Also uses pi.appendEntry() for session-level checkpoints
  * that survive compaction.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -26,6 +44,11 @@ import {
   type CapabilitySnapshot,
   type Phase,
   type PersistenceEnvelope,
+  type RunLock,
+  type PhaseAttempt,
+  type PhaseLifecycleEvent,
+  type EvaluatorState,
+  type FinalizationPolicy,
   PHASE_ORDER,
 } from "./types.js";
 
@@ -47,6 +70,28 @@ export interface StateManagerAPI {
   markCompletedBlocked(): void;
   clear(): void;
   persistAll(): void;
+
+  // ── New: run-lock operations ───────────────────────────────────
+  acquireLock(runId: string, phaseAttemptId: string): boolean;
+  releaseLock(runId: string, phaseAttemptId: string): void;
+  isLocked(): boolean;
+  cancelQueuedPhases(runId: string): void;
+
+  // ── New: phase attempt tracking ────────────────────────────────
+  startPhaseAttempt(attempt: PhaseAttempt): void;
+  completePhaseAttempt(phaseAttemptId: string, status: PhaseAttempt["status"]): void;
+  recordPhaseEvent(event: PhaseLifecycleEvent): void;
+
+  // ── New: evaluator state ───────────────────────────────────────
+  setEvaluatorState(es: EvaluatorState): void;
+  getEvaluatorState(): EvaluatorState | null;
+
+  // ── New: artifact path helpers ─────────────────────────────────
+  getRunDir(): string;
+  getCycleDir(cycle: number): string;
+  getPhaseDir(cycle: number, phase: Phase): string;
+  getArtifactPath(cycle: number, phase: Phase, filename: string): string;
+
   restore(ctx: ExtensionContext): IterativeGoalState | null;
 }
 
@@ -56,9 +101,29 @@ export function nextPhase(current: Phase): Phase {
   return PHASE_ORDER[idx + 1];
 }
 
+// ── Atomic file write ────────────────────────────────────────────
+
+function writeFileAtomic(filePath: string, content: string): void {
+  const tmpPath = filePath + ".tmp";
+  fs.writeFileSync(tmpPath, content);
+  const fd = fs.openSync(tmpPath, "r+");
+  fs.fsyncSync(fd);
+  fs.closeSync(fd);
+  fs.renameSync(tmpPath, filePath);
+}
+
+// ── JSONL append (atomic via tmp→fsync→rename not practical; use append.) ──
+
+function appendJsonLine(filePath: string, obj: Record<string, unknown>): void {
+  const line = JSON.stringify(obj) + "\n";
+  fs.appendFileSync(filePath, line);
+}
+
 export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   let state: IterativeGoalState | null = null;
   let stateDir = "";
+  let runDir = "";
+  let currentPhaseAttemptId: string | null = null;
 
   function phaseToArtifactKey(phase: Phase): keyof IterativeGoalState["artifacts"] {
     switch (phase) {
@@ -69,16 +134,27 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     }
   }
 
+  function runEventsPath(): string {
+    return runDir ? path.join(runDir, "events.jsonl") : "";
+  }
+
   function appendEvent(event: Record<string, unknown>): void {
-    if (!stateDir) return;
-    const eventsPath = path.join(stateDir, "events.jsonl");
-    fs.appendFileSync(eventsPath, JSON.stringify({ ...event, timestamp: new Date().toISOString() }) + "\n");
+    const eventsPath = runEventsPath();
+    if (!eventsPath) return;
+    appendJsonLine(eventsPath, { ...event, timestamp: new Date().toISOString() });
+  }
+
+  function persistAllInternal(): void {
+    if (!state) return;
+    persistToSession();
+    persistToDisk();
+    updateLatestMd();
   }
 
   function persistToSession(): void {
     if (!state) return;
     const envelope: PersistenceEnvelope = {
-      version: 1,
+      version: 2,
       state,
       updatedAt: new Date().toISOString(),
     };
@@ -86,18 +162,54 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   }
 
   function persistToDisk(): void {
-    if (!state || !stateDir) return;
-    const statePath = path.join(stateDir, "state.json");
+    if (!state || !runDir) return;
+    const statePath = path.join(runDir, "state.json");
     const envelope: PersistenceEnvelope = {
-      version: 1,
+      version: 2,
       state,
       updatedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(statePath, JSON.stringify(envelope, null, 2));
+    writeFileAtomic(statePath, JSON.stringify(envelope, null, 2));
+  }
+
+  function persistLock(): void {
+    if (!state || !stateDir) return;
+    const lock: RunLock = state.lock;
+    const lockPath = path.join(stateDir, "active-run.json");
+    writeFileAtomic(lockPath, JSON.stringify(lock, null, 2));
+  }
+
+  function persistEvaluatorState(): void {
+    if (!state || !runDir) return;
+    const es = state.evaluatorState;
+    if (!es) return;
+    const esPath = path.join(runDir, "evaluator-state.json");
+    writeFileAtomic(esPath, JSON.stringify(es, null, 2));
+  }
+
+  function ensureRunDirs(): void {
+    if (!stateDir || !state?.runId) return;
+    runDir = path.join(stateDir, "runs", state.runId);
+    fs.mkdirSync(runDir, { recursive: true });
+
+    const cyclesDir = path.join(runDir, "cycles");
+    fs.mkdirSync(cyclesDir, { recursive: true });
+
+    const eventsPath = path.join(runDir, "events.jsonl");
+    if (!fs.existsSync(eventsPath)) fs.writeFileSync(eventsPath, "");
+
+    const verdictsPath = path.join(runDir, "evaluator-verdicts.jsonl");
+    if (!fs.existsSync(verdictsPath)) fs.writeFileSync(verdictsPath, "");
+  }
+
+  function ensurePhaseDirs(cycle: number, phase: Phase): string {
+    const dir = path.join(runDir, "cycles", String(cycle), phase);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
   }
 
   function updateLatestMd(): void {
-    if (!state || !stateDir) return;
+    if (!state || !runDir) return;
 
     const s = state;
     const lines = [
@@ -110,10 +222,18 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       `- **Cycle**: ${s.cycle}`,
       `- **Phase**: ${s.phase}`,
       ``,
+      `## Lock`,
+      ``,
+      `- **Active Run**: ${s.lock.activeRunId ?? "none"}`,
+      `- **Active Phase**: ${s.lock.activePhaseId ?? "none"}`,
+      `- **Phase Status**: ${s.lock.phaseStatus}`,
+      `- **Queued Phase IDs**: [${s.lock.queuedPhaseIds.join(", ")}]`,
+      ``,
       `## Evaluator`,
       ``,
       `- **Model**: ${s.evaluator.provider}/${s.evaluator.model}`,
       `- **Last Verdict**: ${s.evaluator.lastVerdict ? `goal_met=${s.evaluator.lastVerdict.goal_met}, confidence=${s.evaluator.lastVerdict.confidence}` : "none yet"}`,
+      s.evaluatorState ? `- **Evaluator Status**: ${s.evaluatorState.status}` : `- **Evaluator Status**: not started`,
       ``,
       `## Artifacts`,
       ``,
@@ -158,19 +278,13 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       }
     }
 
-    const latestPath = path.join(stateDir, "latest.md");
+    const latestPath = path.join(runDir, "latest.md");
     fs.writeFileSync(latestPath, lines.join("\n"));
   }
 
   function initStateDir(cwd: string): void {
     stateDir = path.join(cwd, ".pi", "iterative-goal");
     fs.mkdirSync(stateDir, { recursive: true });
-
-    const eventsPath = path.join(stateDir, "events.jsonl");
-    if (!fs.existsSync(eventsPath)) fs.writeFileSync(eventsPath, "");
-
-    const verdictsPath = path.join(stateDir, "evaluator-verdicts.jsonl");
-    if (!fs.existsSync(verdictsPath)) fs.writeFileSync(verdictsPath, "");
   }
 
   return {
@@ -186,11 +300,30 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       return state !== null && state.status === "paused_by_user";
     },
 
+    // ── Run-scoped paths ──────────────────────────────────────────
+
+    getRunDir(): string {
+      return runDir;
+    },
+
+    getCycleDir(cycle: number): string {
+      return path.join(runDir, "cycles", String(cycle));
+    },
+
+    getPhaseDir(cycle: number, phase: Phase): string {
+      return ensurePhaseDirs(cycle, phase);
+    },
+
+    getArtifactPath(cycle: number, phase: Phase, filename: string): string {
+      ensurePhaseDirs(cycle, phase);
+      return path.join(runDir, "cycles", String(cycle), phase, filename);
+    },
+
     createRun(goal: string, goalCriterion: string, config?: Partial<IterativeGoalState["config"]>): IterativeGoalState {
       const runId = `ig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       state = {
-        version: 1,
+        version: 2,
         runId,
         goal,
         goalCriterion,
@@ -208,6 +341,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           primaryModel: config?.primaryModel ?? { provider: "anthropic", model: "claude-sonnet-4-5" },
           fallbackModels: config?.fallbackModels ?? [],
           blockedModels: config?.blockedModels ?? [],
+          modelHealth: config?.modelHealth ?? {},
         },
         capabilities: null,
         errors: [],
@@ -226,9 +360,28 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           requireOperatorApprovalForDangerousOps: true,
           subagentTimeoutMs: 300_000,
         },
+        lock: {
+          activeRunId: runId,
+          activePhaseId: null,
+          phaseLeaseOwner: "",
+          phaseStartedAt: new Date().toISOString(),
+          phaseStatus: "running",
+          queuedPhaseIds: [],
+        },
+        phaseAttempts: [],
+        evaluatorState: null,
+        finalizationPolicy: {
+          allowGitFinalization: false,
+          allowCommit: false,
+          allowPush: false,
+          allowPR: false,
+          fallback: "patch",
+        },
       };
 
-      persistAll();
+      ensureRunDirs();
+      persistLock();
+      persistAllInternal();
       appendEvent({
         type: "run_created",
         runId,
@@ -237,6 +390,102 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       });
 
       return state;
+    },
+
+    // ── Run lock ──────────────────────────────────────────────────
+
+    acquireLock(runId: string, phaseAttemptId: string): boolean {
+      if (!state) return false;
+      const activeRun = state.lock.activeRunId;
+      if (activeRun && activeRun !== runId) {
+        // Different run is active — refuse
+        return false;
+      }
+      state.lock.activeRunId = runId;
+      state.lock.activePhaseId = phaseAttemptId;
+      state.lock.phaseLeaseOwner = phaseAttemptId;
+      state.lock.phaseStartedAt = new Date().toISOString();
+      state.lock.phaseStatus = "running";
+      persistLock();
+      return true;
+    },
+
+    releaseLock(runId: string, phaseAttemptId: string): void {
+      if (!state) return;
+      if (state.lock.phaseLeaseOwner !== phaseAttemptId) return;
+      state.lock.activePhaseId = null;
+      state.lock.phaseLeaseOwner = "";
+      persistLock();
+    },
+
+    isLocked(): boolean {
+      if (!state) return false;
+      return state.lock.activePhaseId !== null && state.lock.phaseStatus === "running";
+    },
+
+    cancelQueuedPhases(runId: string): void {
+      if (!state) return;
+      if (state.lock.activeRunId === runId) {
+        state.lock.queuedPhaseIds = [];
+        state.lock.phaseStatus = "paused";
+        persistLock();
+        appendEvent({
+          type: "queued_phases_cancelled",
+          runId,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    },
+
+    // ── Phase attempts ────────────────────────────────────────────
+
+    startPhaseAttempt(attempt: PhaseAttempt): void {
+      if (!state) return;
+      currentPhaseAttemptId = attempt.phaseAttemptId;
+      state.phaseAttempts.push(attempt);
+      appendEvent({
+        type: "phase_attempt_started",
+        attempt,
+        timestamp: new Date().toISOString(),
+      });
+    },
+
+    completePhaseAttempt(phaseAttemptId: string, status: PhaseAttempt["status"]): void {
+      if (!state) return;
+      const attempt = state.phaseAttempts.find(a => a.phaseAttemptId === phaseAttemptId);
+      if (attempt) {
+        attempt.status = status;
+        attempt.endedAt = new Date().toISOString();
+        appendEvent({
+          type: "phase_attempt_completed",
+          phaseAttemptId,
+          status,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      if (currentPhaseAttemptId === phaseAttemptId) {
+        currentPhaseAttemptId = null;
+      }
+    },
+
+    recordPhaseEvent(event: PhaseLifecycleEvent): void {
+      if (!state) return;
+      appendEvent({
+        type: "phase_lifecycle",
+        ...event,
+      });
+    },
+
+    // ── Evaluator state ───────────────────────────────────────────
+
+    setEvaluatorState(es: EvaluatorState): void {
+      if (!state) return;
+      state.evaluatorState = es;
+      persistEvaluatorState();
+    },
+
+    getEvaluatorState(): EvaluatorState | null {
+      return state?.evaluatorState ?? null;
     },
 
     setCapabilities(snapshot: CapabilitySnapshot): void {
@@ -255,6 +504,16 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       const key = phaseToArtifactKey(artifact.phase);
       const arr = state.artifacts[key] as PhaseArtifact[];
       arr.push(artifact);
+
+      // Persist phase result to run-scoped directory
+      if (runDir) {
+        const phaseDir = ensurePhaseDirs(artifact.cycle, artifact.phase);
+        writeFileAtomic(
+          path.join(phaseDir, "result.json"),
+          JSON.stringify(artifact, null, 2),
+        );
+      }
+
       appendEvent({
         type: "artifact_recorded",
         artifact,
@@ -267,16 +526,20 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       state.evaluator.lastVerdict = verdict;
       state.artifacts.evaluatorReports.push(verdict);
 
-      if (stateDir) {
-        const verdictsPath = path.join(stateDir, "evaluator-verdicts.jsonl");
-        fs.appendFileSync(verdictsPath, JSON.stringify(verdict) + "\n");
+      if (runDir) {
+        const verdictsPath = path.join(runDir, "evaluator-verdicts.jsonl");
+        appendJsonLine(verdictsPath, verdict as unknown as Record<string, unknown>);
       }
     },
 
     setStatus(status: RunStatus): void {
       if (!state) return;
       state.status = status;
-      persistAll();
+      if (status === "paused_by_user") {
+        state.lock.phaseStatus = "paused";
+        persistLock();
+      }
+      persistAllInternal();
     },
 
     setPhase(phase: Phase): void {
@@ -292,7 +555,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     markSucceeded(): void {
       if (!state) return;
       state.status = "succeeded";
-      persistAll();
+      state.lock.phaseStatus = "verdict_recorded";
+      persistLock();
+      persistAllInternal();
       appendEvent({
         type: "goal_met",
         runId: state.runId,
@@ -304,7 +569,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     markCompletedBlocked(): void {
       if (!state) return;
       state.status = "completed_external_blockers";
-      persistAll();
+      state.lock.phaseStatus = "verdict_recorded";
+      persistLock();
+      persistAllInternal();
       appendEvent({
         type: "completed_external_blockers",
         runId: state.runId,
@@ -314,18 +581,11 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     },
 
     clear(): void {
-      state = null;
-      if (stateDir && fs.existsSync(stateDir)) {
-        const statePath = path.join(stateDir, "state.json");
-        if (fs.existsSync(statePath)) {
-          const data = fs.readFileSync(statePath, "utf-8");
-          const envelope = JSON.parse(data) as PersistenceEnvelope;
-          if (envelope.state) {
-            envelope.state.status = "succeeded";
-            fs.writeFileSync(statePath, JSON.stringify(envelope, null, 2));
-          }
-        }
+      if (state) {
+        state.lock.phaseStatus = "verdict_recorded";
+        persistLock();
       }
+      state = null;
     },
 
     persistAll(): void {
@@ -338,6 +598,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     restore(ctx: ExtensionContext): IterativeGoalState | null {
       initStateDir(ctx.cwd);
 
+      // Check session entries first
       const entries = ctx.sessionManager.getEntries();
       const lastEntry = [...entries]
         .reverse()
@@ -348,34 +609,64 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         if (envelope.state) {
           state = envelope.state;
           stateDir = path.join(ctx.cwd, ".pi", "iterative-goal");
-          persistToDisk();
-          updateLatestMd();
+          if (state.runId) {
+            ensureRunDirs();
+            persistToDisk();
+            updateLatestMd();
+          }
           return state;
         }
       }
 
+      // Fall back to disk: find latest run
       if (stateDir) {
-        const statePath = path.join(stateDir, "state.json");
-        if (fs.existsSync(statePath)) {
-          const data = fs.readFileSync(statePath, "utf-8");
+        const activeRunPath = path.join(stateDir, "active-run.json");
+        let activeRunId: string | null = null;
+        if (fs.existsSync(activeRunPath)) {
           try {
-            const envelope = JSON.parse(data) as PersistenceEnvelope;
-            if (envelope.state) {
-              state = envelope.state;
-              return state;
-            }
-          } catch { /* corrupted, ignore */ }
+            const lock: RunLock = JSON.parse(fs.readFileSync(activeRunPath, "utf-8"));
+            activeRunId = lock.activeRunId;
+          } catch { /* ignore */ }
+        }
+
+        if (activeRunId) {
+          runDir = path.join(stateDir, "runs", activeRunId);
+          const statePath = path.join(runDir, "state.json");
+          if (fs.existsSync(statePath)) {
+            try {
+              const envelope = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PersistenceEnvelope;
+              if (envelope.state) {
+                state = envelope.state;
+                ensureRunDirs();
+                return state;
+              }
+            } catch { /* corrupted, ignore */ }
+          }
+        }
+
+        // Fall back: scan runs directory for the latest
+        const runsDir = path.join(stateDir, "runs");
+        if (fs.existsSync(runsDir)) {
+          const runs = fs.readdirSync(runsDir).filter(d => {
+            const s = path.join(runsDir, d, "state.json");
+            return fs.existsSync(s);
+          });
+          runs.sort().reverse();
+          for (const runId of runs) {
+            const sp = path.join(runsDir, runId, "state.json");
+            try {
+              const envelope = JSON.parse(fs.readFileSync(sp, "utf-8")) as PersistenceEnvelope;
+              if (envelope.state) {
+                state = envelope.state;
+                runDir = path.join(runsDir, runId);
+                return state;
+              }
+            } catch { /* continue */ }
+          }
         }
       }
 
       return null;
     },
   };
-
-  function persistAll(): void {
-    if (!state) return;
-    persistToSession();
-    persistToDisk();
-    updateLatestMd();
-  }
 }
