@@ -6,9 +6,9 @@
  * bash tool is unavailable.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { StringEnum } from "@mariozechner/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { checkCommand, isSafeReadOnly, isDestructive } from "./safety.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";

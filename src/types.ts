@@ -5,7 +5,7 @@
  */
 
 import { Type, type Static } from "typebox";
-import { StringEnum } from "@mariozechner/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 
 // ── Phase definitions ───────────────────────────────────────────────
 
@@ -191,10 +191,11 @@ export interface RunConfig {
     modelPattern: string;
     reason: string;
   }>;
+  modelHealth: Record<string, ModelHealthEntry>;
 }
 
 export interface IterativeGoalState {
-  version: 1;
+  version: 2;
   runId: string;
   goal: string;
   goalCriterion: string; // explicit completion criteria
@@ -215,6 +216,10 @@ export interface IterativeGoalState {
     evaluatorReports: EvaluatorVerdict[];
   };
   constraints: GoalConstraints;
+  lock: RunLock;
+  phaseAttempts: PhaseAttempt[];
+  evaluatorState: EvaluatorState | null;
+  finalizationPolicy: FinalizationPolicy;
 }
 
 // ── Persistence envelope ─────────────────────────────────────────────
@@ -262,4 +267,133 @@ export const EvaluatorPromptSchema = Type.Object({
 export interface SafetyCheckResult {
   allowed: boolean;
   reason?: string;
+}
+
+// ── Phase lifecycle events (transactional) ───────────────────────────
+
+export const PhaseEventKind = [
+  "phase_started",
+  "model_selected",
+  "tool_preflight_recorded",
+  "phase_output_received",
+  "phase_result_parsed",
+  "phase_artifacts_persisted",
+  "phase_result_committed",
+  "evaluator_queued",
+  "evaluator_started",
+  "evaluator_verdict_recorded",
+  "transition_decided",
+  "next_phase_started",
+  "model_fallback",
+  "phase_cancelled",
+  "run_paused",
+  "run_resumed",
+] as const;
+export type PhaseEventKind = (typeof PhaseEventKind)[number];
+
+export interface PhaseLifecycleEvent {
+  runId: string;
+  cycle: number;
+  phase: Phase;
+  phaseAttemptId: string;
+  attempt: number;
+  kind: PhaseEventKind;
+  timestamp: string;
+  details?: Record<string, unknown>;
+}
+
+// ── Run lock (prevents interleaving) ─────────────────────────────────
+
+export interface RunLock {
+  activeRunId: string | null;
+  activePhaseId: string | null;
+  phaseLeaseOwner: string; // phaseAttemptId
+  phaseStartedAt: string;
+  phaseStatus: "running" | "result_submitted" | "validating" | "verdict_recorded" | "transition_pending" | "paused";
+  queuedPhaseIds: string[]; // queued followUp messages for old runs
+}
+
+// ── Phase attempt tracking ───────────────────────────────────────────
+
+export interface PhaseAttempt {
+  runId: string;
+  cycle: number;
+  phase: Phase;
+  attempt: number;
+  phaseAttemptId: string;
+  modelProvider: string;
+  modelModel: string;
+  fallbackChain: Array<{ provider: string; model: string; reason: string }>;
+  startedAt: string;
+  endedAt?: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  outputReceived: boolean;
+  resultParsed: boolean;
+  artifactsPersisted: boolean;
+  resultCommitted: boolean;
+}
+
+// ── Evaluator state (explicit, not inferred from file existence) ────
+
+export type EvaluatorStatus = "queued" | "running" | "passed" | "failed" | "disabled" | "error" | "stale_heartbeat";
+
+export interface EvaluatorState {
+  runId: string;
+  cycle: number;
+  phase: "validate";
+  status: EvaluatorStatus;
+  startedAt: string | null;
+  lastHeartbeatAt: string | null;
+  verdictPath: string;
+  error: string | null;
+}
+
+// ── Structured phase result (parseable, not free-form) ───────────────
+
+export interface StructuredPhaseResult {
+  runId: string;
+  cycle: number;
+  phase: Phase;
+  overallStatus: "HARNESS_VALIDATED" | "HARNESS_VALIDATED_EXTERNAL_BLOCKERS" | "IN_PROGRESS" | "FAILED";
+  tests: Array<{
+    name: string;
+    status: "PASS" | "FAIL" | "NOT_RUN";
+    artifact: string;
+    exitCode: number | null;
+  }>;
+  gates: Array<{
+    name: string;
+    status: "PASS" | "FAIL" | "NOT_RUN" | "BLOCKED_EXTERNAL" | "BLOCKED_HARNESS";
+    evidence: string | null;
+  }>;
+  blockers: Array<{
+    kind: "BLOCKED_EXTERNAL" | "BLOCKED_HARNESS" | "UNKNOWN";
+    message: string;
+  }>;
+  changedFiles: string[];
+  commandsRun: string[];
+  patchPath: string | null;
+  uncommittedUserFilesTouched: boolean;
+  nextRecommendedPhase: Phase | "capability_repair" | "external_blocked_complete";
+}
+
+// ── Finalization policy ──────────────────────────────────────────────
+
+export interface FinalizationPolicy {
+  allowGitFinalization: boolean;
+  allowCommit: boolean;
+  allowPush: boolean;
+  allowPR: boolean;
+  fallback: "patch" | "none";
+}
+
+// ── Model health cache ───────────────────────────────────────────────
+
+export interface ModelHealthEntry {
+  model: string;
+  provider: string;
+  lastStatus: "available" | "unavailable" | "unknown";
+  lastCheckedAt: string;
+  error: string | null;
+  cooldownUntil: string | null;
 }

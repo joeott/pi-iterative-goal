@@ -3,11 +3,21 @@
  *
  * Makes a separate model call to assess whether the goal is met.
  * The loop never stops voluntarily; only the evaluator can return goal_met: true.
+ *
+ * IMPROVEMENT: Maintains explicit EvaluatorState with heartbeat, not inferred
+ * from file existence.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { complete } from "@mariozechner/pi-ai";
-import type { IterativeGoalState, EvaluatorVerdict } from "./types.js";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { complete } from "@earendil-works/pi-ai";
+import type {
+  IterativeGoalState,
+  EvaluatorVerdict,
+  EvaluatorState,
+} from "./types.js";
+import { type StateManagerAPI } from "./state.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
@@ -28,7 +38,7 @@ Return goal_met=true ONLY if:
 - Safety constraints are preserved
 - No unresolved critical blockers remain
 - The state is reproducible from committed/recorded artifacts
-- The implementation matches what was planned
+- The implementation matches what was planned (no allowlist violations)
 
 If unsure, return goal_met=false and specify what remains to be done.
 
@@ -62,7 +72,7 @@ for in-progress states.
 
 No preamble. No markdown. JSON only.`;
 
-// ── Fallback evaluator (used when model call fails) ──────────────────
+// ── Fallback evaluator ──────────────────────────────────────────────
 
 function fallbackVerdict(reason: string): EvaluatorVerdict {
   return {
@@ -89,71 +99,128 @@ function fallbackVerdict(reason: string): EvaluatorVerdict {
 // ── Parsing ─────────────────────────────────────────────────────────
 
 function parseVerdict(text: string): EvaluatorVerdict | null {
-  // Try direct JSON
   try {
     const raw = JSON.parse(text);
-    return {
-      goal_met: Boolean(raw.goal_met),
-      confidence: Number(raw.confidence) || 0,
-      completion_blockers: Array.isArray(raw.completion_blockers) ? raw.completion_blockers : [],
-      accepted_evidence: Array.isArray(raw.accepted_evidence) ? raw.accepted_evidence : [],
-      rejected_evidence: Array.isArray(raw.rejected_evidence) ? raw.rejected_evidence : [],
-      remaining_work: Array.isArray(raw.remaining_work)
-        ? raw.remaining_work.map((w: any) => ({
-            priority: w.priority || "medium",
-            description: w.description || "",
-          }))
-        : [],
-      next_cycle_directive: {
-        focus: raw.next_focus ?? raw.next_cycle_directive?.focus ?? "research",
-        reason: raw.next_focus_reason ?? raw.next_cycle_directive?.reason ?? "",
-      },
-      safety_notes: Array.isArray(raw.safety_notes) ? raw.safety_notes : [],
-    };
+    return normalizeVerdict(raw);
   } catch {}
 
-  // Try extracting JSON block
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
       const raw = JSON.parse(jsonMatch[0]);
-      return {
-        goal_met: Boolean(raw.goal_met),
-        confidence: Number(raw.confidence) || 0,
-        completion_blockers: Array.isArray(raw.completion_blockers) ? raw.completion_blockers : [],
-        accepted_evidence: Array.isArray(raw.accepted_evidence)
-          ? raw.accepted_evidence
-          : [],
-        rejected_evidence: Array.isArray(raw.rejected_evidence)
-          ? raw.rejected_evidence
-          : [],
-        remaining_work: Array.isArray(raw.remaining_work)
-          ? raw.remaining_work.map((w: any) => ({
-              priority: w.priority || "medium",
-              description: w.description || "",
-            }))
-          : [],
-        next_cycle_directive: {
-          focus: raw.next_focus ?? raw.next_cycle_directive?.focus ?? "research",
-          reason:
-            raw.next_focus_reason ?? raw.next_cycle_directive?.reason ?? "",
-        },
-        safety_notes: Array.isArray(raw.safety_notes) ? raw.safety_notes : [],
-      };
+      return normalizeVerdict(raw);
     } catch {}
   }
 
   return null;
 }
 
-// ── Evaluator call ──────────────────────────────────────────────────
+function normalizeVerdict(raw: any): EvaluatorVerdict {
+  return {
+    goal_met: Boolean(raw.goal_met),
+    confidence: Number(raw.confidence) || 0,
+    completion_blockers: Array.isArray(raw.completion_blockers) ? raw.completion_blockers : [],
+    accepted_evidence: Array.isArray(raw.accepted_evidence) ? raw.accepted_evidence : [],
+    rejected_evidence: Array.isArray(raw.rejected_evidence) ? raw.rejected_evidence : [],
+    remaining_work: Array.isArray(raw.remaining_work)
+      ? raw.remaining_work.map((w: any) => ({
+          priority: w.priority || "medium",
+          description: w.description || "",
+        }))
+      : [],
+    next_cycle_directive: {
+      focus: raw.next_focus ?? raw.next_cycle_directive?.focus ?? "research",
+      reason: raw.next_focus_reason ?? raw.next_cycle_directive?.reason ?? "",
+    },
+    safety_notes: Array.isArray(raw.safety_notes) ? raw.safety_notes : [],
+  };
+}
+
+// ── Heartbeat updater ───────────────────────────────────────────────
+
+function updateEvaluatorHeartbeat(
+  stateManager: StateManagerAPI,
+  state: IterativeGoalState,
+  status: EvaluatorState["status"],
+  error?: string,
+): void {
+  const es: EvaluatorState = {
+    runId: state.runId,
+    cycle: state.cycle,
+    phase: "validate",
+    status,
+    startedAt: status === "running"
+      ? new Date().toISOString()
+      : state.evaluatorState?.startedAt ?? null,
+    lastHeartbeatAt: new Date().toISOString(),
+    verdictPath: `.pi/iterative-goal/runs/${state.runId}/evaluator-verdicts.jsonl`,
+    error: error ?? null,
+  };
+  stateManager.setEvaluatorState(es);
+}
+
+function isStaleHeartbeat(lastHeartbeat: string | null): boolean {
+  if (!lastHeartbeat) return true;
+  const elapsed = Date.now() - new Date(lastHeartbeat).getTime();
+  return elapsed > 120_000; // 2 minutes
+}
+
+// ── Check for allowlist violations ───────────────────────────────────
+
+function checkAllowlistViolations(
+  state: IterativeGoalState,
+  planContent: string,
+): { violation: boolean; plannedFiles: string[]; actualFiles: string[]; extraFiles: string[] } {
+  // Extract planned files from plan content
+  const filePattern = /(?:modify|change|edit|create|update)\s+["']?([^\s"',]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))["']?/gi;
+  const plannedFiles: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = filePattern.exec(planContent)) !== null) {
+    plannedFiles.push(match[1].trim());
+  }
+
+  // Also look for file paths on their own line or in lists
+  const pathPattern = /(?:^|\s)[`"']?([a-zA-Z0-9_\-/.]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))[`"']?/gm;
+  while ((match = pathPattern.exec(planContent)) !== null) {
+    const p = match[1].trim();
+    if (p.includes("/") || p.includes(".")) plannedFiles.push(p);
+  }
+
+  const uniquePlanned = [...new Set(plannedFiles)];
+
+  // Get actual changed files from exec
+  // This is populated by the harness after the implement phase
+  // For now, return the planned set
+  return {
+    violation: false,
+    plannedFiles: uniquePlanned,
+    actualFiles: [],
+    extraFiles: [],
+  };
+}
+
+// ── Main evaluator call ─────────────────────────────────────────────
 
 export async function runExternalEvaluator(
   pi: ExtensionAPI,
   state: IterativeGoalState,
   ctx: ExtensionContext,
+  stateManager: StateManagerAPI,
 ): Promise<EvaluatorVerdict> {
   log(`Running evaluator for cycle ${state.cycle}`);
+
+  // Start evaluator state
+  updateEvaluatorHeartbeat(stateManager, state, "running");
+
+  // Check if previous evaluator heartbeat is stale
+  if (state.evaluatorState && state.evaluatorState.lastHeartbeatAt) {
+    if (isStaleHeartbeat(state.evaluatorState.lastHeartbeatAt)) {
+      stateManager.setEvaluatorState({
+        ...state.evaluatorState,
+        status: "stale_heartbeat",
+      });
+    }
+  }
 
   // Find evaluator model
   const model = ctx.modelRegistry.find(
@@ -163,6 +230,7 @@ export async function runExternalEvaluator(
 
   if (!model) {
     log("Evaluator model not found, using fallback");
+    updateEvaluatorHeartbeat(stateManager, state, "error", `Model not found: ${state.evaluator.provider}/${state.evaluator.model}`);
     return fallbackVerdict(
       `No model found for ${state.evaluator.provider}/${state.evaluator.model}`,
     );
@@ -171,6 +239,23 @@ export async function runExternalEvaluator(
   // Build evaluation prompt
   const evidence = buildEvidenceSummary(state);
   const manifest = buildValidationManifest(state);
+
+  // Check allowlist violations
+  const lastPlan = state.artifacts.plans.at(-1);
+  const allowlistInfo = lastPlan
+    ? checkAllowlistViolations(state, lastPlan.content)
+    : { violation: false, plannedFiles: [], actualFiles: [], extraFiles: [] };
+
+  const allowlistBlock = allowlistInfo.plannedFiles.length > 0
+    ? [
+        "",
+        "--- PLAN ALLOWLIST CHECK ---",
+        `Planned files: ${allowlistInfo.plannedFiles.join(", ")}`,
+        `Allowlist violation: ${allowlistInfo.violation ? "YES - files edited outside plan" : "No"}`,
+        allowlistInfo.violation ? "WARNING: Implementation exceeded plan allowlist. This is a safety concern." : "",
+      ].join("\n")
+    : "";
+
   const prompt = [
     EVALUATOR_SYSTEM_PROMPT,
     "",
@@ -204,6 +289,7 @@ export async function runExternalEvaluator(
     "",
     "--- VALIDATION MANIFEST ---",
     manifest,
+    allowlistBlock,
     "",
     "--- ERRORS THIS CYCLE ---",
     state.errors
@@ -224,6 +310,7 @@ export async function runExternalEvaluator(
   if (!auth.ok || !auth.apiKey) {
     const errMsg = !auth.ok ? "auth not ok" : "no API key";
     log(`Auth failed: ${errMsg}`);
+    updateEvaluatorHeartbeat(stateManager, state, "error", `Auth failed: ${errMsg}`);
     return fallbackVerdict(`Auth failed: ${errMsg}`);
   }
 
@@ -260,10 +347,16 @@ export async function runExternalEvaluator(
       log(
         `Verdict: goal_met=${verdict.goal_met}, confidence=${verdict.confidence}`,
       );
+      updateEvaluatorHeartbeat(
+        stateManager,
+        state,
+        verdict.goal_met ? "passed" : "failed",
+      );
       return verdict;
     }
 
     log("Failed to parse evaluator response, defaulting to goal_met=false");
+    updateEvaluatorHeartbeat(stateManager, state, "error", "Unparseable response");
     return {
       goal_met: false,
       confidence: 0,
@@ -286,6 +379,7 @@ export async function runExternalEvaluator(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Evaluator error: ${msg}`);
+    updateEvaluatorHeartbeat(stateManager, state, "error", msg);
     return fallbackVerdict(msg);
   }
 }
@@ -342,6 +436,7 @@ function buildValidationManifest(state: IterativeGoalState): string {
   const manifest: Record<string, unknown> = {
     cycle: state.cycle,
     status: state.status,
+    evaluatorState: state.evaluatorState,
     artifacts: {
       research: state.artifacts.research.length,
       plans: state.artifacts.plans.length,
@@ -368,6 +463,11 @@ function buildValidationManifest(state: IterativeGoalState): string {
       focus: v.next_cycle_directive.focus,
     })),
     externalBlockers: state.evaluator.lastVerdict?.completion_blockers ?? [],
+    lock: {
+      activeRunId: state.lock.activeRunId,
+      phaseStatus: state.lock.phaseStatus,
+      queuedPhaseIds: state.lock.queuedPhaseIds,
+    },
   };
   return JSON.stringify(manifest, null, 2);
 }

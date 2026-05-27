@@ -3,11 +3,103 @@
  *
  * Each phase prompt is authoritative - it includes capability preflight,
  * the current state, evaluator directives, and phase-specific instructions.
+ *
+ * IMPROVEMENT: Tool instructions are generated from the actual capability
+ * snapshot, not hardcoded. The model is never told about unavailable tools.
  */
 
-import { type IterativeGoalState, type CapabilitySnapshot, PHASE_ORDER } from "./types.js";
+import {
+  type IterativeGoalState,
+  type CapabilitySnapshot,
+  type CapabilityNamespaces,
+  type RunLock,
+  PHASE_ORDER,
+} from "./types.js";
 import type { SubagentBackend } from "./types.js";
-import { renderCapabilitySummary } from "./capabilities.js";
+import { renderCapabilitySummary, buildNamespaces } from "./capabilities.js";
+
+// ── Tool contract detection ─────────────────────────────────────────
+
+function hasTool(ns: CapabilityNamespaces, name: string): boolean {
+  return (
+    ns.builtinTools.includes(name) ||
+    ns.extensionTools.includes(name) ||
+    ns.sdkTools.includes(name)
+  );
+}
+
+function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: SubagentBackend): {
+  shellInstruction: string;
+  reportInstruction: string;
+  blockerInstruction: string;
+  subagentInstruction: string;
+} {
+  const ns = buildNamespaces(snapshot);
+
+  const hasGoalShell = hasTool(ns, "goal_shell");
+  const hasBash = snapshot.hasBashTool;
+  const hasReportResult = hasTool(ns, "goal_report_phase_result");
+  const hasRecordBlocker = hasTool(ns, "goal_record_blocker");
+  const hasSubagentTool = snapshot.hasSubagentTool || snapshot.hasAgentTool;
+
+  // Shell instruction: truthfully say which shell tool to use
+  let shellInstruction: string;
+  if (hasGoalShell) {
+    shellInstruction = "Use goal_shell for shell commands (not bash).";
+  } else if (hasBash) {
+    shellInstruction = "Use bash for shell commands.";
+  } else {
+    shellInstruction = "No shell tool is available. Describe commands — the harness will execute them.";
+  }
+
+  // Report instruction
+  let reportInstruction: string;
+  if (hasReportResult) {
+    reportInstruction = [
+      "When finished, call goal_report_phase_result with your findings.",
+      "Parameters: phase, status (completed|failed_recoverable|blocked_by_safety_policy), summary, artifacts_produced[], blockers[], recommendations[].",
+    ].join("\n");
+  } else {
+    reportInstruction = [
+      "goal_report_phase_result is NOT in your available tool list.",
+      "Write your findings as the final assistant message. The harness will synthesize a phase result automatically.",
+    ].join("\n");
+  }
+
+  // Blocker instruction
+  let blockerInstruction: string;
+  if (hasRecordBlocker) {
+    blockerInstruction = "Record blockers with goal_record_blocker.";
+  } else {
+    blockerInstruction = "Describe blockers explicitly in your final message.";
+  }
+
+  // Subagent instruction
+  let subagentInstruction: string;
+  if (hasSubagentTool) {
+    if (hasTool(ns, "goal_subagent")) {
+      subagentInstruction = "Use goal_subagent for delegation (handles backend detection automatically).";
+    } else {
+      subagentInstruction = `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool for delegation.`;
+    }
+  } else if (hasTool(ns, "goal_subagent")) {
+    subagentInstruction = "Use goal_subagent for delegation. Backend will fall back to single-agent scouting.";
+  } else {
+    subagentInstruction = "No subagent backend available. Perform ALL work in this session.";
+  }
+
+  return { shellInstruction, reportInstruction, blockerInstruction, subagentInstruction };
+}
+
+// ── Harness meta header ──────────────────────────────────────────────
+
+function harnessMeta(state: IterativeGoalState): string {
+  const v = state.evaluator.lastVerdict;
+  return [
+    `[HARNESS_META] runId=${state.runId} cycle=${state.cycle} phase=${state.phase} status=${state.status}${v ? ` lastVerdict=${v.goal_met}/${v.confidence}` : ""}`,
+    ``,
+  ].join("\n");
+}
 
 // ── Research phase ──────────────────────────────────────────────────
 
@@ -17,6 +109,7 @@ export function renderResearchPrompt(
   subagentBackend: SubagentBackend,
 ): string {
   const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
+  const instructions = buildToolInstructions(snapshot, subagentBackend);
 
   let lastEvalBlock = "";
   if (state.evaluator.lastVerdict) {
@@ -57,15 +150,17 @@ export function renderResearchPrompt(
     `4. Identify the smallest safe slice of work to begin with.`,
     `5. List unresolved questions that need clarification.`,
     ``,
+    `TOOLS THIS CYCLE:`,
+    `- Shell: ${instructions.shellInstruction}`,
+    `- Subagent: ${instructions.subagentInstruction}`,
+    `- Report: ${instructions.reportInstruction}`,
+    `- Blockers: ${instructions.blockerInstruction}`,
+    ``,
     `IMPORTANT:`,
     `- Do NOT make any file edits during Research.`,
-    `- If you need to run shell commands, use goal_shell (not bash).`,
-    `- If subagent is unavailable, perform single-agent scouting.`,
     `- Do NOT call MCP servers not listed in the capability inventory.`,
     `- Do NOT stop or declare completion. Completion is evaluator-only.`,
-    ``,
-    `When finished, call goal_report_phase_result with phase="research" and your findings.`,
-    `If goal_report_phase_result is not in your available tool list, write your findings as the final assistant message. The harness will synthesize it automatically.`,
+    `- Do NOT invent tools not listed in the capability preflight.`,
   ].join("\n");
 }
 
@@ -77,6 +172,7 @@ export function renderPlanPrompt(
   subagentBackend: SubagentBackend,
 ): string {
   const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
+  const instructions = buildToolInstructions(snapshot, subagentBackend);
 
   return [
     `[ITERATIVE-GOAL PHASE 2/4: PLAN]`,
@@ -99,8 +195,7 @@ export function renderPlanPrompt(
           `goal_met=${state.evaluator.lastVerdict.goal_met}`,
           `confidence=${state.evaluator.lastVerdict.confidence}`,
           ...state.evaluator.lastVerdict.remaining_work.map(
-            (w) =>
-              `  [${w.priority}] ${w.description}`,
+            (w) => `  [${w.priority}] ${w.description}`,
           ),
         ].join("\n")
       : "No evaluator feedback yet.",
@@ -110,23 +205,28 @@ export function renderPlanPrompt(
     `Plan Instructions:`,
     `1. Read the most recent Research artifact to understand what's been found.`,
     `2. Propose a bounded implementation plan for THIS cycle only.`,
-    `3. Include specific files expected to change.`,
+    `3. Include specific files expected to change (exact paths).`,
     `4. Include tests or gates that verify correctness.`,
     `5. Include safety invariants that must not be violated.`,
     `6. Include a fallback path if the implementation fails.`,
     `7. State assumptions explicitly.`,
     ``,
     `Required Plan Sections:`,
-    `- Exact files to modify`,
+    `- Exact files to modify (the "allowlist")`,
     `- Change descriptions per file`,
     `- Tests to write/run`,
     `- Safety invariants to preserve`,
     `- Fallback plan if blocked`,
     `- No-production-write confirmation`,
     ``,
+    `TOOLS THIS CYCLE:`,
+    `- Shell: ${instructions.shellInstruction}`,
+    `- Subagent: ${instructions.subagentInstruction}`,
+    `- Report: ${instructions.reportInstruction}`,
+    `- Blockers: ${instructions.blockerInstruction}`,
+    ``,
     `If information is missing, state assumptions and choose the safest non-destructive next step.`,
-    `Do NOT stop. Call goal_report_phase_result when done.`,
-    `If goal_report_phase_result is not in your available tool list, write your plan as the final assistant message. The harness will synthesize it automatically.`,
+    `Do NOT stop. Report your plan as the final message.`,
   ].join("\n");
 }
 
@@ -138,6 +238,13 @@ export function renderImplementPrompt(
   subagentBackend: SubagentBackend,
 ): string {
   const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
+  const instructions = buildToolInstructions(snapshot, subagentBackend);
+
+  // Finalization policy text
+  const fp = state.finalizationPolicy;
+  const finalizationText = fp.allowGitFinalization
+    ? "Git finalization is ENABLED. You may commit changes."
+    : "Git finalization is DISABLED. DO NOT attempt git add/commit/push. The harness will produce a patch instead.";
 
   return [
     `[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]`,
@@ -152,21 +259,28 @@ export function renderImplementPrompt(
     ``,
     `Implementation Instructions:`,
     `1. Read the Plan artifact from this cycle.`,
-    `2. Execute exactly ONE bounded slice of work.`,
+    `2. Execute exactly ONE bounded slice of work — stay within the plan's file allowlist.`,
     `3. Before editing, verify repo/worktree state is clean.`,
-    `4. If a required tool is unavailable, use extension fallback (goal_shell, etc.).`,
-    `5. Record any blockers or issues with goal_record_blocker.`,
-    `6. After implementation, call goal_report_phase_result.`,
+    `4. If a required tool is unavailable, use available fallbacks.`,
+    `5. Record any blockers or issues explicitly.`,
+    `6. After implementation, write a detailed summary.`,
     ``,
     `CRITICAL RULES:`,
     `- Preserve user dirty worktrees. Do not force-clean.`,
     `- If destructive operations are needed, they require operator approval.`,
     `- Do NOT stop if a tool is missing; use fallback or record blocker.`,
     `- Do NOT declare goal completion. The evaluator decides.`,
-    `- Do NOT delegate to subagents for operations known to be harness-blocked (e.g., git writes).`,
-    `- Subagents must return within 5 minutes or be considered failed. Fall back to single-agent work.`,
+    `- Do NOT edit files outside the plan's allowlist.`,
+    `- Subagents must return within 5 minutes or be considered failed.`,
+    `- ${finalizationText}`,
     ``,
-    `If goal_report_phase_result is not in your available tool list, write your implementation summary as the final assistant message. The harness will synthesize it automatically.`,
+    `TOOLS THIS CYCLE:`,
+    `- Shell: ${instructions.shellInstruction}`,
+    `- Subagent: ${instructions.subagentInstruction}`,
+    `- Report: ${instructions.reportInstruction}`,
+    `- Blockers: ${instructions.blockerInstruction}`,
+    ``,
+    `Write your implementation summary as the final message. The harness will collect changed file info and validate against the plan.`,
   ].join("\n");
 }
 
@@ -178,6 +292,32 @@ export function renderValidatePrompt(
   subagentBackend: SubagentBackend,
 ): string {
   const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
+  const instructions = buildToolInstructions(snapshot, subagentBackend);
+
+  const cycleDir = `.pi/iterative-goal/runs/${state.runId}/cycles/${state.cycle}/validate`;
+
+  // Generate validation script (harness-owned, not model-written)
+  const validationScript = [
+    `#!/usr/bin/env bash`,
+    `set -euo pipefail`,
+    `ARTIFACT_DIR="${cycleDir}"`,
+    `mkdir -p "$ARTIFACT_DIR"`,
+    `{`,
+    `  git status --porcelain`,
+    `  echo`,
+    `  echo "=== FULL GIT STATUS ==="`,
+    `  git status`,
+    `  echo`,
+    `  echo "=== GIT DIFF STAT ==="`,
+    `  git diff --stat`,
+    `  echo`,
+    `  echo "=== CHANGED FILES ==="`,
+    `  git diff --name-only`,
+    `  echo`,
+    `  echo "=== RECENT LOG ==="`,
+    `  git log --oneline -5`,
+    `} > "$ARTIFACT_DIR/repo-state.txt" 2>&1`,
+  ].join("\n");
 
   return [
     `[ITERATIVE-GOAL PHASE 4/4: VALIDATE]`,
@@ -194,37 +334,35 @@ export function renderValidatePrompt(
     capSummary,
     ``,
     `Validation Instructions:`,
-    `1. Collect validation evidence and PERSIST IT TO FILES:`,
-    `   a. Run tests and capture full output:`,
-    `      goal_shell command="<test command> 2>&1 | tee .pi/iterative-goal/test-results-cycle-${state.cycle}.txt"`,
-    `   b. Run gate checks and capture output:`,
-    `      goal_shell command="<gate command> 2>&1 | tee .pi/iterative-goal/gate-results-cycle-${state.cycle}.txt"`,
-    `   c. Capture repo state:`,
-    `      goal_shell command="git status && git log --oneline -5 > .pi/iterative-goal/repo-state-cycle-${state.cycle}.txt"`,
-    `2. Create a validation summary in your phase result with structured counts (tests passed/failed, gates passed/failed).`,
-    `3. List any known failures or blockers, distinguishing EXTERNAL vs HARNESS blockers.`,
-    `4. Do NOT self-certify goal completion.`,
-    `5. Call goal_report_phase_result with your validation summary.`,
-    `6. If git commit operations are blocked, generate a patch file instead:`,
-    `   goal_shell command="git diff > .pi/iterative-goal/final-cycle-${state.cycle}.patch"`,
+    `1. Collect validation evidence and PERSIST IT TO FILES in: ${cycleDir}/`,
+    `2. Run tests and capture output to ${cycleDir}/test-results.txt`,
+    `3. Run gate checks and capture to ${cycleDir}/gate-results.txt`,
+    `4. Capture repo state to ${cycleDir}/repo-state.txt`,
+    ``,
+    `Harness-generated validation script:`,
+    `\`\`\`bash`,
+    validationScript,
+    `\`\`\``,
+    ``,
+    `Run this script via your shell tool, then run your specific test/gate commands.`,
+    `Append test output: YOUR_TEST_COMMAND >> ${cycleDir}/test-results.txt 2>&1`,
     ``,
     `STATUS VOCABULARY (use these exact terms in reports):`,
     `- PASS / FAIL — for individual gates and tests`,
-    `- BLOCKED_EXTERNAL — items requiring credentials, operator action, or permissions outside the harness`,
-    `- BLOCKED_HARNESS — items blocked by harness safety policy (e.g., git writes)`,
+    `- BLOCKED_EXTERNAL — items requiring credentials, operator action`,
+    `- BLOCKED_HARNESS — items blocked by harness safety policy`,
     `- NOT_RUN — items not yet attempted`,
-    `For overall status use one of:`,
-    `- HARNESS_VALIDATED — all in-harness work passes, no blockers`,
-    `- HARNESS_VALIDATED_EXTERNAL_BLOCKERS — all in-harness work passes, external blockers remain`,
-    `- IN_PROGRESS — implementation or validation still needed`,
-    `Do NOT use "Final", "complete", or "all waves complete" unless the evaluator has accepted the goal.`,
     ``,
-    `IMPORTANT:`,
-    `- The evaluator is the ONLY entity that can declare the goal complete.`,
-    `- Even if everything looks perfect, you must report and let the evaluator judge.`,
-    `- Include both positive evidence and remaining issues.`,
+    `For overall status: HARNESS_VALIDATED / HARNESS_VALIDATED_EXTERNAL_BLOCKERS / IN_PROGRESS`,
+    `Do NOT use "Final" or "complete" unless evaluator has accepted.`,
     ``,
-    `If goal_report_phase_result is not in your available tool list, write your validation summary as the final assistant message. The harness will synthesize it automatically.`,
+    `TOOLS THIS CYCLE:`,
+    `- Shell: ${instructions.shellInstruction}`,
+    `- Report: ${instructions.reportInstruction}`,
+    `- Blockers: ${instructions.blockerInstruction}`,
+    ``,
+    `IMPORTANT: The evaluator is the ONLY entity that can declare the goal complete.`,
+    `Even if everything looks perfect, report and let the evaluator judge.`,
   ].join("\n");
 }
 
@@ -236,8 +374,7 @@ export function renderPhasePrompt(
   snapshot: CapabilitySnapshot,
   subagentBackend: SubagentBackend,
 ): string {
-  const verdict = state.evaluator.lastVerdict;
-  const meta = `[HARNESS_META] runId=${state.runId} cycle=${state.cycle} phase=${phase} status=${state.status}${verdict ? ` lastVerdict=${verdict.goal_met}/${verdict.confidence}` : ""}\n\n`;
+  const meta = harnessMeta(state);
 
   let body: string;
   switch (phase) {
@@ -277,12 +414,13 @@ export function renderResumePrompt(
     `Status: ${state.status}`,
     `Cycle: ${state.cycle}`,
     `Current Phase: ${state.phase}`,
+    `Lock: active=${state.lock.activeRunId ?? "none"} phase=${state.lock.activePhaseId ?? "none"}`,
     ``,
     `Rehydration Checklist:`,
-    `1. Read .pi/iterative-goal/latest.md for the full state summary.`,
-    `2. Read the last few lines of .pi/iterative-goal/events.jsonl for recent events.`,
+    `1. Read .pi/iterative-goal/runs/${state.runId}/latest.md for the full state summary.`,
+    `2. Read the last few lines of events.jsonl for recent events.`,
     `3. Inspect current repo state (git status, branch, active worktrees).`,
-    `4. Read the most recent artifact for phase '${state.phase}' from cycle ${state.cycle}.`,
+    `4. Read the most recent result.json for phase '${state.phase}' in cycles/${state.cycle}.`,
     `5. Resume the '${state.phase}' phase from where it was interrupted.`,
     ``,
     `Recorded errors (${state.errors.length}):`,
@@ -293,14 +431,14 @@ export function renderResumePrompt(
     ``,
     capSummary,
     ``,
-    `Resume the '${state.phase}' phase. Do NOT declare the goal complete - only the evaluator can.`,
+    `Resume the '${state.phase}' phase. Do NOT declare the goal complete — only the evaluator can.`,
   ].join("\n");
 }
 
 // ── Compaction recovery summary ─────────────────────────────────────
 
 export function renderCompactionSummary(state: IterativeGoalState): string {
-  const lines = [
+  return [
     `[ITERATIVE-GOAL COMPACTION SNAPSHOT]`,
     `Run ID: ${state.runId}`,
     `Goal: ${state.goal}`,
@@ -311,14 +449,80 @@ export function renderCompactionSummary(state: IterativeGoalState): string {
     `Errors: ${state.errors.length}`,
     `Artifacts: R:${state.artifacts.research.length} P:${state.artifacts.plans.length} I:${state.artifacts.implementations.length} V:${state.artifacts.validations.length}`,
     ``,
-    `Persistent state files:`,
-    `  .pi/iterative-goal/state.json`,
-    `  .pi/iterative-goal/events.jsonl`,
-    `  .pi/iterative-goal/latest.md`,
-    `  .pi/iterative-goal/evaluator-verdicts.jsonl`,
+    `Run-scoped state files:`,
+    `  .pi/iterative-goal/runs/${state.runId}/`,
+    `  .pi/iterative-goal/active-run.json`,
     ``,
     `After compaction, re-read latest.md and resume phase '${state.phase}'.`,
-  ];
+  ].join("\n");
+}
 
-  return lines.join("\n");
+// ── Validation script generator ─────────────────────────────────────
+
+export function generateValidationScript(
+  state: IterativeGoalState,
+  testCommand: string,
+  gateCommand: string,
+): string {
+  const cycleDir = `.pi/iterative-goal/runs/${state.runId}/cycles/${state.cycle}/validate`;
+
+  return [
+    `#!/usr/bin/env bash`,
+    `set -euo pipefail`,
+    `ARTIFACT_DIR="${cycleDir}"`,
+    `mkdir -p "$ARTIFACT_DIR"`,
+    ``,
+    `echo "=== VALIDATION RUN ${state.runId} / cycle ${state.cycle} ===" | tee "$ARTIFACT_DIR/validation.log"`,
+    `echo "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$ARTIFACT_DIR/validation.log"`,
+    ``,
+    `# 1. Repo state`,
+    `echo "--- Repo State ---" > "$ARTIFACT_DIR/repo-state.txt"`,
+    `{`,
+    `  echo "Git status (porcelain):"`,
+    `  git status --porcelain`,
+    `  echo`,
+    `  echo "Full git status:"`,
+    `  git status`,
+    `  echo`,
+    `  echo "Changed files:"`,
+    `  git diff --name-only`,
+    `  echo`,
+    `  echo "Diff stat:"`,
+    `  git diff --stat`,
+    `  echo`,
+    `  echo "Recent log:"`,
+    `  git log --oneline -5`,
+    `} >> "$ARTIFACT_DIR/repo-state.txt" 2>&1`,
+    `echo "Repo state captured."`,
+    ``,
+    `# 2. Test command`,
+    `echo "--- Tests ---" > "$ARTIFACT_DIR/test-results.txt"`,
+    `if [ -n "${testCommand}" ]; then`,
+    `  echo "Running: ${testCommand}"`,
+    `  eval "${testCommand}" >> "$ARTIFACT_DIR/test-results.txt" 2>&1`,
+    `  TEST_EXIT=$?`,
+    `  echo "Test exit code: $TEST_EXIT" | tee -a "$ARTIFACT_DIR/test-results.txt"`,
+    `else`,
+    `  echo "No test command provided." | tee -a "$ARTIFACT_DIR/test-results.txt"`,
+    `  TEST_EXIT=0`,
+    `fi`,
+    ``,
+    `# 3. Gate command`,
+    `echo "--- Gates ---" > "$ARTIFACT_DIR/gate-results.txt"`,
+    `if [ -n "${gateCommand}" ]; then`,
+    `  echo "Running: ${gateCommand}"`,
+    `  eval "${gateCommand}" >> "$ARTIFACT_DIR/gate-results.txt" 2>&1 || true`,
+    `  echo "Gate check completed."`,
+    `else`,
+    `  echo "No gate command provided."`,
+    `fi`,
+    ``,
+    `# 4. Generate patch`,
+    `git diff > "$ARTIFACT_DIR/diff.patch" 2>&1 || true`,
+    `echo "Patch saved to $ARTIFACT_DIR/diff.patch"`,
+    ``,
+    `echo "=== VALIDATION COMPLETE ===" | tee -a "$ARTIFACT_DIR/validation.log"`,
+    `echo "Finished at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$ARTIFACT_DIR/validation.log"`,
+    `exit $TEST_EXIT`,
+  ].join("\n");
 }

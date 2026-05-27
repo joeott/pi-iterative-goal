@@ -5,8 +5,8 @@
  * and active recommendations. Mirrors the pi-autoresearch dashboard.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Text, Box, Spacer } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Text, Box, Spacer } from "@earendil-works/pi-tui";
 import type { IterativeGoalState, PhaseArtifact } from "./types.js";
 import { PHASE_ORDER } from "./types.js";
 import { type StateManagerAPI } from "./state.js";
@@ -92,7 +92,9 @@ class DashboardComponent {
     // Evaluator
     const evalInfo = s.evaluator.lastVerdict
       ? `Evaluator: goal_met=${s.evaluator.lastVerdict.goal_met}, confidence=${s.evaluator.lastVerdict.confidence}`
-      : `Evaluator: no verdict yet`;
+      : s.evaluatorState
+        ? `Evaluator: ${s.evaluatorState.status}`
+        : `Evaluator: not started`;
     lines.push(`  ║ ${padRight(evalInfo, W - 8)}  ║`);
 
     lines.push(`  ╠${"═".repeat(Math.min(W - 4, 56))}╣`);
