@@ -232,7 +232,11 @@ export interface PersistenceEnvelope {
 
 // ── Phase result (LLM-facing) ────────────────────────────────────────
 
+// WARNING: When adding fields to PhaseResultParams, update the
+// PhaseResultParamsSchema mapping in the validatePhaseParams function.
 export const PhaseResultParams = Type.Object({
+  runId: Type.String({ description: "MUST match the [HARNESS_META] runId from the phase prompt" }),
+  phaseAttemptId: Type.String({ description: "MUST match the [HARNESS_META] phaseAttemptId from the phase prompt" }),
   phase: StringEnum([...PHASE_ORDER] as const),
   status: StringEnum(["completed", "failed_recoverable", "blocked_by_safety_policy"] as const),
   summary: Type.String({ description: "Brief summary of what was accomplished or attempted" }),
@@ -288,6 +292,7 @@ export const PhaseEventKind = [
   "phase_cancelled",
   "run_paused",
   "run_resumed",
+  "stale_phase_output_ignored",
 ] as const;
 export type PhaseEventKind = (typeof PhaseEventKind)[number];
 
