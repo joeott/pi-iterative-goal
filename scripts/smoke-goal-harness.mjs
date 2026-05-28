@@ -12,6 +12,9 @@
  * 8. Resume prompt carries nonce + tool contract
  * 9. agent_end synthesis handles plain-string and structured assistant output
  * 10. goal-status latestArtifact shape is parseable
+ * 11. AWS CLI config parsing and safety classification behave as expected
+ * 12. Resume prompt exposes AWS tool guidance when enabled
+ * 13. Git finalization config and prompt guidance behave as expected
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -43,7 +46,11 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
     phase: "implement",
     requiredPhaseOrder: ["research", "plan", "implement", "validate"],
     evaluator: { model: "deepseek/deepseek-v4-pro", provider: "openrouter", completionRequiresEvaluator: true },
-    config: { primaryModel: { provider: "openrouter", model: "deepseek/deepseek-v4-pro" }, fallbackModels: [], blockedModels: [] },
+    config: {
+      primaryModel: { provider: "openrouter", model: "deepseek/deepseek-v4-pro" },
+      fallbackModels: [],
+      blockedModels: [],
+    },
     capabilities: null,
     errors: [],
     artifacts: { research: [], plans: [], implementations: [], validations: [], evaluatorReports: [] },
@@ -80,6 +87,16 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
     };
   }
   if (!v1Fixture.config.modelHealth) v1Fixture.config.modelHealth = {};
+  if (!v1Fixture.config.awsCli) {
+    v1Fixture.config.awsCli = {
+      enabled: false,
+      defaultRegion: "us-east-1",
+      profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+      requireSessionManagerPlugin: true,
+      allowMutatingFamilies: [],
+      preflight: null,
+    };
+  }
   v1Fixture.version = 2;
 
   eq(v1Fixture.version, 2);
@@ -87,6 +104,7 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
   eq(v1Fixture.finalizationPolicy.fallback, "patch");
   eq(v1Fixture.phaseAttempts.length, 0);
   ok(typeof v1Fixture.config.modelHealth === "object" && Object.keys(v1Fixture.config.modelHealth).length === 0, "modelHealth initialized as empty object");
+  eq(v1Fixture.config.awsCli.enabled, false);
   console.log("✓ Test 2: v1 state migrated to v2 without crash");
 }
 
@@ -238,6 +256,8 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
     mcpServers: [],
     model: "deepseek/deepseek-v4-pro",
     provider: "openrouter",
+    awsCli: null,
+    gitFinalization: null,
   };
 
   const prompt = renderResumePrompt(state, snapshot, { kind: "none" });
@@ -307,6 +327,158 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
   eq(parsed.latestArtifact.nonceMatched, false);
 
   console.log("✓ Test 10: goal-status latestArtifact shape is parseable");
+}
+
+// ── Test 11: AWS CLI config parsing and safety classification ──────
+
+{
+  const { loadAwsCliConfig, assessAwsCliArgs } = await import("../dist/aws-cli.js");
+
+  const cfg = loadAwsCliConfig("/Users/joe/Projects/unify");
+  eq(cfg.enabled, true);
+  eq(cfg.defaultRegion, "us-east-1");
+  deepStrictEqual(cfg.allowMutatingFamilies, [
+    "ec2-start-stop-wait",
+    "ssm-session",
+    "ssm-send-command",
+    "s3-sync",
+    "s3-cp",
+    "logs-tail",
+  ]);
+
+  const readOnly = assessAwsCliArgs(["sts", "get-caller-identity"], cfg, false);
+  eq(readOnly.allowed, true);
+  eq(readOnly.isMutation, false);
+
+  const blockedMutation = assessAwsCliArgs(["ssm", "send-command"], cfg, false);
+  eq(blockedMutation.allowed, false);
+
+  const allowedMutation = assessAwsCliArgs(["ssm", "send-command"], cfg, true);
+  eq(allowedMutation.allowed, true);
+  eq(allowedMutation.family, "ssm-send-command");
+
+  const blockedFamily = assessAwsCliArgs(["iam", "create-user"], cfg, true);
+  eq(blockedFamily.allowed, false);
+
+  console.log("✓ Test 11: AWS CLI config parsing and safety classification behave as expected");
+}
+
+// ── Test 12: Resume prompt includes AWS guidance when enabled ──────
+
+{
+  const { renderResumePrompt } = await import("../dist/phases.js");
+  const state = {
+    runId: "ig-aws",
+    goal: "Inspect AWS state",
+    goalCriterion: "AWS evidence collected",
+    status: "running",
+    cycle: 1,
+    phase: "research",
+    lock: { activeRunId: "ig-aws", activePhaseId: "ig-aws/c1/research/a1" },
+    errors: [],
+    evaluator: { lastVerdict: null },
+    artifacts: { research: [], plans: [], implementations: [], validations: [] },
+  };
+  const snapshot = {
+    activeTools: ["goal_report_phase_result", "goal_record_blocker", "goal_aws_cli"],
+    allTools: [
+      { name: "goal_report_phase_result", description: "", source: "extension" },
+      { name: "goal_record_blocker", description: "", source: "extension" },
+      { name: "goal_aws_cli", description: "", source: "extension" },
+    ],
+    commands: [],
+    hasBashTool: false,
+    hasSubagentTool: false,
+    hasAgentTool: false,
+    hasMcpTool: false,
+    mcpServers: [],
+    model: "deepseek/deepseek-v4-pro",
+    provider: "openrouter",
+    awsCli: {
+      enabled: true,
+      cliAvailable: true,
+      sessionManagerPluginAvailable: true,
+      availableProfiles: ["unify-old"],
+      resolvedProfile: "unify-old",
+      resolvedRegion: "us-east-1",
+      identity: null,
+      issues: [],
+      checkedAt: new Date().toISOString(),
+    },
+    gitFinalization: null,
+  };
+
+  const prompt = renderResumePrompt(state, snapshot, { kind: "none" });
+  ok(prompt.includes("Use goal_aws_cli for AWS operations"), "resume prompt includes AWS tool guidance");
+  ok(prompt.includes("profile=unify-old"), "resume prompt includes resolved AWS profile");
+
+  console.log("✓ Test 12: Resume prompt exposes AWS tool guidance when enabled");
+}
+
+// ── Test 13: Git finalization config and prompt guidance ───────────
+
+{
+  const { loadFinalizationPolicy, shouldBlockGitShellCommand } = await import("../dist/git.js");
+  const { renderResumePrompt } = await import("../dist/phases.js");
+
+  const policy = loadFinalizationPolicy("/Users/joe/Projects/unify");
+  eq(policy.allowGitFinalization, true);
+  eq(policy.allowCommit, true);
+  eq(policy.allowPush, true);
+  eq(policy.allowPR, true);
+  eq(policy.fallback, "patch");
+
+  eq(
+    shouldBlockGitShellCommand("git push -u origin test-branch", policy),
+    "Git finalization commands must use goal_git when iterativeGoal.finalization is enabled.",
+  );
+
+  const state = {
+    runId: "ig-git",
+    goal: "Finalize repo work",
+    goalCriterion: "Changes are committed and PR is opened",
+    status: "running",
+    cycle: 1,
+    phase: "implement",
+    lock: { activeRunId: "ig-git", activePhaseId: "ig-git/c1/implement/a1" },
+    errors: [],
+    evaluator: { lastVerdict: null },
+    artifacts: { research: [], plans: [], implementations: [], validations: [] },
+    finalizationPolicy: policy,
+  };
+  const snapshot = {
+    activeTools: ["goal_report_phase_result", "goal_record_blocker", "goal_git"],
+    allTools: [
+      { name: "goal_report_phase_result", description: "", source: "extension" },
+      { name: "goal_record_blocker", description: "", source: "extension" },
+      { name: "goal_git", description: "", source: "extension" },
+    ],
+    commands: [],
+    hasBashTool: false,
+    hasSubagentTool: false,
+    hasAgentTool: false,
+    hasMcpTool: false,
+    mcpServers: [],
+    model: "deepseek/deepseek-v4-pro",
+    provider: "openrouter",
+    awsCli: null,
+    gitFinalization: {
+      enabled: true,
+      allowCommit: true,
+      allowPush: true,
+      allowPR: true,
+      gitAvailable: true,
+      ghAvailable: true,
+      ghAuthenticated: true,
+      currentBranch: "feature/test",
+    },
+  };
+
+  const prompt = renderResumePrompt(state, snapshot, { kind: "none" });
+  ok(prompt.includes("Use goal_git for git actions"), "resume prompt includes goal_git guidance");
+  ok(prompt.includes("push=yes"), "resume prompt includes git push capability");
+
+  console.log("✓ Test 13: Git finalization config and prompt guidance behave as expected");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

@@ -10,6 +10,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { checkCommand, isSafeReadOnly, isDestructive } from "./safety.js";
+import { shouldBlockAwsShellCommand } from "./aws-cli.js";
+import { shouldBlockGitShellCommand } from "./git.js";
+import type { AwsCliConfig, FinalizationPolicy } from "./types.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 
@@ -53,7 +56,11 @@ export interface GoalShellDetails {
   safetyCheckResult?: string;
 }
 
-export function registerGoalShellTool(pi: ExtensionAPI): void {
+export function registerGoalShellTool(
+  pi: ExtensionAPI,
+  getAwsCliConfig?: () => AwsCliConfig | null,
+  getFinalizationPolicy?: () => FinalizationPolicy | null,
+): void {
   pi.registerTool({
     name: "goal_shell",
     label: "Goal Shell",
@@ -96,6 +103,54 @@ export function registerGoalShellTool(pi: ExtensionAPI): void {
             cwd,
             purpose,
             safetyCheckResult: safetyResult.reason,
+          } satisfies GoalShellDetails,
+        };
+      }
+
+      const awsShellBlock = shouldBlockAwsShellCommand(command, getAwsCliConfig?.() ?? {
+        enabled: false,
+        defaultRegion: "us-east-1",
+        profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+        requireSessionManagerPlugin: true,
+        allowMutatingFamilies: [],
+        preflight: null,
+      });
+      if (awsShellBlock) {
+        log(`BLOCKED AWS SHELL: ${awsShellBlock}`);
+        return {
+          content: [{ type: "text" as const, text: `SAFETY BLOCK: ${awsShellBlock}` }],
+          details: {
+            exitCode: null,
+            killed: false,
+            truncated: false,
+            allowed: false,
+            command,
+            cwd,
+            purpose,
+            safetyCheckResult: awsShellBlock,
+          } satisfies GoalShellDetails,
+        };
+      }
+      const gitShellBlock = shouldBlockGitShellCommand(command, getFinalizationPolicy?.() ?? {
+        allowGitFinalization: false,
+        allowCommit: false,
+        allowPush: false,
+        allowPR: false,
+        fallback: "patch",
+      });
+      if (gitShellBlock) {
+        log(`BLOCKED GIT SHELL: ${gitShellBlock}`);
+        return {
+          content: [{ type: "text" as const, text: `SAFETY BLOCK: ${gitShellBlock}` }],
+          details: {
+            exitCode: null,
+            killed: false,
+            truncated: false,
+            allowed: false,
+            command,
+            cwd,
+            purpose,
+            safetyCheckResult: gitShellBlock,
           } satisfies GoalShellDetails,
         };
       }

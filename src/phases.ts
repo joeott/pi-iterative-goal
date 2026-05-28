@@ -26,9 +26,21 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
   const hasReportResult = hasTool(ns, "goal_report_phase_result");
   const hasRecordBlocker = hasTool(ns, "goal_record_blocker");
   const hasSubagentTool = snapshot.hasSubagentTool || snapshot.hasAgentTool;
+  const hasAwsCliTool = hasTool(ns, "goal_aws_cli");
+  const hasGitTool = hasTool(ns, "goal_git");
 
   const shellInstruction = hasGoalShell ? "Use goal_shell for shell commands." :
     hasBash ? "Use bash for shell commands." : "No shell tool. Describe commands — harness will execute them.";
+  const awsInstruction = snapshot.awsCli?.enabled && hasAwsCliTool
+    ? `Use goal_aws_cli for AWS operations (profile=${snapshot.awsCli.resolvedProfile ?? "unresolved"}, region=${snapshot.awsCli.resolvedRegion ?? "unknown"}).`
+    : snapshot.awsCli?.enabled
+      ? "AWS support is configured, but goal_aws_cli is not available."
+      : "AWS support not enabled for this repo.";
+  const gitInstruction = snapshot.gitFinalization?.enabled && hasGitTool
+    ? `Use goal_git for git actions (commit=${snapshot.gitFinalization.allowCommit ? "yes" : "no"}, push=${snapshot.gitFinalization.allowPush ? "yes" : "no"}, pr=${snapshot.gitFinalization.allowPR ? "yes" : "no"}).`
+    : snapshot.gitFinalization?.enabled
+      ? "Git finalization is configured, but goal_git is not available."
+      : "Git finalization not enabled for this repo.";
 
   const reportInstruction = hasReportResult
     ? "Call goal_report_phase_result with runId, phaseAttemptId, phase, status, summary, artifacts_produced[], blockers[], recommendations[]."
@@ -42,7 +54,7 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
     ? (hasTool(ns, "goal_subagent") ? "Use goal_subagent for delegation." : `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool.`)
     : "No subagent backend. Perform ALL work in this session.";
 
-  return { shellInstruction, reportInstruction, blockerInstruction, subagentInstruction };
+  return { shellInstruction, awsInstruction, gitInstruction, reportInstruction, blockerInstruction, subagentInstruction };
 }
 
 function harnessMeta(state: IterativeGoalState): string {
@@ -89,6 +101,8 @@ export function renderResearchPrompt(state: IterativeGoalState, snapshot: Capabi
     "5. List unresolved questions that need clarification.", "",
     "TOOLS THIS CYCLE:",
     `- Shell: ${ti.shellInstruction}`,
+    `- AWS: ${ti.awsInstruction}`,
+    `- Git: ${ti.gitInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
@@ -137,6 +151,8 @@ export function renderPlanPrompt(state: IterativeGoalState, snapshot: Capability
     "- No-production-write confirmation", "",
     "TOOLS THIS CYCLE:",
     `- Shell: ${ti.shellInstruction}`,
+    `- AWS: ${ti.awsInstruction}`,
+    `- Git: ${ti.gitInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
@@ -175,9 +191,12 @@ export function renderImplementPrompt(state: IterativeGoalState, snapshot: Capab
     "- Do NOT declare goal completion.",
     "- Do NOT edit outside plan allowlist.",
     "- Subagents: 5-minute timeout.",
-    `- ${finalizationText}`, "",
+    `- ${finalizationText}`,
+    "- Use goal_git for any branch, add, commit, push, or PR action when enabled.", "",
     "TOOLS THIS CYCLE:",
     `- Shell: ${ti.shellInstruction}`,
+    `- AWS: ${ti.awsInstruction}`,
+    `- Git: ${ti.gitInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
@@ -218,6 +237,8 @@ export function renderValidatePrompt(state: IterativeGoalState, snapshot: Capabi
     "- Overall: HARNESS_VALIDATED / HARNESS_VALIDATED_EXTERNAL_BLOCKERS / IN_PROGRESS", "",
     "TOOLS THIS CYCLE:",
     `- Shell: ${ti.shellInstruction}`,
+    `- AWS: ${ti.awsInstruction}`,
+    `- Git: ${ti.gitInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
     `IDENTITY NONCE: Include runId="${state.runId}" phaseAttemptId="${state.lock.activePhaseId || ""}" in all harness tool calls.`, "",
