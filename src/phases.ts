@@ -248,7 +248,7 @@ export function renderPhasePrompt(
 // ── Resume ───────────────────────────────────────────────────────────
 
 export function renderResumePrompt(state: IterativeGoalState, snapshot: CapabilitySnapshot, subagentBackend: SubagentBackend): string {
-  const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
+  const phasePrompt = renderPhasePrompt(state.phase, state, snapshot, subagentBackend);
   return [
     "[ITERATIVE-GOAL: RESUMING]", "",
     `Run ID: ${state.runId}`, `Goal: ${state.goal}`, `Criterion: ${state.goalCriterion}`,
@@ -264,8 +264,13 @@ export function renderResumePrompt(state: IterativeGoalState, snapshot: Capabili
     `Errors (${state.errors.length}):`,
     ...state.errors.slice(-5).map(e =>
       `  [${e.phase}] ${e.kind}${e.missingTool ? `:${e.missingTool}` : ""} - ${e.recoveryAction}${e.resolved ? " \u2713" : ""}`),
-    "", capSummary, "",
-    "Resume the phase. Do NOT declare goal complete.",
+    "",
+    "Resume Contract:",
+    "- Continue the current phase using the live capability inventory below.",
+    "- Use the same runId / phaseAttemptId identity nonce rules as a fresh phase.",
+    "- Do NOT declare goal complete.",
+    "",
+    phasePrompt,
   ].join("\n");
 }
 

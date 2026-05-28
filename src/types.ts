@@ -156,6 +156,11 @@ export interface PhaseArtifact {
   timestamp: string;
   toolCalls: Array<{ name: string; args: Record<string, unknown> }>;
   toolErrors: Array<{ name: string; error: string }>;
+  synthesis?: {
+    source: "tool_report" | "assistant_text" | "assistant_tool_calls" | "synthetic_failure";
+    nonceMatched: boolean;
+    reason?: string;
+  };
 }
 
 // ── Main goal state ──────────────────────────────────────────────────

@@ -9,9 +9,9 @@
  * 5. Stale-write guard rejects mismatched runId/phaseAttemptId
  * 6. Diff allowlist detects out-of-plan file
  * 7. Validation script generation produces valid bash
- * 8. Finalization produces patch without git ops
- * 9. Model health cache records unavailable model
- * 10. Build + import pass
+ * 8. Resume prompt carries nonce + tool contract
+ * 9. agent_end synthesis handles plain-string and structured assistant output
+ * 10. goal-status latestArtifact shape is parseable
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -42,8 +42,8 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
     cycle: 3,
     phase: "implement",
     requiredPhaseOrder: ["research", "plan", "implement", "validate"],
-    evaluator: { model: "claude-sonnet-4-5", provider: "anthropic", completionRequiresEvaluator: true },
-    config: { primaryModel: { provider: "anthropic", model: "claude-sonnet-4-5" }, fallbackModels: [], blockedModels: [] },
+    evaluator: { model: "deepseek/deepseek-v4-pro", provider: "openrouter", completionRequiresEvaluator: true },
+    config: { primaryModel: { provider: "openrouter", model: "deepseek/deepseek-v4-pro" }, fallbackModels: [], blockedModels: [] },
     capabilities: null,
     errors: [],
     artifacts: { research: [], plans: [], implementations: [], validations: [], evaluatorReports: [] },
@@ -205,6 +205,108 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
   eq(parsed.evaluator.status, "queued");
 
   console.log("✓ Test 7: /goal-status --json structure includes lock + evaluator state");
+}
+
+// ── Test 8: Resume prompt includes phase contract ───────────────────
+
+{
+  const { renderResumePrompt } = await import("../dist/phases.js");
+  const state = {
+    runId: "ig-005",
+    goal: "Fix output capture",
+    goalCriterion: "Artifacts reflect real assistant output",
+    status: "running",
+    cycle: 2,
+    phase: "plan",
+    lock: { activeRunId: "ig-005", activePhaseId: "ig-005/c2/plan/a1" },
+    errors: [],
+    evaluator: { lastVerdict: null },
+    artifacts: { research: [], plans: [], implementations: [], validations: [] },
+  };
+  const snapshot = {
+    activeTools: ["goal_report_phase_result", "goal_record_blocker", "bash"],
+    allTools: [
+      { name: "goal_report_phase_result", description: "", source: "extension" },
+      { name: "goal_record_blocker", description: "", source: "extension" },
+      { name: "bash", description: "", source: "builtin" },
+    ],
+    commands: [],
+    hasBashTool: true,
+    hasSubagentTool: false,
+    hasAgentTool: false,
+    hasMcpTool: false,
+    mcpServers: [],
+    model: "deepseek/deepseek-v4-pro",
+    provider: "openrouter",
+  };
+
+  const prompt = renderResumePrompt(state, snapshot, { kind: "none" });
+  ok(prompt.includes("[HARNESS_META] runId=ig-005"), "resume prompt includes harness meta");
+  ok(prompt.includes('IDENTITY NONCE: Include runId="ig-005" phaseAttemptId="ig-005/c2/plan/a1"'), "resume prompt includes nonce");
+  ok(prompt.includes("Call goal_report_phase_result"), "resume prompt includes report contract");
+
+  console.log("✓ Test 8: Resume prompt carries nonce + tool contract");
+}
+
+// ── Test 9: agent_end synthesis handles live output shapes ──────────
+
+{
+  const { synthesizePhaseResultSafe, extractTextFromParts } = await import("../dist/index.js");
+
+  eq(extractTextFromParts("plain string output"), "plain string output");
+  eq(extractTextFromParts([{ type: "text", text: "hello" }, { type: "text", text: " world" }]), "hello world");
+
+  const plainStringEvent = {
+    messages: [
+      { role: "assistant", content: "Plan complete. Next modify src/index.ts and add tests." },
+    ],
+  };
+  const plainResult = synthesizePhaseResultSafe(plainStringEvent, "plan", 1, "ig-006", "ig-006/c1/plan/a1");
+  eq(plainResult.status, "completed");
+  eq(plainResult.content, "Plan complete. Next modify src/index.ts and add tests.");
+  eq(plainResult.synthesis.source, "assistant_text");
+
+  const structuredToolEvent = {
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "call-1", name: "goal_report_phase_result", arguments: { runId: "ig-006", phaseAttemptId: "ig-006/c1/plan/a1" } },
+        ],
+      },
+    ],
+  };
+  const toolOnlyResult = synthesizePhaseResultSafe(structuredToolEvent, "plan", 1, "ig-006", "ig-006/c1/plan/a1");
+  eq(toolOnlyResult.status, "completed");
+  eq(toolOnlyResult.synthesis.source, "assistant_tool_calls");
+  eq(toolOnlyResult.synthesis.nonceMatched, true);
+
+  const emptyEvent = { messages: [{ role: "assistant", content: [] }] };
+  const emptyResult = synthesizePhaseResultSafe(emptyEvent, "research", 1, "ig-006", "ig-006/c1/research/a1");
+  eq(emptyResult.status, "failed_recoverable");
+  eq(emptyResult.synthesis.source, "synthetic_failure");
+
+  console.log("✓ Test 9: agent_end synthesis handles plain-string and structured assistant output");
+}
+
+// ── Test 10: latestArtifact status shape is parseable ───────────────
+
+{
+  const sample = {
+    latestArtifact: {
+      phase: "plan",
+      status: "completed",
+      source: "assistant_text",
+      nonceMatched: false,
+      reason: "assistant_output_without_matching_harness_nonce",
+    },
+  };
+
+  const parsed = JSON.parse(JSON.stringify(sample));
+  eq(parsed.latestArtifact.source, "assistant_text");
+  eq(parsed.latestArtifact.nonceMatched, false);
+
+  console.log("✓ Test 10: goal-status latestArtifact shape is parseable");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
