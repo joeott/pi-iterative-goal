@@ -129,6 +129,70 @@ function getLastArtifactForPhase(
   }
 }
 
+function getLastArtifactForPhaseCycle(
+  state: ReturnType<StateManagerAPI["getState"]>,
+  phase: Phase,
+  cycle: number,
+): PhaseArtifact | null {
+  const artifact = getLastArtifactForPhase(state, phase);
+  return artifact?.cycle === cycle ? artifact : null;
+}
+
+function normalizeContentParts(content: unknown): any[] {
+  if (Array.isArray(content)) return content;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!content || typeof content !== "object") return [];
+  if ("type" in (content as Record<string, unknown>)) return [content];
+  return [];
+}
+
+export function extractTextFromParts(content: unknown): string {
+  const parts = normalizeContentParts(content);
+  const text: string[] = [];
+
+  for (const part of parts) {
+    if (typeof part === "string") {
+      text.push(part);
+      continue;
+    }
+    if (!part || typeof part !== "object") continue;
+    const record = part as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") {
+      text.push(record.text);
+      continue;
+    }
+    if (typeof record.text === "string") {
+      text.push(record.text);
+    }
+  }
+
+  return text.join("").trim();
+}
+
+function extractToolCallsFromParts(content: unknown): Array<{ name: string; args: Record<string, unknown> }> {
+  const parts = normalizeContentParts(content);
+  const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+
+  for (const part of parts) {
+    if (!part || typeof part !== "object") continue;
+    const record = part as Record<string, unknown>;
+    if (record.type === "toolCall" && typeof record.name === "string") {
+      toolCalls.push({
+        name: record.name,
+        args: record.arguments && typeof record.arguments === "object"
+          ? record.arguments as Record<string, unknown>
+          : {},
+      });
+    }
+  }
+
+  return toolCalls;
+}
+
+function isSyntheticCaptureFailure(artifact: PhaseArtifact | null): boolean {
+  return artifact?.status === "failed_recoverable" && artifact.synthesis?.source === "synthetic_failure";
+}
+
 // ── Diff verification ────────────────────────────────────────────
 
 async function verifyImplementationAgainstPlan(
@@ -293,6 +357,22 @@ function findFirstHealthyFallback(
   return null;
 }
 
+async function loadConfiguredModel(
+  ctx: ExtensionContext | ExtensionCommandContext,
+  pi: ExtensionAPI,
+  provider: string,
+  modelId: string,
+): Promise<boolean> {
+  const model = ctx.modelRegistry.find(provider, modelId);
+  if (!model) {
+    log(`Configured model not found in registry: ${provider}/${modelId}`);
+    return false;
+  }
+  await pi.setModel(model);
+  log(`Loaded model: ${provider}/${modelId}`);
+  return true;
+}
+
 // ── Main Extension ──────────────────────────────────────────────────
 
 export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
@@ -336,6 +416,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         content: params.summary ?? "",
         timestamp: new Date().toISOString(),
         toolCalls: [], toolErrors: [],
+        synthesis: { source: "tool_report", nonceMatched: true },
       };
 
       stateManager.recordArtifact(artifact);
@@ -505,9 +586,9 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     });
 
     // Extract/synthesize only for the active phase attempt
-    const lastArtifact = getLastArtifactForPhase(state, state.phase);
+    const lastArtifact = getLastArtifactForPhaseCycle(state, state.phase, state.cycle);
     if (!lastArtifact) {
-      const synthesized = synthesizePhaseResultSafe(event, state.phase, state.cycle, phaseAttemptId);
+      const synthesized = synthesizePhaseResultSafe(event, state.phase, state.cycle, state.runId, phaseAttemptId);
       if (synthesized) {
         stateManager.recordArtifact(synthesized);
         stateManager.recordPhaseEvent({
@@ -520,6 +601,50 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         });
         log(`Synthesized ${state.phase} result`);
       }
+    }
+
+    const artifactForTransition = getLastArtifactForPhaseCycle(state, state.phase, state.cycle);
+    const phaseAttemptCount = state.phaseAttempts.filter(
+      a => a.cycle === state.cycle && a.phase === state.phase,
+    ).length;
+    const shouldRetrySamePhase = state.phase !== "validate"
+      && isSyntheticCaptureFailure(artifactForTransition)
+      && phaseAttemptCount < 2;
+
+    if (shouldRetrySamePhase) {
+      stateManager.completePhaseAttempt(phaseAttemptId, "failed");
+      stateManager.recordError(createErrorRecord(
+        `No output detected from model during ${state.phase} phase. Synthetic parser fallback fired despite agent_end payload.`,
+        state.phase,
+        state.cycle,
+      ));
+      state.lock.phaseStatus = "paused";
+      stateManager.persistAll();
+
+      const snapshot = takeCapabilitySnapshot(pi);
+      stateManager.setCapabilities(snapshot);
+      const backends = detectSubagentBackend(pi, snapshot);
+      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      const prompt = renderPhasePrompt(state.phase, state, snapshot, backends);
+      pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+      log(`Retrying ${state.phase} after synthetic capture failure`);
+      return;
+    }
+
+    if (state.phase !== "validate" && isSyntheticCaptureFailure(artifactForTransition)) {
+      stateManager.completePhaseAttempt(phaseAttemptId, "failed");
+      stateManager.recordError(createErrorRecord(
+        `Synthetic capture failure persisted after retry in ${state.phase} phase. Awaiting manual resume or capability repair.`,
+        state.phase,
+        state.cycle,
+      ));
+      state.lock.phaseStatus = "paused";
+      stateManager.persistAll();
+      updateStatusBar(ctx, state);
+      updateWidget(ctx, state);
+      ctx.ui.notify(`Iterative goal paused in ${state.phase}: synthetic output capture failure persisted after retry.`, "warning");
+      log(`Pausing ${state.phase} after repeated synthetic capture failure`);
+      return;
     }
 
     // Complete the phase attempt
@@ -648,7 +773,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
 
-      startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi);
+      await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
 
       const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -676,7 +801,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     stateManager.setCapabilities(snapshot);
     const backends = detectSubagentBackend(pi, snapshot);
 
-    startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi);
+    await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
 
     const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
     pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -702,7 +827,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         stateManager.setCapabilities(snapshot);
         const backends = detectSubagentBackend(pi, snapshot);
 
-        startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi);
+        await startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi, ctx);
 
         const prompt = renderResumePrompt(restored, snapshot, backends);
         pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -791,7 +916,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       updateWidget(ctx, state);
 
       const backends = detectSubagentBackend(pi, snapshot);
-      startPhaseAttempt(state, stateManager, "research", snapshot, pi);
+      await startPhaseAttempt(state, stateManager, "research", snapshot, pi, ctx);
 
       // NOTE: startPhaseAttempt already calls acquireLock — do NOT re-acquire
       const prompt = renderPhasePrompt("research", state, snapshot, backends);
@@ -814,6 +939,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
 
       if (args.includes("--json")) {
         const es = state.evaluatorState;
+        const latestArtifact = getLastArtifactForPhaseCycle(state, state.phase, state.cycle);
         const json = {
           active: true, runId: state.runId, goal: state.goal, goalCriterion: state.goalCriterion,
           status: state.status, cycle: state.cycle, phase: state.phase,
@@ -855,6 +981,13 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
           lastTransitionEvent: state.phaseAttempts.length > 0 ? {
             kind: state.phaseAttempts.at(-1)!.status,
             timestamp: state.phaseAttempts.at(-1)!.startedAt,
+          } : null,
+          latestArtifact: latestArtifact ? {
+            phase: latestArtifact.phase,
+            status: latestArtifact.status,
+            source: latestArtifact.synthesis?.source ?? "unknown",
+            nonceMatched: latestArtifact.synthesis?.nonceMatched ?? false,
+            reason: latestArtifact.synthesis?.reason ?? null,
           } : null,
           artifactPaths: {
             research: state.artifacts.research.length > 0 ? stateManager.getArtifactPath(state.cycle, "research", "result.json") : null,
@@ -913,7 +1046,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       const snapshot = takeCapabilitySnapshot(pi);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
-      startPhaseAttempt(state, stateManager, state.phase, snapshot, pi);
+      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
       const prompt = renderResumePrompt(state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
       ctx.ui.notify(`Resuming: cycle ${state.cycle}, phase ${state.phase}`, "info");
@@ -1044,13 +1177,14 @@ async function getDiffStat(): Promise<string> {
 
 // ── Phase attempt helper ─────────────────────────────────────────
 
-function startPhaseAttempt(
+async function startPhaseAttempt(
   state: IterativeGoalState | null,
   stateManager: StateManagerAPI,
   phase: Phase,
   snapshot: CapabilitySnapshot | null,
   pi: ExtensionAPI,
-): void {
+  ctx?: ExtensionContext | ExtensionCommandContext,
+): Promise<void> {
   if (!state) return;
 
   const existingAttempts = state.phaseAttempts.filter(
@@ -1073,6 +1207,10 @@ function startPhaseAttempt(
       effectiveModel = fb;
       log(`Using fallback: ${fb.provider}/${fb.model}`);
     }
+  }
+
+  if (ctx) {
+    await loadConfiguredModel(ctx, pi, effectiveModel.provider, effectiveModel.model);
   }
 
   const attempt: PhaseAttempt = {
@@ -1103,58 +1241,56 @@ function startPhaseAttempt(
 
 // ── Safe synthesis (with nonce matching) ──────────────────────────
 
-function synthesizePhaseResultSafe(
+export function synthesizePhaseResultSafe(
   event: any,
   phase: Phase,
   cycle: number,
+  runId: string,
   phaseAttemptId: string,
 ): (PhaseArtifact & { _nonceMatched?: boolean }) | null {
   const messages = event.messages;
   if (!messages || messages.length === 0) return null;
 
-  // Extract the nonce from the most recent assistant message
-  // The nonce is embedded in the prompt as: [HARNESS_META] ... phaseNonce=<uuid>
   let lastAssistantText = "";
-  const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let lastAssistantToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const toolErrors: Array<{ name: string; error: string }> = [];
   let nonceMatched = false;
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role === "assistant") {
-      for (const part of msg.content || []) {
-        if (part.type === "text") {
-          lastAssistantText = part.text || "";
-          break;
-        }
-        if (part.type === "toolCall") {
-          // Check if tool call includes the correct runId/phaseAttemptId
-          const args = part.arguments || {};
-          if (args.runId && args.phaseAttemptId) {
-            const toolAttemptStr = `${args.runId}/${args.phaseAttemptId}`;
-            if (toolAttemptStr === `${event._runId || ""}/${phaseAttemptId}`) {
-              nonceMatched = true;
-            }
-          }
-          toolCalls.push({ name: part.name, args });
+      const assistantText = extractTextFromParts(msg.content);
+      const toolCalls = extractToolCallsFromParts(msg.content);
+      for (const toolCall of toolCalls) {
+        if (toolCall.args.runId === runId && toolCall.args.phaseAttemptId === phaseAttemptId) {
+          nonceMatched = true;
         }
       }
-      if (lastAssistantText) break;
+      if (assistantText || toolCalls.length > 0) {
+        lastAssistantText = assistantText;
+        lastAssistantToolCalls = toolCalls;
+        break;
+      }
     }
     if (msg.role === "toolResult" && msg.isError) {
       toolErrors.push({
         name: msg.toolName || "unknown",
-        error: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content).slice(0, 500),
+        error: extractTextFromParts(msg.content) || JSON.stringify(msg.content).slice(0, 500),
       });
     }
   }
 
-  if (!lastAssistantText && toolCalls.length === 0) {
+  if (!lastAssistantText && lastAssistantToolCalls.length === 0) {
     return {
       phase, cycle,
       status: "failed_recoverable",
       content: `No output detected from model during ${phase} phase. Possible provider/tool incompatibility.`,
       timestamp: new Date().toISOString(), toolCalls: [], toolErrors,
+      synthesis: {
+        source: "synthetic_failure",
+        nonceMatched: false,
+        reason: "assistant_output_missing",
+      },
       _nonceMatched: false,
     };
   }
@@ -1162,8 +1298,13 @@ function synthesizePhaseResultSafe(
   return {
     phase, cycle,
     status: "completed",
-    content: lastAssistantText || `${toolCalls.length} tool calls without text output.`,
-    timestamp: new Date().toISOString(), toolCalls, toolErrors,
+    content: lastAssistantText || `${lastAssistantToolCalls.length} tool calls without text output.`,
+    timestamp: new Date().toISOString(), toolCalls: lastAssistantToolCalls, toolErrors,
+    synthesis: {
+      source: lastAssistantText ? "assistant_text" : "assistant_tool_calls",
+      nonceMatched,
+      reason: nonceMatched ? undefined : "assistant_output_without_matching_harness_nonce",
+    },
     _nonceMatched: nonceMatched,
   };
 }

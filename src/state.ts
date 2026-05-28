@@ -120,6 +120,7 @@ function appendJsonLine(filePath: string, obj: Record<string, unknown>): void {
 }
 
 export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
+  const DEFAULT_PRIMARY_MODEL = { provider: "openrouter", model: "deepseek/deepseek-v4-pro" } as const;
   let state: IterativeGoalState | null = null;
   let stateDir = "";
   let runDir = "";
@@ -244,6 +245,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!state || !runDir) return;
 
     const s = state;
+    const lastArtifact = [
+      ...s.artifacts.research,
+      ...s.artifacts.plans,
+      ...s.artifacts.implementations,
+      ...s.artifacts.validations,
+    ].at(-1) ?? null;
     const lines = [
       `# Iterative Goal Status`,
       ``,
@@ -274,6 +281,15 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       `- Implementations: ${s.artifacts.implementations.length}`,
       `- Validations: ${s.artifacts.validations.length}`,
       `- Evaluator Reports: ${s.artifacts.evaluatorReports.length}`,
+      ``,
+      `## Latest Artifact`,
+      ``,
+      `- **Present**: ${lastArtifact ? "yes" : "no"}`,
+      `- **Phase**: ${lastArtifact?.phase ?? "none"}`,
+      `- **Status**: ${lastArtifact?.status ?? "none"}`,
+      `- **Source**: ${lastArtifact?.synthesis?.source ?? "unknown"}`,
+      `- **Nonce Matched**: ${lastArtifact ? String(lastArtifact.synthesis?.nonceMatched ?? false) : "n/a"}`,
+      `- **Reason**: ${lastArtifact?.synthesis?.reason ?? "none"}`,
       ``,
       `## Errors (${s.errors.length})`,
       ``,
@@ -365,12 +381,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         phase: "research",
         requiredPhaseOrder: PHASE_ORDER,
         evaluator: {
-          model: config?.primaryModel?.model ?? "claude-sonnet-4-5",
-          provider: config?.primaryModel?.provider ?? "anthropic",
+          model: config?.primaryModel?.model ?? DEFAULT_PRIMARY_MODEL.model,
+          provider: config?.primaryModel?.provider ?? DEFAULT_PRIMARY_MODEL.provider,
           completionRequiresEvaluator: true,
         },
         config: {
-          primaryModel: config?.primaryModel ?? { provider: "anthropic", model: "claude-sonnet-4-5" },
+          primaryModel: config?.primaryModel ?? DEFAULT_PRIMARY_MODEL,
           fallbackModels: config?.fallbackModels ?? [],
           blockedModels: config?.blockedModels ?? [],
           modelHealth: config?.modelHealth ?? {},
