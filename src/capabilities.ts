@@ -60,6 +60,8 @@ export function takeCapabilitySnapshot(pi: ExtensionAPI): CapabilitySnapshot {
     mcpServers,
     model: "",
     provider: "",
+    awsCli: null,
+    gitFinalization: null,
   };
 }
 
@@ -142,6 +144,26 @@ export function renderCapabilitySummary(
         : "no servers detected"
     }`,
   );
+  if (snapshot.awsCli?.enabled) {
+    lines.push(
+      `- aws-cli: ${
+        snapshot.awsCli.cliAvailable
+          ? `yes (profile=${snapshot.awsCli.resolvedProfile ?? "unresolved"}, region=${snapshot.awsCli.resolvedRegion ?? "unknown"})`
+          : "no"
+      }`,
+    );
+    lines.push(
+      `- session-manager-plugin: ${snapshot.awsCli.sessionManagerPluginAvailable ? "yes" : "no"}`,
+    );
+  }
+  if (snapshot.gitFinalization?.enabled) {
+    lines.push(
+      `- git-finalization: yes (commit=${snapshot.gitFinalization.allowCommit ? "yes" : "no"}, push=${snapshot.gitFinalization.allowPush ? "yes" : "no"}, pr=${snapshot.gitFinalization.allowPR ? "yes" : "no"})`,
+    );
+    lines.push(
+      `- gh: ${snapshot.gitFinalization.ghAvailable ? (snapshot.gitFinalization.ghAuthenticated ? "yes (authenticated)" : "installed, auth missing") : "no"}`,
+    );
+  }
 
   if (ns.extensionTools.length > 0) {
     lines.push(`- Extension tools: ${ns.extensionTools.join(", ")}`);
@@ -186,6 +208,16 @@ export function renderCapabilitySummary(
   lines.push(
     "- Do NOT call MCP servers not listed in 'Known MCP servers' above.",
   );
+  if (snapshot.awsCli?.enabled) {
+    lines.push(
+      "- Use goal_aws_cli for AWS CLI operations. Do not route AWS mutations through bash or goal_shell.",
+    );
+  }
+  if (snapshot.gitFinalization?.enabled) {
+    lines.push(
+      "- Use goal_git for git add/commit/push/PR actions. Do not route git finalization through bash or goal_shell.",
+    );
+  }
   lines.push(
     "- Do NOT invent tools (like iterative_goal_update_plan). Use registered tools only.",
   );

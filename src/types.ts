@@ -73,6 +73,43 @@ export interface ModelCapabilityProfile {
   lastProbeAt: string;
 }
 
+export type AwsCliProfileResolutionStep = "explicit" | "env" | "unify" | "unify-old";
+
+export type AwsCliMutatingFamily =
+  | "ec2-start-stop-wait"
+  | "ssm-session"
+  | "ssm-send-command"
+  | "s3-sync"
+  | "s3-cp"
+  | "logs-tail";
+
+export interface AwsCliIdentity {
+  account: string;
+  arn: string;
+  userId: string;
+}
+
+export interface AwsCliPreflight {
+  enabled: boolean;
+  cliAvailable: boolean;
+  sessionManagerPluginAvailable: boolean;
+  availableProfiles: string[];
+  resolvedProfile: string | null;
+  resolvedRegion: string | null;
+  identity: AwsCliIdentity | null;
+  issues: string[];
+  checkedAt: string;
+}
+
+export interface AwsCliConfig {
+  enabled: boolean;
+  defaultRegion: string;
+  profileResolutionOrder: AwsCliProfileResolutionStep[];
+  requireSessionManagerPlugin: boolean;
+  allowMutatingFamilies: AwsCliMutatingFamily[];
+  preflight: AwsCliPreflight | null;
+}
+
 export interface CapabilitySnapshot {
   takenAt: string;
   activeTools: string[];
@@ -85,6 +122,17 @@ export interface CapabilitySnapshot {
   mcpServers: string[];
   model: string;
   provider: string;
+  awsCli: AwsCliPreflight | null;
+  gitFinalization: {
+    enabled: boolean;
+    allowCommit: boolean;
+    allowPush: boolean;
+    allowPR: boolean;
+    gitAvailable: boolean;
+    ghAvailable: boolean;
+    ghAuthenticated: boolean;
+    currentBranch: string | null;
+  } | null;
 }
 
 export interface CapabilityNamespaces {
@@ -197,6 +245,7 @@ export interface RunConfig {
     reason: string;
   }>;
   modelHealth: Record<string, ModelHealthEntry>;
+  awsCli: AwsCliConfig;
 }
 
 export interface IterativeGoalState {

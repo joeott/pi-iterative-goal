@@ -53,6 +53,15 @@ import {
 } from "./types.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
+const DEFAULT_PRIMARY_MODEL = { provider: "openrouter", model: "deepseek/deepseek-v4-pro" } as const;
+const DEFAULT_AWS_CLI_CONFIG = {
+  enabled: false,
+  defaultRegion: "us-east-1",
+  profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+  requireSessionManagerPlugin: true,
+  allowMutatingFamilies: [],
+  preflight: null,
+} as const;
 
 export interface StateManagerAPI {
   getState(): IterativeGoalState | null;
@@ -120,7 +129,6 @@ function appendJsonLine(filePath: string, obj: Record<string, unknown>): void {
 }
 
 export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
-  const DEFAULT_PRIMARY_MODEL = { provider: "openrouter", model: "deepseek/deepseek-v4-pro" } as const;
   let state: IterativeGoalState | null = null;
   let stateDir = "";
   let runDir = "";
@@ -179,6 +187,25 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!raw.config?.modelHealth) {
       if (!raw.config) raw.config = {};
       raw.config.modelHealth = {};
+    }
+    if (!raw.config?.awsCli) {
+      if (!raw.config) raw.config = {};
+      raw.config.awsCli = {
+        ...DEFAULT_AWS_CLI_CONFIG,
+        profileResolutionOrder: [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+        allowMutatingFamilies: [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
+      };
+    } else {
+      raw.config.awsCli = {
+        ...DEFAULT_AWS_CLI_CONFIG,
+        ...raw.config.awsCli,
+        profileResolutionOrder: Array.isArray(raw.config.awsCli.profileResolutionOrder)
+          ? [...raw.config.awsCli.profileResolutionOrder]
+          : [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+        allowMutatingFamilies: Array.isArray(raw.config.awsCli.allowMutatingFamilies)
+          ? [...raw.config.awsCli.allowMutatingFamilies]
+          : [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
+      };
     }
     raw.version = 2;
     return raw as IterativeGoalState;
@@ -390,6 +417,16 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           fallbackModels: config?.fallbackModels ?? [],
           blockedModels: config?.blockedModels ?? [],
           modelHealth: config?.modelHealth ?? {},
+          awsCli: {
+            ...DEFAULT_AWS_CLI_CONFIG,
+            ...(config?.awsCli ?? {}),
+            profileResolutionOrder: config?.awsCli?.profileResolutionOrder
+              ? [...config.awsCli.profileResolutionOrder]
+              : [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+            allowMutatingFamilies: config?.awsCli?.allowMutatingFamilies
+              ? [...config.awsCli.allowMutatingFamilies]
+              : [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
+          },
         },
         capabilities: null,
         errors: [],
@@ -437,7 +474,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         timestamp: new Date().toISOString(),
       });
 
-      return state;
+      return state!;
     },
 
     // ── Run lock ──────────────────────────────────────────────────

@@ -46,6 +46,19 @@ import {
 } from "./dashboard.js";
 import { checkCommand } from "./safety.js";
 import {
+  loadAwsCliConfig,
+  preflightAwsCli,
+  registerGoalAwsCliTool,
+  shouldBlockAwsShellCommand,
+  withAwsCliPreflight,
+} from "./aws-cli.js";
+import {
+  getGitCapability,
+  loadFinalizationPolicy,
+  registerGoalGitTool,
+  shouldBlockGitShellCommand,
+} from "./git.js";
+import {
   type PhaseArtifact,
   type Phase,
   type PhaseAttempt,
@@ -339,6 +352,46 @@ async function preflightAllModels(
   return health;
 }
 
+function refreshAwsCliConfig(
+  state: IterativeGoalState,
+  cwd: string,
+): void {
+  const currentPreflight = state.config.awsCli?.preflight ?? null;
+  state.config.awsCli = {
+    ...loadAwsCliConfig(cwd),
+    preflight: currentPreflight,
+  };
+}
+
+function refreshFinalizationPolicy(
+  state: IterativeGoalState,
+  cwd: string,
+): void {
+  state.finalizationPolicy = loadFinalizationPolicy(cwd);
+  state.constraints.allowGitFinalization = state.finalizationPolicy.allowGitFinalization;
+}
+
+async function buildRuntimeCapabilitySnapshot(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext | ExtensionCommandContext,
+  state?: IterativeGoalState | null,
+): Promise<CapabilitySnapshot> {
+  const snapshot = takeCapabilitySnapshot(pi);
+  if (!state) return snapshot;
+
+  refreshAwsCliConfig(state, ctx.cwd);
+  refreshFinalizationPolicy(state, ctx.cwd);
+  if (!state.config.awsCli.enabled) {
+    snapshot.awsCli = null;
+  } else {
+    const preflight = await preflightAwsCli(pi, ctx, state.config.awsCli);
+    state.config.awsCli = withAwsCliPreflight(state.config.awsCli, preflight);
+    snapshot.awsCli = preflight;
+  }
+  snapshot.gitFinalization = await getGitCapability(pi, ctx, state.finalizationPolicy);
+  return snapshot;
+}
+
 function isModelInCooldown(health: ModelHealthEntry | undefined): boolean {
   if (!health || health.lastStatus !== "unavailable" || !health.cooldownUntil) return false;
   return new Date(health.cooldownUntil) > new Date();
@@ -381,7 +434,13 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
 
   // ── Register tools ───────────────────────────────────────────────
 
-  registerGoalShellTool(pi);
+  registerGoalShellTool(
+    pi,
+    () => stateManager.getState()?.config.awsCli ?? null,
+    () => stateManager.getState()?.finalizationPolicy ?? null,
+  );
+  registerGoalAwsCliTool(pi, stateManager);
+  registerGoalGitTool(pi, stateManager);
   registerGoalSubagentTool(pi, () => stateManager.getState()?.capabilities ?? null);
 
   // goal_report_phase_result — hardened with stale-write guards
@@ -621,7 +680,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       state.lock.phaseStatus = "paused";
       stateManager.persistAll();
 
-      const snapshot = takeCapabilitySnapshot(pi);
+      const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
       await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
@@ -769,7 +828,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
           : (verdict.next_cycle_directive.focus as Phase);
 
       stateManager.setPhase(nextPhase);
-      const snapshot = takeCapabilitySnapshot(pi);
+      const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
 
@@ -797,7 +856,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     updateStatusBar(ctx, state);
     updateWidget(ctx, state);
 
-    const snapshot = takeCapabilitySnapshot(pi);
+    const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
     stateManager.setCapabilities(snapshot);
     const backends = detectSubagentBackend(pi, snapshot);
 
@@ -823,7 +882,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       if (restored.status === "running") {
         ctx.ui.notify(`Resuming iterative goal: cycle ${restored.cycle}, phase ${restored.phase}`, "info");
 
-        const snapshot = takeCapabilitySnapshot(pi);
+        const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, restored);
         stateManager.setCapabilities(snapshot);
         const backends = detectSubagentBackend(pi, snapshot);
 
@@ -861,6 +920,16 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     if (event.toolName === "bash") {
       const command = event.input?.command as string | undefined;
       if (command) {
+        const gitShellBlock = shouldBlockGitShellCommand(command, state.finalizationPolicy);
+        if (gitShellBlock) {
+          log(`Blocked bash git command: ${gitShellBlock}`);
+          return { block: true, reason: gitShellBlock };
+        }
+        const awsShellBlock = shouldBlockAwsShellCommand(command, state.config.awsCli);
+        if (awsShellBlock) {
+          log(`Blocked bash aws command: ${awsShellBlock}`);
+          return { block: true, reason: awsShellBlock };
+        }
         const result = checkCommand(command, state.constraints.allowDestructiveOps, state.finalizationPolicy.allowGitFinalization);
         if (!result.allowed) {
           log(`Blocked bash: ${result.reason}`);
@@ -898,7 +967,10 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       }
 
       // Preflight ALL configured models (not hardcoded)
-      const state = stateManager.createRun(goal, criterion);
+      const state = stateManager.createRun(goal, criterion, {
+        awsCli: loadAwsCliConfig(ctx.cwd),
+      });
+      refreshFinalizationPolicy(state, ctx.cwd);
       // Note: primary model is set by createRun, but we need the actual configured model
       // Re-read prefs from pi settings
       const modelHealth = await preflightAllModels(ctx,
@@ -909,7 +981,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
 
       log(`Goal started: runId=${state.runId}, goal="${goal}"`);
 
-      const snapshot = takeCapabilitySnapshot(pi);
+      const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
       stateManager.setCapabilities(snapshot);
 
       updateStatusBar(ctx, state);
@@ -972,6 +1044,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
             phase: e.phase, kind: e.kind, cycle: e.cycle, recoveryAction: e.recoveryAction,
           })),
           modelHealth: state.config.modelHealth,
+          awsCli: state.config.awsCli,
           finalizationPolicy: state.finalizationPolicy,
           phaseAttempts: state.phaseAttempts.slice(-5).map(a => ({
             phaseAttemptId: a.phaseAttemptId, cycle: a.cycle, phase: a.phase,
@@ -1009,6 +1082,12 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         `  Artifacts: R:${s.artifacts.research.length} P:${s.artifacts.plans.length} I:${s.artifacts.implementations.length} V:${s.artifacts.validations.length}`,
         `  Errors: ${s.errors.length}`,
       ];
+      if (s.config.awsCli.enabled) {
+        lines.push(
+          `  AWS: profile=${s.config.awsCli.preflight?.resolvedProfile ?? "unresolved"} region=${s.config.awsCli.preflight?.resolvedRegion ?? s.config.awsCli.defaultRegion}`,
+          `  AWS Issues: ${s.config.awsCli.preflight?.issues.length ?? 0}`,
+        );
+      }
       if (s.evaluatorState) {
         lines.push("", `  Evaluator: ${s.evaluatorState.status}`,
           `  Started: ${s.evaluatorState.startedAt ?? "never"}`, `  Heartbeat: ${s.evaluatorState.lastHeartbeatAt ?? "never"}`,
@@ -1043,7 +1122,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
       stateManager.setStatus("running");
       updateStatusBar(ctx, state); updateWidget(ctx, state);
 
-      const snapshot = takeCapabilitySnapshot(pi);
+      const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
       await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
@@ -1059,11 +1138,14 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       const state = stateManager.getState();
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
-      const snapshot = takeCapabilitySnapshot(pi);
+      const snapshot = await buildRuntimeCapabilitySnapshot(pi, ctx, state);
       stateManager.setCapabilities(snapshot);
       const issues: string[] = [];
       if (!snapshot.hasBashTool) issues.push("bash unavailable (goal_shell available)");
       if (!snapshot.hasSubagentTool && !snapshot.hasAgentTool) issues.push("no subagent backend");
+      if (snapshot.awsCli?.enabled) {
+        issues.push(...snapshot.awsCli.issues.map((issue) => `aws: ${issue}`));
+      }
       ctx.ui.notify(issues.length === 0 ? "Capabilities good." : `Issues:\n${issues.map(i => `  - ${i}`).join("\n")}`, issues.length === 0 ? "info" : "warning");
 
       for (const fb of state.config.fallbackModels) {
@@ -1117,8 +1199,25 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      // Git enabled in policy (rare / operator-authorized only)
-      ctx.ui.notify("Git finalization enabled by policy — not yet automated. Use /goal-finalize for patch output.", "warning");
+      const modeMatch = args.match(/--mode\s+(\w+)/);
+      const mode = modeMatch?.[1] ?? "patch";
+      if (mode === "patch") {
+        const patchPath = stateManager.getArtifactPath(state.cycle, state.phase, "final.patch");
+        try {
+          const { execSync } = require("node:child_process");
+          const fs = require("node:fs");
+          fs.writeFileSync(patchPath, execSync("git diff", { encoding: "utf-8", timeout: 10_000 }));
+          ctx.ui.notify(`Patch: ${patchPath}`, "info");
+        } catch (err: any) {
+          ctx.ui.notify(`Failed: ${err.message}`, "error");
+        }
+        return;
+      }
+      if (mode === "commit" && state.finalizationPolicy.allowCommit) {
+        ctx.ui.notify("Git finalization enabled by policy. Use goal_git for staged commit/push/PR actions.", "info");
+        return;
+      }
+      ctx.ui.notify("Requested finalization mode is not allowed by policy.", "warning");
     },
   });
 
@@ -1235,7 +1334,10 @@ async function startPhaseAttempt(
   stateManager.recordPhaseEvent({
     runId: state.runId, cycle: state.cycle, phase, phaseAttemptId, attempt: attemptNum,
     kind: "tool_preflight_recorded", timestamp: new Date().toISOString(),
-    details: { activeTools: snapshot?.activeTools ?? [] },
+    details: {
+      activeTools: snapshot?.activeTools ?? [],
+      awsCli: snapshot?.awsCli ?? null,
+    },
   });
 }
 
