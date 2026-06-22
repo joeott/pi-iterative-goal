@@ -65,7 +65,8 @@ const PERSISTENCE_TYPE = "iterative-goal-state";
 const DEFAULT_AWS_CLI_CONFIG = {
   enabled: false,
   defaultRegion: "us-east-1",
-  profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+  profileResolutionOrder: ["explicit", "env", "configured"],
+  profileCandidates: [],
   requireSessionManagerPlugin: true,
   allowMutatingFamilies: [],
   preflight: null,
@@ -369,6 +370,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       raw.config.awsCli = {
         ...DEFAULT_AWS_CLI_CONFIG,
         profileResolutionOrder: [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+        profileCandidates: [...DEFAULT_AWS_CLI_CONFIG.profileCandidates],
         allowMutatingFamilies: [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
       };
     } else {
@@ -378,6 +380,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         profileResolutionOrder: Array.isArray(raw.config.awsCli.profileResolutionOrder)
           ? [...raw.config.awsCli.profileResolutionOrder]
           : [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+        profileCandidates: Array.isArray(raw.config.awsCli.profileCandidates)
+          ? [...raw.config.awsCli.profileCandidates]
+          : [...DEFAULT_AWS_CLI_CONFIG.profileCandidates],
         allowMutatingFamilies: Array.isArray(raw.config.awsCli.allowMutatingFamilies)
           ? [...raw.config.awsCli.allowMutatingFamilies]
           : [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
@@ -605,6 +610,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             profileResolutionOrder: config?.awsCli?.profileResolutionOrder
               ? [...config.awsCli.profileResolutionOrder]
               : [...DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder],
+            profileCandidates: config?.awsCli?.profileCandidates
+              ? [...config.awsCli.profileCandidates]
+              : [...DEFAULT_AWS_CLI_CONFIG.profileCandidates],
             allowMutatingFamilies: config?.awsCli?.allowMutatingFamilies
               ? [...config.awsCli.allowMutatingFamilies]
               : [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],

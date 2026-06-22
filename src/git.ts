@@ -8,13 +8,10 @@ import { hashJson, validateReleaseAuthorization } from "./release/controller.js"
 import { generatePullRequestBody, readVerificationResults } from "./release/pr-body.js";
 import { runLocalReleaseGate } from "./review/gates/release-gate.js";
 import { gitResource, PolicyEngine, type Effect, type PolicyDecision } from "./policy/engine.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [goal_git] ${msg}\n`);
-  } catch {}
+  logDebug("goal_git", msg);
 }
 
 function parseProjectSettings(cwd: string): Record<string, unknown> {

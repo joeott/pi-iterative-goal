@@ -95,7 +95,8 @@ import path from "node:path";
     v1Fixture.config.awsCli = {
       enabled: false,
       defaultRegion: "us-east-1",
-      profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+      profileResolutionOrder: ["explicit", "env", "configured"],
+      profileCandidates: [],
       requireSessionManagerPlugin: true,
       allowMutatingFamilies: [],
       preflight: null,
@@ -458,6 +459,7 @@ import path from "node:path";
       awsCli: {
         enabled: true,
         defaultRegion: "us-east-1",
+        profileCandidates: ["ops-smoke"],
         allowMutatingFamilies: [
           "ec2-start-stop-wait",
           "ssm-session",
@@ -472,6 +474,8 @@ import path from "node:path";
   const cfg = loadAwsCliConfig(tmp);
   eq(cfg.enabled, true);
   eq(cfg.defaultRegion, "us-east-1");
+  deepStrictEqual(cfg.profileResolutionOrder, ["explicit", "env", "configured"]);
+  deepStrictEqual(cfg.profileCandidates, ["ops-smoke"]);
   deepStrictEqual(cfg.allowMutatingFamilies, [
     "ec2-start-stop-wait",
     "ssm-session",
@@ -503,7 +507,7 @@ import path from "node:path";
     async exec(command, args) {
       if (command === "which") return { code: 0, stdout: `/usr/bin/${args[0]}\n`, stderr: "", killed: false };
       if (command === "aws" && args.join(" ") === "configure list-profiles") {
-        return { code: 0, stdout: "unify\n", stderr: "", killed: false };
+        return { code: 0, stdout: "ops-smoke\n", stderr: "", killed: false };
       }
       if (command === "aws" && args.includes("get-caller-identity")) {
         return { code: 0, stdout: JSON.stringify({ Account: "123456789012", Arn: "arn:aws:iam::123456789012:user/test", UserId: "AIDA" }), stderr: "", killed: false };
@@ -563,8 +567,8 @@ import path from "node:path";
       enabled: true,
       cliAvailable: true,
       sessionManagerPluginAvailable: true,
-      availableProfiles: ["unify-old"],
-      resolvedProfile: "unify-old",
+      availableProfiles: ["ops-prod"],
+      resolvedProfile: "ops-prod",
       resolvedRegion: "us-east-1",
       identity: null,
       issues: [],
@@ -575,7 +579,7 @@ import path from "node:path";
 
   const prompt = renderResumePrompt(state, snapshot, { kind: "none" });
   ok(prompt.includes("Use goal_aws_cli for AWS operations"), "resume prompt includes AWS tool guidance");
-  ok(prompt.includes("profile=unify-old"), "resume prompt includes resolved AWS profile");
+  ok(prompt.includes("profile=ops-prod"), "resume prompt includes resolved AWS profile");
 
   console.log("✓ Test 12: Resume prompt exposes AWS tool guidance when enabled");
 }
@@ -776,6 +780,24 @@ import path from "node:path";
   });
   eq(commitAllowed.result, "allow");
 
+  const packageInstallDenied = policy.decide({
+    id: "policy-3e",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "process.exec",
+    resource: { type: "command", value: "npm install left-pad" },
+    input: {
+      executable: "npm",
+      argv: ["install", "left-pad"],
+      allowDestructive: true,
+    },
+    purpose: "test package policy",
+    risk: "write",
+    dataClassification: "internal",
+  });
+  eq(packageInstallDenied.result, "deny");
+  ok(packageInstallDenied.ruleIds.includes("policy.package.install"));
+
   const symlinkRepo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-symlink-"));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-outside-"));
   fs.mkdirSync(path.join(symlinkRepo, "src"));
@@ -922,6 +944,28 @@ import path from "node:path";
   }, new AbortController().signal);
   eq(deniedFsAction.ok, false);
   eq(fs.existsSync(path.join(fsRepo, "denied", "out.txt")), false);
+
+  const { ProcessProvider } = await import("../dist/capabilities/process/provider.js");
+  const processProvider = new ProcessProvider(policy, process.cwd());
+  const processManifest = await registry.register(processProvider);
+  ok(processManifest.capabilities.some((capability) => capability.effect === "process.exec"));
+  const processAction = await processProvider.invoke({
+    id: "process-1",
+    actor: { kind: "tool", id: "process-smoke" },
+    runId: "ig-policy",
+    effect: "process.exec",
+    resource: { type: "command", value: "node --version" },
+    input: {
+      executable: "node",
+      argv: ["--version"],
+      timeoutMs: 30_000,
+    },
+    purpose: "process provider smoke",
+    risk: "read",
+    dataClassification: "internal",
+  }, new AbortController().signal);
+  eq(processAction.ok, true);
+  ok(processAction.output.stdout.trim().startsWith("v"), "process provider captures stdout");
 
   console.log("✓ Test 15: Central policy, broker, and provider manifest contracts validate effects");
 }

@@ -11,13 +11,10 @@ import type {
   Phase,
   PhaseAttempt,
 } from "../types.js";
+import { logDebug } from "../logging.js";
 
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [workflow] ${msg}\n`);
-  } catch {}
+  logDebug("workflow", msg);
 }
 
 export async function checkModelHealth(

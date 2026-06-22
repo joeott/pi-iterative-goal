@@ -13,13 +13,10 @@ import { PiSubprocessAgentPool, createAgentTask, type AgentRole } from "./agents
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
 import { parsePathScope } from "./domain/path-scope.js";
+import { logDebug } from "./logging.js";
 
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [subagents] ${msg}\n`);
-  } catch {}
+  logDebug("subagents", msg);
 }
 
 function commandExists(command: string): boolean {

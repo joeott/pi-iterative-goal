@@ -20,13 +20,10 @@ import { parseWithSchema } from "./domain/validate.js";
 import { type StateManagerAPI } from "./state.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { logDebug } from "./logging.js";
 
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [evaluator] ${msg}\n`);
-  } catch {}
+  logDebug("evaluator", msg);
 }
 
 const EVALUATOR_SYSTEM_PROMPT = `You are the outside evaluator for an autonomous Pi iterative-goal loop.

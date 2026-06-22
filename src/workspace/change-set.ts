@@ -8,12 +8,10 @@ import {
   serializePathScope,
 } from "../domain/path-scope.js";
 import { extractAcceptedAmendmentScopes } from "../domain/plan.js";
+import { logDebug } from "../logging.js";
 
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
-  try {
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [change-set] ${msg}\n`);
-  } catch {}
+  logDebug("change-set", msg);
 }
 
 export interface ImplementationVerification {

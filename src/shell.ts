@@ -14,17 +14,10 @@ import type { AwsCliConfig, FinalizationPolicy } from "./types.js";
 import { commandSpecFromShellWords } from "./domain/verification.js";
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine } from "./policy/engine.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(
-      LOG_FILE,
-      `[${new Date().toISOString()}] [goal_shell] ${msg}\n`,
-    );
-  } catch {}
+  logDebug("goal_shell", msg);
 }
 
 const GoalShellParams = Type.Object({
@@ -104,7 +97,8 @@ export function registerGoalShellTool(
       const awsShellBlock = shouldBlockAwsShellCommand(command, getAwsCliConfig?.() ?? {
         enabled: false,
         defaultRegion: "us-east-1",
-        profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+        profileResolutionOrder: ["explicit", "env", "configured"],
+        profileCandidates: [],
         requireSessionManagerPlugin: true,
         allowMutatingFamilies: [],
         preflight: null,

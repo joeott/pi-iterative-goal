@@ -11,22 +11,17 @@ import type {
 } from "./types.js";
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    fs.appendFileSync(
-      LOG_FILE,
-      `[${new Date().toISOString()}] [goal_aws_cli] ${msg}\n`,
-    );
-  } catch {}
+  logDebug("goal_aws_cli", msg);
 }
 
 export const DEFAULT_AWS_CLI_CONFIG: AwsCliConfig = {
   enabled: false,
   defaultRegion: "us-east-1",
-  profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+  profileResolutionOrder: ["explicit", "env", "configured"],
+  profileCandidates: [],
   requireSessionManagerPlugin: true,
   allowMutatingFamilies: [],
   preflight: null,
@@ -58,7 +53,7 @@ function parseProjectSettings(cwd: string): Record<string, unknown> {
 }
 
 function isProfileResolutionStep(value: unknown): value is AwsCliProfileResolutionStep {
-  return value === "explicit" || value === "env" || value === "unify" || value === "unify-old";
+  return value === "explicit" || value === "env" || value === "configured";
 }
 
 function isMutatingFamily(value: unknown): value is AwsCliMutatingFamily {
@@ -82,6 +77,17 @@ export function loadAwsCliConfig(cwd: string): AwsCliConfig {
   const profileResolutionOrder = Array.isArray(awsCli.profileResolutionOrder)
     ? awsCli.profileResolutionOrder.filter(isProfileResolutionStep)
     : DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder;
+  const legacyProfileCandidates = Array.isArray(awsCli.profileResolutionOrder)
+    ? awsCli.profileResolutionOrder
+      .filter((value): value is string => typeof value === "string" && !isProfileResolutionStep(value))
+      .map((value) => value.trim())
+      .filter(Boolean)
+    : [];
+  const profileCandidates = Array.isArray(awsCli.profileCandidates)
+    ? awsCli.profileCandidates
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim())
+    : legacyProfileCandidates;
   const allowMutatingFamilies = Array.isArray(awsCli.allowMutatingFamilies)
     ? awsCli.allowMutatingFamilies.filter(isMutatingFamily)
     : DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies;
@@ -94,6 +100,7 @@ export function loadAwsCliConfig(cwd: string): AwsCliConfig {
     profileResolutionOrder: profileResolutionOrder.length > 0
       ? profileResolutionOrder
       : DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder,
+    profileCandidates: [...new Set(profileCandidates)],
     requireSessionManagerPlugin: awsCli.requireSessionManagerPlugin !== false,
     allowMutatingFamilies,
     preflight: null,
@@ -152,8 +159,7 @@ function candidateProfiles(
   for (const step of config.profileResolutionOrder) {
     if (step === "explicit") continue;
     if (step === "env" && process.env.AWS_PROFILE?.trim()) profiles.push(process.env.AWS_PROFILE.trim());
-    if (step === "unify") profiles.push("unify");
-    if (step === "unify-old") profiles.push("unify-old");
+    if (step === "configured") profiles.push(...config.profileCandidates);
   }
   return [...new Set(profiles)];
 }

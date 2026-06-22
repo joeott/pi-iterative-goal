@@ -73,7 +73,7 @@ export interface ModelCapabilityProfile {
   lastProbeAt: string;
 }
 
-export type AwsCliProfileResolutionStep = "explicit" | "env" | "unify" | "unify-old";
+export type AwsCliProfileResolutionStep = "explicit" | "env" | "configured";
 
 export type AwsCliMutatingFamily =
   | "ec2-start-stop-wait"
@@ -105,6 +105,7 @@ export interface AwsCliConfig {
   enabled: boolean;
   defaultRegion: string;
   profileResolutionOrder: AwsCliProfileResolutionStep[];
+  profileCandidates: string[];
   requireSessionManagerPlugin: boolean;
   allowMutatingFamilies: AwsCliMutatingFamily[];
   preflight: AwsCliPreflight | null;

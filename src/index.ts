@@ -52,15 +52,12 @@ import { registerGovernanceCommands } from "./ui/commands.js";
 import { registerGoalRuntimeCommands } from "./ui/goal-commands.js";
 import { registerGoalCoreTools } from "./ui/tools.js";
 import { registerToolInterception } from "./ui/tool-interception.js";
+import { logDebug } from "./logging.js";
 
 export { extractTextFromParts, synthesizePhaseResultSafe } from "./kernel/output-synthesis.js";
 
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [core] ${msg}\n`);
-  } catch {}
+  logDebug("core", msg);
 }
 
 function refreshAwsCliConfig(

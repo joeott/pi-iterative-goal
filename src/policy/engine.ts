@@ -5,7 +5,7 @@ import {
   normalizeRepoPath,
   resolveContainedPath,
 } from "../domain/path-scope.js";
-import { checkCommand } from "../safety.js";
+import { checkCommand, isPackageInstallCommand } from "../safety.js";
 
 export type Effect =
   | "fs.read"
@@ -106,6 +106,9 @@ export class PolicyEngine {
       }
       const command = request.resource.value;
       const input = request.input as Record<string, unknown>;
+      if (isPackageInstallCommand(command)) {
+        return deny("policy.package.install", "Package installation must use an approved package.install capability with planned lockfile effects.");
+      }
       const safety = checkCommand(
         command,
         input.allowDestructive === true,
