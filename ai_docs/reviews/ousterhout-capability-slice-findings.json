@@ -1,0 +1,32 @@
+[
+  {
+    "id": "DES-CAP-001",
+    "severity": "info",
+    "category": "architecture",
+    "requirementIds": ["R3", "R4"],
+    "message": "Capability provider contracts and registry hide provider-specific schema and health details behind a narrow interface.",
+    "location": "src/capabilities/manifest.ts, src/capabilities/registry.ts",
+    "status": "resolved",
+    "resolution": "Adding a provider now requires one manifest-bearing interface and contract validation instead of workflow-kernel changes."
+  },
+  {
+    "id": "DES-IDX-001",
+    "severity": "medium",
+    "category": "architecture",
+    "requirementIds": ["R7"],
+    "message": "index.ts remains larger than the 100-200 line composition-root target because lifecycle orchestration and command formatting are still local.",
+    "location": "src/index.ts",
+    "status": "open",
+    "resolution": "Core tools and tool interception have moved to UI adapters; remaining lifecycle and command extraction is tracked as R7 work."
+  },
+  {
+    "id": "DES-FS-001",
+    "severity": "info",
+    "category": "architecture",
+    "requirementIds": ["R4"],
+    "message": "Filesystem provider is deep enough to own read/write/delete execution while policy remains centralized in CapabilityBroker and PolicyEngine.",
+    "location": "src/capabilities/filesystem/provider.ts",
+    "status": "resolved",
+    "resolution": "Smoke test 15 proves the provider cannot write outside the active task scope even when called directly through its invoke method."
+  }
+]

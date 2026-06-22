@@ -1,0 +1,85 @@
+```json
+[
+  {
+    "id": "DES-EVAL-01",
+    "severity": "high",
+    "category": "temporal-decomposition",
+    "requirementIds": ["eval-parser"],
+    "message": "parseVerdict now requires JSON to start and end with braces, rejecting any preceding/following text. The old code extracted embedded JSON with a regex. This breaks prompts that wrap JSON in explanatory text, causing silent null returns and forcing prompt rewrite.",
+    "location": "src/evaluator.ts:105-113",
+    "status": "open"
+  },
+  {
+    "id": "DES-EVAL-02",
+    "severity": "medium",
+    "category": "temporal-decomposition",
+    "requirementIds": ["eval-parser"],
+    "message": "Removed handle of legacy field name 'next_cycle_directive'. The new code only reads 'next_focus' and 'next_focus_reason', breaking backward compatibility with older evaluator prompts that used 'next_cycle_directive.focus'.",
+    "location": "src/evaluator.ts:122-130",
+    "status": "open"
+  },
+  {
+    "id": "DES-SHL-01",
+    "severity": "high",
+    "category": "over-abstraction",
+    "requirementIds": ["shell-exec"],
+    "message": "Every goal_shell call now instantiates a PolicyEngine and CapabilityBroker, adding heap allocation and two abstraction layers on top of a simple safety regex. This is a shallow pass-through: the old checkCommand call was a single function with clear semantics; the new layer just wraps it with an elaborate policy object that has no additional enforcement.",
+    "location": "src/shell.ts:177-188",
+    "status": "open"
+  },
+  {
+    "id": "DES-SHL-02",
+    "severity": "high",
+    "category": "regression-risk",
+    "requirementIds": ["shell-exec"],
+    "message": "commandSpecFromShellWords returns null for commands that don't parse to a clean executable-plus-argv (e.g., pipelines, sub-shells, redirect chains). This adds a new failure mode where previously accepted shell syntax is silently blocked, with no fallback to the old eval-based execution.",
+    "location": "src/shell.ts:88-105",
+    "status": "open"
+  },
+  {
+    "id": "DES-SUB-01",
+    "severity": "high",
+    "category": "interface-regression",
+    "requirementIds": ["subagent-call"],
+    "message": "Subagent backend detection was replaced with a simple `commandExists('pi')` check, removing the ability to detect and use tool-based backends (e.g., Claude agent tool). Deployments that relied on the tool backend (non-CLI Pi) now fall back to a hint message instead of executing the subagent.",
+    "location": "src/subagents.ts:104-112",
+    "status": "open"
+  },
+  {
+    "id": "DES-TYPES-01",
+    "severity": "high",
+    "category": "information-leakage",
+    "requirementIds": ["types-authorization"],
+    "message": "ReleaseAuthorization exposes six hash fields (planHash, requirementsHash, gateVerdictHash, evidenceRootHash, baseSha, repositoryId) that are never used by the only consumer (git.ts). Only id, headSha, expiresAt, and allowedAction are actually checked. The extra fields are dead code and leak internal implementation details upward.",
+    "location": "src/types.ts:458-472",
+    "status": "open"
+  },
+  {
+    "id": "DES-STATE-01",
+    "severity": "medium",
+    "category": "temporal-decomposition",
+    "requirementIds": ["state-restore"],
+    "message": "Restore order changed: event log replay is now tried before session entries and before reading state.json directly. This means a run that previously restored from a session snapshot will now restore (or fail to restore) from events.jsonl, potentially surfacing partial state or different run selection.",
+    "location": "src/state.ts:821-890",
+    "status": "open"
+  },
+  {
+    "id": "DES-EVT-01",
+    "severity": "medium",
+    "category": "shallow-module",
+    "requirementIds": ["state-events"],
+    "message": "replayEvents is a single 50-line switch statement that manually copies fields for each event type. This is a shallow handler that will grow linearly with every new event type (change amplification). A state-machine reducer or event-update map would be more maintainable.",
+    "location": "src/state.ts:168-262",
+    "status": "open"
+  },
+  {
+    "id": "DES-CMD-01",
+    "severity": "medium",
+    "category": "duplicate-code",
+    "requirementIds": ["index-commands"],
+    "message": "The four new commands (goal-authorize-release, goal-audit, goal-replay, goal-trace) each repeat the same pattern: check state, check null, call ctx.ui.notify. The authorization command also duplicates evaluator-verdict and unresolved-error checks already present in the evaluator module. This is scattered policy logic.",
+    "location": "src/index.ts:1211-1310",
+    "status": "open"
+  }
+]
+```

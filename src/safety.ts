@@ -50,6 +50,15 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bkillall\b/,
 ];
 
+const PACKAGE_INSTALL_PATTERNS: RegExp[] = [
+  /\bnpm\s+(install|uninstall|update|ci|link|publish)\b/i,
+  /\byarn\s+(add|remove|install|publish)\b/i,
+  /\bpnpm\s+(add|remove|install|publish)\b/i,
+  /\bpip\s+(install|uninstall)\b/i,
+  /\bpip3\s+(install|uninstall)\b/i,
+  /\bbrew\s+(install|uninstall|upgrade)\b/i,
+];
+
 // ── Safe read-only commands ──────────────────────────────────────────
 
 const SAFE_PATTERNS: RegExp[] = [
@@ -139,6 +148,10 @@ export function isGitFinalization(command: string): boolean {
   return GIT_FINALIZATION_PATTERNS.some((p) => p.test(command));
 }
 
+export function isPackageInstallCommand(command: string): boolean {
+  return PACKAGE_INSTALL_PATTERNS.some((p) => p.test(command));
+}
+
 export function checkCommand(
   command: string,
   allowDestructive: boolean,
@@ -146,6 +159,13 @@ export function checkCommand(
 ): SafetyCheckResult {
   const blocked = isAlwaysBlocked(command);
   if (!blocked.allowed) return blocked;
+
+  if (isPackageInstallCommand(command)) {
+    return {
+      allowed: false,
+      reason: `Package installation blocked. Route through an approved package.install capability and plan lockfile effects explicitly. Command: ${command.slice(0, 100)}`,
+    };
+  }
 
   if (!allowDestructive && isGitFinalization(command)) {
     if (allowGitFinalization) {

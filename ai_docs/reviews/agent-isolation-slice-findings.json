@@ -1,0 +1,12 @@
+[
+  {
+    "id": "AGENT-ISO-001",
+    "severity": "info",
+    "category": "agent_runtime",
+    "requirementIds": ["R6", "R12"],
+    "message": "Writer subagents now execute through isolated detached git worktrees, capture patches, clean up workspaces, and enforce active write-scope overlap checks.",
+    "location": "src/agents/pool.ts, src/subagents.ts",
+    "status": "resolved",
+    "resolution": "Smoke test 16 verifies isolated worktree patch capture, main worktree cleanliness, write-scope overlap detection and structured output schema validation."
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "REL-FLOW-001",
+    "severity": "high",
+    "category": "release_authorization",
+    "requirementIds": ["R5", "R13"],
+    "message": "goal_git create_pr recomputed gateVerdictHash without the local release gate component used during authorization, so a valid ReleaseAuthorization could fail validation at PR time.",
+    "location": "src/git.ts",
+    "status": "resolved",
+    "resolution": "goal_git now reruns the local release gate immediately before PR creation/dry-run and validates the authorization against the same evaluator plus localReleaseGate hash used by goal-authorize-release."
+  },
+  {
+    "id": "REL-FLOW-002",
+    "severity": "medium",
+    "category": "runtime_policy",
+    "requirementIds": ["R5", "R13"],
+    "message": "goal_git used restored state.finalizationPolicy, which can be stale after event replay and deny PR dry-run even when the current project .pi/settings.json allows it.",
+    "location": "src/git.ts",
+    "status": "resolved",
+    "resolution": "goal_git refreshes finalization policy from the current working directory settings on each invocation before computing git capabilities."
+  },
+  {
+    "id": "REL-FLOW-003",
+    "severity": "info",
+    "category": "review",
+    "requirementIds": ["R10"],
+    "message": "Independent adversarial release-flow review returned no blocker/high findings for the structured PR body and dry-run changes.",
+    "location": "slice review",
+    "status": "resolved",
+    "resolution": "Review command returned {\"findings\":[]}; Ousterhout pass exceeded the bounded window, followed by local design cleanup moving validation-result parsing into release/pr-body.ts."
+  }
+]

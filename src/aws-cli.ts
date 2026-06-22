@@ -9,22 +9,19 @@ import type {
   AwsCliPreflight,
   AwsCliProfileResolutionStep,
 } from "./types.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { CapabilityBroker } from "./capabilities/broker.js";
+import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    fs.appendFileSync(
-      LOG_FILE,
-      `[${new Date().toISOString()}] [goal_aws_cli] ${msg}\n`,
-    );
-  } catch {}
+  logDebug("goal_aws_cli", msg);
 }
 
 export const DEFAULT_AWS_CLI_CONFIG: AwsCliConfig = {
   enabled: false,
   defaultRegion: "us-east-1",
-  profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+  profileResolutionOrder: ["explicit", "env", "configured"],
+  profileCandidates: [],
   requireSessionManagerPlugin: true,
   allowMutatingFamilies: [],
   preflight: null,
@@ -35,6 +32,13 @@ export interface AwsCommandAssessment {
   isMutation: boolean;
   family: AwsCliMutatingFamily | "read-only" | "blocked" | "unknown";
   reason?: string;
+}
+
+interface BrokeredExecResult {
+  ok: boolean;
+  result?: Awaited<ReturnType<ExtensionAPI["exec"]>>;
+  decision: PolicyDecision;
+  error?: string;
 }
 
 function parseProjectSettings(cwd: string): Record<string, unknown> {
@@ -49,7 +53,7 @@ function parseProjectSettings(cwd: string): Record<string, unknown> {
 }
 
 function isProfileResolutionStep(value: unknown): value is AwsCliProfileResolutionStep {
-  return value === "explicit" || value === "env" || value === "unify" || value === "unify-old";
+  return value === "explicit" || value === "env" || value === "configured";
 }
 
 function isMutatingFamily(value: unknown): value is AwsCliMutatingFamily {
@@ -73,6 +77,17 @@ export function loadAwsCliConfig(cwd: string): AwsCliConfig {
   const profileResolutionOrder = Array.isArray(awsCli.profileResolutionOrder)
     ? awsCli.profileResolutionOrder.filter(isProfileResolutionStep)
     : DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder;
+  const legacyProfileCandidates = Array.isArray(awsCli.profileResolutionOrder)
+    ? awsCli.profileResolutionOrder
+      .filter((value): value is string => typeof value === "string" && !isProfileResolutionStep(value))
+      .map((value) => value.trim())
+      .filter(Boolean)
+    : [];
+  const profileCandidates = Array.isArray(awsCli.profileCandidates)
+    ? awsCli.profileCandidates
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim())
+    : legacyProfileCandidates;
   const allowMutatingFamilies = Array.isArray(awsCli.allowMutatingFamilies)
     ? awsCli.allowMutatingFamilies.filter(isMutatingFamily)
     : DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies;
@@ -85,6 +100,7 @@ export function loadAwsCliConfig(cwd: string): AwsCliConfig {
     profileResolutionOrder: profileResolutionOrder.length > 0
       ? profileResolutionOrder
       : DEFAULT_AWS_CLI_CONFIG.profileResolutionOrder,
+    profileCandidates: [...new Set(profileCandidates)],
     requireSessionManagerPlugin: awsCli.requireSessionManagerPlugin !== false,
     allowMutatingFamilies,
     preflight: null,
@@ -97,8 +113,15 @@ async function isCommandAvailable(
   cwd: string,
 ): Promise<boolean> {
   try {
-    const result = await pi.exec("which", [command], { cwd, timeout: 5_000 });
-    return result.code === 0 && result.stdout.trim().length > 0;
+    const action = await execThroughBroker(pi, {
+      cwd,
+      command: "which",
+      args: [command],
+      timeout: 5_000,
+      runId: "aws-preflight",
+      purpose: `AWS preflight: locate ${command}`,
+    });
+    return action.ok && !!action.result && action.result.code === 0 && action.result.stdout.trim().length > 0;
   } catch {
     return false;
   }
@@ -106,7 +129,16 @@ async function isCommandAvailable(
 
 async function listAwsProfiles(pi: ExtensionAPI, cwd: string): Promise<string[]> {
   try {
-    const result = await pi.exec("aws", ["configure", "list-profiles"], { cwd, timeout: 10_000 });
+    const action = await execThroughBroker(pi, {
+      cwd,
+      command: "aws",
+      args: ["configure", "list-profiles"],
+      timeout: 10_000,
+      runId: "aws-preflight",
+      purpose: "AWS preflight: list profiles",
+    });
+    if (!action.ok || !action.result) return [];
+    const result = action.result;
     if (result.code !== 0) return [];
     return result.stdout
       .split(/\r?\n/)
@@ -127,8 +159,7 @@ function candidateProfiles(
   for (const step of config.profileResolutionOrder) {
     if (step === "explicit") continue;
     if (step === "env" && process.env.AWS_PROFILE?.trim()) profiles.push(process.env.AWS_PROFILE.trim());
-    if (step === "unify") profiles.push("unify");
-    if (step === "unify-old") profiles.push("unify-old");
+    if (step === "configured") profiles.push(...config.profileCandidates);
   }
   return [...new Set(profiles)];
 }
@@ -140,16 +171,25 @@ async function resolveIdentity(
   region: string,
 ): Promise<{ account: string; arn: string; userId: string } | null> {
   try {
-    const result = await pi.exec("aws", [
-      "sts",
-      "get-caller-identity",
-      "--profile",
-      profile,
-      "--region",
-      region,
-      "--output",
-      "json",
-    ], { cwd, timeout: 15_000 });
+    const action = await execThroughBroker(pi, {
+      cwd,
+      command: "aws",
+      args: [
+        "sts",
+        "get-caller-identity",
+        "--profile",
+        profile,
+        "--region",
+        region,
+        "--output",
+        "json",
+      ],
+      timeout: 15_000,
+      runId: "aws-preflight",
+      purpose: "AWS preflight: resolve caller identity",
+    });
+    if (!action.ok || !action.result) return null;
+    const result = action.result;
     if (result.code !== 0) return null;
     const parsed = JSON.parse(result.stdout);
     return {
@@ -162,6 +202,50 @@ async function resolveIdentity(
   }
 }
 
+async function execThroughBroker(
+  pi: ExtensionAPI,
+  params: {
+    cwd: string;
+    command: string;
+    args: string[];
+    timeout: number;
+    runId: string;
+    purpose: string;
+    allowDestructive?: boolean;
+    signal?: AbortSignal;
+  },
+): Promise<BrokeredExecResult> {
+  const policy = new PolicyEngine({ repoRoot: params.cwd });
+  const broker = new CapabilityBroker(policy);
+  const action = await broker.invoke({
+    id: `goal_aws_cli:${Date.now()}`,
+    actor: { kind: "tool", id: "goal_aws_cli" },
+    runId: params.runId,
+    effect: "process.exec",
+    resource: commandResource(params.command, params.args),
+    input: {
+      executable: params.command,
+      argv: params.args,
+      cwd: params.cwd,
+      allowDestructive: params.allowDestructive === true,
+      allowGitFinalization: false,
+    },
+    purpose: params.purpose,
+    risk: params.allowDestructive === true ? "write" : "read",
+    dataClassification: "internal",
+  }, async () => pi.exec(params.command, params.args, {
+    cwd: params.cwd,
+    signal: params.signal,
+    timeout: params.timeout,
+  }), params.signal);
+
+  return {
+    ok: action.ok && !!action.output,
+    result: action.output,
+    decision: action.decision,
+    error: action.error,
+  };
+}
 export async function preflightAwsCli(
   pi: ExtensionAPI,
   ctx: ExtensionContext | ExtensionCommandContext,
@@ -439,11 +523,32 @@ export function registerGoalAwsCliTool(
       }
 
       try {
-        const result = await pi.exec("aws", finalArgs, {
+        const action = await execThroughBroker(pi, {
           cwd,
-          signal: signal ?? undefined,
+          command: "aws",
+          args: finalArgs,
           timeout: 120_000,
+          runId: state?.runId ?? "goal_aws_cli",
+          purpose,
+          allowDestructive: assessment.isMutation,
+          signal: signal ?? undefined,
         });
+        if (!action.ok || !action.result) {
+          return {
+            content: [{ type: "text" as const, text: `AWS CLI execution blocked: ${action.error ?? action.decision.reason}` }],
+            details: {
+              allowed: false,
+              family: assessment.family,
+              purpose,
+              args,
+              profile,
+              region,
+              policyDecision: action.decision,
+            },
+            isError: true,
+          };
+        }
+        const result = action.result;
         const truncated = result.stdout.length > 50_000 || result.stderr.length > 50_000;
         const stdoutDisplay = result.stdout.slice(0, 50_000);
         const stderrDisplay = result.stderr.slice(0, 50_000);
@@ -457,6 +562,7 @@ export function registerGoalAwsCliTool(
           region,
           family: assessment.family,
           isMutation: assessment.isMutation,
+          policyDecision: action.decision,
           exitCode: result.code,
           killed: result.killed ?? false,
           stdout: stdoutDisplay,
@@ -503,6 +609,7 @@ export function registerGoalAwsCliTool(
             exitCode: result.code,
             killed: result.killed ?? false,
             truncated,
+            policyDecision: action.decision,
           },
           isError: result.code !== 0,
         };

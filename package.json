@@ -12,6 +12,12 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node scripts/smoke-goal-harness.mjs",
+    "smoke": "node scripts/smoke-goal-harness.mjs",
+    "lint": "tsc --noEmit",
+    "format:check": "node -e \"console.log('format:check: no formatter configured')\"",
+    "validate": "npm run test",
     "watch": "tsc -w"
   },
   "peerDependencies": {

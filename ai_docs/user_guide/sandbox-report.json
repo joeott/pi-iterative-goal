@@ -1,0 +1,218 @@
+{
+  "generatedAt": "2026-06-22T17:36:59.409Z",
+  "repoRoot": "/Users/joe/Projects/pi-iterative-goal",
+  "guideDir": "/Users/joe/Projects/pi-iterative-goal/ai_docs/user_guide",
+  "safetyBoundary": {
+    "realAwsMutations": false,
+    "realGithubPrCreation": false,
+    "cloudWrites": false,
+    "tempReposOnly": true
+  },
+  "results": [
+    {
+      "id": "repo-validate",
+      "status": "PASS",
+      "summary": "`npm run validate` completed.",
+      "details": {
+        "stdoutTail": "✓ Test 4: Typed path scopes reject fuzzy allowlist matches\n✓ Test 5: Validation script executes argv checks, records exit codes, and fails closed\n✓ Test 6: Harness meta includes runId + phaseAttemptId nonce\n✓ Test 7: /goal-status --json structure includes lock + evaluator state\n✓ Test 8: Resume prompt carries nonce + tool contract\n✓ Test 9: agent_end synthesis handles plain-string and structured assistant output\n✓ Test 10: goal-status latestArtifact shape is parseable\n✓ Test 11: AWS CLI config, safety classification, and broker policy evidence behave as expected\n✓ Test 12: Resume prompt exposes AWS tool guidance when enabled\n✓ Test 13: Git finalization config and prompt guidance behave as expected\n✓ Test 14: Model allowlist restricts stale/unapproved models\n✓ Test 15: Central policy, broker, and provider manifest contracts validate effects\n✓ Test 16: Isolated writer worktree captures patch without touching main worktree\n✓ Test 17: Event replay reconstructs new run state and rejects hash-chain tampering\n✓ Test 18: New-run replay corruption does not silently reconstruct from stale cache\n✓ Test 19: ReleaseAuthorization is invalidated by a new HEAD\n✓ Test 20: Structured PR body generation includes evidence matrix and authorization\n\nAll tests passed. ✓\n"
+      },
+      "checkedAt": "2026-06-22T17:36:59.288Z"
+    },
+    {
+      "id": "html-static",
+      "status": "PASS",
+      "summary": "Internal anchors resolve and CSS/JS assets are local.",
+      "details": {
+        "anchors": 13,
+        "assetRefs": [
+          "assets/guide.css",
+          "assets/guide.js"
+        ]
+      },
+      "checkedAt": "2026-06-22T17:36:59.289Z"
+    },
+    {
+      "id": "source-inventory",
+      "status": "PASS",
+      "summary": "Guide command/tool inventory matches source registrations.",
+      "details": {
+        "commands": [
+          "goal-start",
+          "goal-status",
+          "goal-pause",
+          "goal-resume",
+          "goal-repair-capabilities",
+          "goal-finalize",
+          "goal-reset",
+          "goal-authorize-release",
+          "goal-audit",
+          "goal-replay",
+          "goal-trace",
+          "goal-dashboard"
+        ],
+        "tools": [
+          "goal_shell",
+          "goal_aws_cli",
+          "goal_git",
+          "goal_subagent",
+          "goal_report_phase_result",
+          "goal_record_blocker",
+          "goal_request_capability_repair",
+          "goal_checkpoint"
+        ]
+      },
+      "checkedAt": "2026-06-22T17:36:59.289Z"
+    },
+    {
+      "id": "extension-load-goal-shell",
+      "status": "PASS",
+      "summary": "Loaded dist extension and ran goal_shell in a disposable git repo.",
+      "details": {
+        "registeredTools": [
+          "goal_aws_cli",
+          "goal_checkpoint",
+          "goal_git",
+          "goal_record_blocker",
+          "goal_report_phase_result",
+          "goal_request_capability_repair",
+          "goal_shell",
+          "goal_subagent"
+        ],
+        "registeredCommands": [
+          "goal-audit",
+          "goal-authorize-release",
+          "goal-dashboard",
+          "goal-finalize",
+          "goal-pause",
+          "goal-repair-capabilities",
+          "goal-replay",
+          "goal-reset",
+          "goal-resume",
+          "goal-start",
+          "goal-status",
+          "goal-trace"
+        ],
+        "tempRepo": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-guide-shell-EOHFn6",
+        "output": "## No commits yet on main\n?? README.md\n"
+      },
+      "checkedAt": "2026-06-22T17:36:59.387Z"
+    },
+    {
+      "id": "mock-aws-cli",
+      "status": "PASS",
+      "summary": "Mock AWS CLI preflight and read-only STS call used a temp repo and fake exec only.",
+      "details": {
+        "profile": "mock-profile",
+        "region": "us-east-1",
+        "policyRuleIds": [
+          "policy.process.no-shell-strings"
+        ]
+      },
+      "checkedAt": "2026-06-22T17:36:59.402Z"
+    },
+    {
+      "id": "policy-negative-cases",
+      "status": "PASS",
+      "summary": "Package install, private URL, and PR without authorization are denied.",
+      "details": {
+        "packageInstall": {
+          "result": "deny",
+          "ruleIds": [
+            "policy.package.install"
+          ],
+          "reason": "Package installation must use an approved package.install capability with planned lockfile effects."
+        },
+        "privateUrl": {
+          "result": "deny",
+          "ruleIds": [
+            "policy.network.private-address"
+          ],
+          "reason": "Network destination is private or metadata-like: 127.0.0.1"
+        },
+        "prWithoutAuth": {
+          "result": "deny",
+          "ruleIds": [
+            "policy.git.pr.release-auth"
+          ],
+          "reason": "PR creation requires a current ReleaseAuthorization."
+        }
+      },
+      "checkedAt": "2026-06-22T17:36:59.402Z"
+    },
+    {
+      "id": "provider-contracts",
+      "status": "PASS",
+      "summary": "Capability manifests validate; browser/MCP/vision fail closed without backends.",
+      "details": {
+        "providerIds": [
+          "filesystem",
+          "process",
+          "web",
+          "browser",
+          "mcp",
+          "vision"
+        ],
+        "capabilityIds": [
+          "browser.interact",
+          "filesystem.delete",
+          "filesystem.read",
+          "filesystem.write",
+          "mcp.invoke",
+          "process.exec",
+          "vision.inspect",
+          "web.fetch"
+        ],
+        "unavailableReasons": [
+          "No browser backend configured.",
+          "No MCP invoker configured.",
+          "No vision backend configured."
+        ]
+      },
+      "checkedAt": "2026-06-22T17:36:59.409Z"
+    },
+    {
+      "id": "stale-phase-write",
+      "status": "PASS",
+      "summary": "Stale phase output is rejected and recorded as ignored.",
+      "details": {
+        "text": "STALE OUTPUT REJECTED: phaseAttemptId mismatch: got old-phase-attempt, expected ig-guide-stale/c1/research/a1 for goal_report_phase_result. Active run=ig-guide-stale, activePhase=ig-guide-stale/c1/research/a1. Your message is from a previous turn and has been ignored.",
+        "eventKind": "stale_phase_output_ignored"
+      },
+      "checkedAt": "2026-06-22T17:36:59.409Z"
+    },
+    {
+      "id": "visual-artifacts",
+      "status": "PASS",
+      "summary": "Desktop and mobile screenshots are present.",
+      "details": {
+        "desktopExists": true,
+        "mobileExists": true
+      },
+      "checkedAt": "2026-06-22T17:36:59.409Z"
+    }
+  ],
+  "notes": [
+    {
+      "type": "phaseEvent",
+      "event": {
+        "runId": "ig-guide-stale",
+        "cycle": 1,
+        "phase": "research",
+        "phaseAttemptId": "ig-guide-stale/c1/research/a1",
+        "attempt": 2,
+        "kind": "stale_phase_output_ignored",
+        "timestamp": "2026-06-22T17:36:59.409Z",
+        "details": {
+          "reason": "phaseAttemptId mismatch: got old-phase-attempt, expected ig-guide-stale/c1/research/a1 for goal_report_phase_result",
+          "expectedRunId": "ig-guide-stale",
+          "expectedPhaseAttemptId": "ig-guide-stale/c1/research/a1",
+          "observedRunId": "ig-guide-stale",
+          "observedPhaseAttemptId": "old-phase-attempt"
+        }
+      }
+    }
+  ],
+  "passed": 9,
+  "warned": 0,
+  "failed": 0
+}

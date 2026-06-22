@@ -8,22 +8,16 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { checkCommand, isSafeReadOnly, isDestructive } from "./safety.js";
 import { shouldBlockAwsShellCommand } from "./aws-cli.js";
 import { shouldBlockGitShellCommand } from "./git.js";
 import type { AwsCliConfig, FinalizationPolicy } from "./types.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { commandSpecFromShellWords } from "./domain/verification.js";
+import { CapabilityBroker } from "./capabilities/broker.js";
+import { commandResource, PolicyEngine } from "./policy/engine.js";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    const fs = require("node:fs");
-    fs.appendFileSync(
-      LOG_FILE,
-      `[${new Date().toISOString()}] [goal_shell] ${msg}\n`,
-    );
-  } catch {}
+  logDebug("goal_shell", msg);
 }
 
 const GoalShellParams = Type.Object({
@@ -83,17 +77,10 @@ export function registerGoalShellTool(
 
       log(`exec: ${command} (cwd=${cwd}, destructive=${allowDestructive})`);
 
-      // Safety check
-      const safetyResult = checkCommand(command, allowDestructive);
-      if (!safetyResult.allowed) {
-        log(`BLOCKED: ${safetyResult.reason}`);
+      const commandSpec = commandSpecFromShellWords(command);
+      if (!commandSpec) {
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `SAFETY BLOCK: ${safetyResult.reason}\n\nCommand: ${command}`,
-            },
-          ],
+          content: [{ type: "text" as const, text: "SAFETY BLOCK: command must parse to executable-plus-argv." }],
           details: {
             exitCode: null,
             killed: false,
@@ -102,7 +89,7 @@ export function registerGoalShellTool(
             command,
             cwd,
             purpose,
-            safetyCheckResult: safetyResult.reason,
+            safetyCheckResult: "command_parse_failed",
           } satisfies GoalShellDetails,
         };
       }
@@ -110,7 +97,8 @@ export function registerGoalShellTool(
       const awsShellBlock = shouldBlockAwsShellCommand(command, getAwsCliConfig?.() ?? {
         enabled: false,
         defaultRegion: "us-east-1",
-        profileResolutionOrder: ["explicit", "env", "unify", "unify-old"],
+        profileResolutionOrder: ["explicit", "env", "configured"],
+        profileCandidates: [],
         requireSessionManagerPlugin: true,
         allowMutatingFamilies: [],
         preflight: null,
@@ -155,13 +143,46 @@ export function registerGoalShellTool(
         };
       }
 
-      try {
-        const result = await pi.exec(command, [], {
+      const policy = new PolicyEngine({ repoRoot: cwd });
+      const broker = new CapabilityBroker(policy);
+      const action = await broker.invoke({
+        id: `goal_shell:${Date.now()}`,
+        actor: { kind: "tool", id: "goal_shell" },
+        runId: "unknown",
+        effect: "process.exec",
+        resource: commandResource(commandSpec.executable, commandSpec.argv),
+        input: {
+          ...commandSpec,
+          allowDestructive,
+          allowGitFinalization: getFinalizationPolicy?.()?.allowGitFinalization === true,
+        },
+        purpose: purpose ?? "goal_shell command",
+        risk: allowDestructive ? "write" : "read",
+        dataClassification: "internal",
+      }, async () => pi.exec(commandSpec.executable, commandSpec.argv, {
           cwd,
           signal: signal ?? undefined,
           timeout: 120_000,
-        });
+        }), signal ?? undefined);
 
+      if (!action.ok || !action.output) {
+        return {
+          content: [{ type: "text" as const, text: `SAFETY BLOCK: ${action.error ?? action.decision.reason}` }],
+          details: {
+            exitCode: null,
+            killed: false,
+            truncated: false,
+            allowed: false,
+            command,
+            cwd,
+            purpose,
+            safetyCheckResult: action.error ?? action.decision.reason,
+          } satisfies GoalShellDetails,
+        };
+      }
+
+      try {
+        const result = action.output;
         const truncated = result.stdout.length > 50000 ||
           result.stderr.length > 50000;
         const stdoutDisplay = result.stdout.slice(0, 50000);

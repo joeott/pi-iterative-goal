@@ -4,13 +4,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { StateManagerAPI } from "./state.js";
 import type { FinalizationPolicy } from "./types.js";
-
-const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
+import { hashJson, validateReleaseAuthorization } from "./release/controller.js";
+import { generatePullRequestBody, readVerificationResults } from "./release/pr-body.js";
+import { runLocalReleaseGate } from "./review/gates/release-gate.js";
+import { gitResource, PolicyEngine, type Effect, type PolicyDecision } from "./policy/engine.js";
+import { logDebug } from "./logging.js";
 
 function log(msg: string) {
-  try {
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [goal_git] ${msg}\n`);
-  } catch {}
+  logDebug("goal_git", msg);
 }
 
 function parseProjectSettings(cwd: string): Record<string, unknown> {
@@ -67,6 +68,15 @@ async function currentBranch(pi: ExtensionAPI, cwd: string): Promise<string | nu
     return result.stdout.trim() || null;
   } catch {
     return null;
+  }
+}
+
+async function gitOutput(pi: ExtensionAPI, cwd: string, args: string[]): Promise<string> {
+  try {
+    const result = await pi.exec("git", args, { cwd, timeout: 30_000 });
+    return result.code === 0 ? result.stdout.trim() : "";
+  } catch {
+    return "";
   }
 }
 
@@ -128,11 +138,38 @@ const GoalGitParams = Type.Object({
   body: Type.Optional(Type.String({ description: "PR body" })),
   base: Type.Optional(Type.String({ description: "PR base branch" })),
   draft: Type.Optional(Type.Boolean({ description: "Create draft PR", default: false })),
+  dryRun: Type.Optional(Type.Boolean({ description: "Validate authorization and render PR request without opening a PR", default: false })),
+  releaseAuthorizationId: Type.Optional(Type.String({ description: "Required for create_pr; must match the active release authorization" })),
   purpose: Type.String({ description: "Why this git action is needed" }),
 });
 
 function missing(field: string): never {
   throw new Error(`Missing required field for goal_git: ${field}`);
+}
+
+function decideGitEffect(params: {
+  cwd: string;
+  runId: string;
+  effect: Effect;
+  action: string;
+  input: Record<string, unknown>;
+  purpose: string;
+}): PolicyDecision {
+  return new PolicyEngine({ repoRoot: params.cwd }).decide({
+    id: `goal_git:${params.action}:${Date.now()}`,
+    actor: { kind: "tool", id: "goal_git" },
+    runId: params.runId,
+    effect: params.effect,
+    resource: gitResource(params.action),
+    input: params.input,
+    purpose: params.purpose,
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+}
+
+function assertAllowed(decision: PolicyDecision): void {
+  if (decision.result !== "allow") throw new Error(decision.reason);
 }
 
 export function registerGoalGitTool(
@@ -155,7 +192,11 @@ export function registerGoalGitTool(
       const cwd = (params.cwd as string | undefined) ?? ctx.cwd;
       const purpose = String(params.purpose ?? "");
       const action = params.action as string;
-      const policy = state?.finalizationPolicy ?? loadFinalizationPolicy(cwd);
+      const policy = loadFinalizationPolicy(cwd);
+      if (state) {
+        state.finalizationPolicy = policy;
+        state.constraints.allowGitFinalization = policy.allowGitFinalization;
+      }
       const gitInfo = await getGitCapability(pi, ctx, policy);
 
       const detailsBase = {
@@ -191,7 +232,14 @@ export function registerGoalGitTool(
             };
           }
           case "checkout_branch": {
-            if (!policy.allowGitFinalization) throw new Error("Git branch creation is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.branch",
+              action,
+              input: { allowGitFinalization: policy.allowGitFinalization },
+              purpose,
+            }));
             const branch = typeof params.branch === "string" ? params.branch : missing("branch");
             const result = await exec("git", ["checkout", "-b", branch]);
             return {
@@ -201,7 +249,14 @@ export function registerGoalGitTool(
             };
           }
           case "add": {
-            if (!policy.allowGitFinalization) throw new Error("git add is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.stage",
+              action,
+              input: { allowGitFinalization: policy.allowGitFinalization },
+              purpose,
+            }));
             const paths = Array.isArray(params.paths) && params.paths.length > 0 ? params.paths as string[] : missing("paths");
             const result = await exec("git", ["add", ...paths]);
             return {
@@ -211,7 +266,14 @@ export function registerGoalGitTool(
             };
           }
           case "commit": {
-            if (!policy.allowCommit) throw new Error("git commit is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.commit",
+              action,
+              input: { allowCommit: policy.allowCommit },
+              purpose,
+            }));
             const message = typeof params.message === "string" ? params.message : missing("message");
             const result = await exec("git", ["commit", "-m", message]);
             return {
@@ -221,7 +283,14 @@ export function registerGoalGitTool(
             };
           }
           case "push": {
-            if (!policy.allowPush) throw new Error("git push is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.push",
+              action,
+              input: { allowPush: policy.allowPush },
+              purpose,
+            }));
             const remote = typeof params.remote === "string" ? params.remote : "origin";
             const branch = typeof params.branch === "string"
               ? params.branch
@@ -235,18 +304,88 @@ export function registerGoalGitTool(
           }
           case "create_pr": {
             if (!policy.allowPR) throw new Error("PR creation is disabled by finalization policy.");
-            if (!gitInfo.ghAvailable) throw new Error("gh is not installed.");
-            if (!gitInfo.ghAuthenticated) throw new Error("gh is installed but not authenticated.");
+            if (!state) throw new Error("PR creation requires an active iterative-goal run.");
+            const releaseAuthorizationId = typeof params.releaseAuthorizationId === "string" ? params.releaseAuthorizationId : missing("releaseAuthorizationId");
+            if (!state.releaseAuthorization || state.releaseAuthorization.id !== releaseAuthorizationId) {
+              throw new Error("PR creation requires a matching ReleaseAuthorization from the pre-PR release gate.");
+            }
+            const releaseGate = await runLocalReleaseGate(state, stateManager);
+            if (!releaseGate.ok) {
+              throw new Error(`Pre-PR release gate failed: ${releaseGate.reasons.join("; ")}`);
+            }
+            const releaseAuthCheck = await validateReleaseAuthorization({
+              pi,
+              ctx,
+              authorization: state.releaseAuthorization,
+              runId: state.runId,
+              expected: {
+                planHash: hashJson(state.artifacts.plans.at(-1) ?? null),
+                requirementsHash: hashJson({ goal: state.goal, criterion: state.goalCriterion }),
+                gateVerdictHash: hashJson({ evaluator: state.evaluator.lastVerdict, localReleaseGate: releaseGate }),
+                evidenceRootHash: hashJson(state.artifacts),
+              },
+            });
+            if (!releaseAuthCheck.ok) {
+              throw new Error(releaseAuthCheck.reason);
+            }
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state.runId,
+              effect: "git.pr.open",
+              action,
+              input: { releaseAuthorizationValid: true, releaseAuthorizationId },
+              purpose,
+            }));
+            const dryRun = params.dryRun === true;
             const title = typeof params.title === "string" ? params.title : missing("title");
-            const body = typeof params.body === "string" ? params.body : missing("body");
+            const changedFiles = (await gitOutput(pi, cwd, ["diff", "--name-only", `${state.releaseAuthorization.baseSha}..${state.releaseAuthorization.headSha}`]))
+              .split(/\r?\n/)
+              .filter(Boolean);
+            const diffStat = await gitOutput(pi, cwd, ["diff", "--stat", `${state.releaseAuthorization.baseSha}..${state.releaseAuthorization.headSha}`]);
+            const body = typeof params.body === "string" && params.body.trim()
+              ? params.body
+              : generatePullRequestBody({
+                  state,
+                  changedFiles,
+                  diffStat,
+                  tests: readVerificationResults(stateManager.getArtifactPath(state.cycle, "validate", "verification-results.jsonl")),
+                });
             const args = ["pr", "create", "--title", title, "--body", body];
             if (typeof params.base === "string" && params.base.trim()) args.push("--base", params.base.trim());
             if (typeof params.branch === "string" && params.branch.trim()) args.push("--head", params.branch.trim());
             if (params.draft === true) args.push("--draft");
+            if (dryRun) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: [
+                    "PR dry-run authorized.",
+                    "",
+                    `Title: ${title}`,
+                    `Base: ${params.base ?? "(default)"}`,
+                    `Head: ${state.releaseAuthorization.headSha}`,
+                    "",
+                    "Body:",
+                    body,
+                  ].join("\n"),
+                }],
+                details: {
+                  ...detailsBase,
+                  ok: true,
+                  dryRun: true,
+                  title,
+                  base: params.base ?? null,
+                  releaseAuthorizationId,
+                  changedFiles,
+                },
+              };
+            }
+            if (!gitInfo.ghAvailable) throw new Error("gh is not installed.");
+            if (!gitInfo.ghAuthenticated) throw new Error("gh is installed but not authenticated.");
             const result = await exec("gh", args);
             return {
               content: [{ type: "text" as const, text: result.stdout || result.stderr || "PR created." }],
-              details: { ...detailsBase, ok: result.code === 0, code: result.code, title, base: params.base ?? null },
+              details: { ...detailsBase, ok: result.code === 0, code: result.code, title, base: params.base ?? null, releaseAuthorizationId },
               isError: result.code !== 0,
             };
           }

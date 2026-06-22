@@ -1,0 +1,12 @@
+[
+  {
+    "id": "FINDING-009",
+    "severity": "medium",
+    "category": "path_scope_false_rejection",
+    "requirementIds": ["R2", "R12"],
+    "message": "The full staged-patch advisor pass identified that plan path extraction skipped extensionless repo paths such as Dockerfile, Makefile and scripts/deploy. This could falsely mark planned extensionless changes as out-of-scope and block the release gate.",
+    "location": "src/domain/path-scope.ts",
+    "status": "resolved",
+    "resolution": "extractPathScopesFromPlanText now captures quoted/backticked repo paths without requiring a dot, while filtering obvious non-path tokens. Smoke test 4 covers Dockerfile and scripts/deploy."
+  }
+]

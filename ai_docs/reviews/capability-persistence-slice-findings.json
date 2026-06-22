@@ -1,0 +1,32 @@
+[
+  {
+    "id": "CAP-POL-001",
+    "severity": "info",
+    "category": "policy",
+    "requirementIds": ["R3", "R4", "R12"],
+    "message": "Capability providers now declare runtime-validated manifests and broker output schemas; AWS and filesystem providers produce policy decisions on effectful execution paths.",
+    "location": "src/capabilities/manifest.ts, src/capabilities/registry.ts, src/capabilities/broker.ts, src/aws-cli.ts, src/capabilities/filesystem/provider.ts",
+    "status": "resolved",
+    "resolution": "Smoke tests 11 and 15 cover AWS broker policy evidence, provider manifest validation, provider output validation, and denied filesystem writes."
+  },
+  {
+    "id": "CAP-POL-002",
+    "severity": "medium",
+    "category": "policy",
+    "requirementIds": ["R4"],
+    "message": "Subagent/browser/MCP provider effects are not yet uniformly broker-enforced; subagent writers are isolated, but future provider families still need broker-only execution paths.",
+    "location": "src/subagents.ts, src/agents/pool.ts, src/capabilities/manifest.ts",
+    "status": "open",
+    "resolution": "Tracked as remaining R4 work in ai_docs/autonomous_kernel_refactor_audit.md."
+  },
+  {
+    "id": "EVT-AUD-001",
+    "severity": "info",
+    "category": "audit",
+    "requirementIds": ["R8", "R12"],
+    "message": "New event logs include monotonic sequence numbers and hash-chain continuity checks; tampering a chained event causes replay to fail closed.",
+    "location": "src/state.ts",
+    "status": "resolved",
+    "resolution": "Smoke test 17 verifies hash metadata and tamper rejection; smoke test 18 verifies corrupt replay does not silently reconstruct from stale cache."
+  }
+]

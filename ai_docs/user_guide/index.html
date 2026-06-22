@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pi-iterative-goal User Guide</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="assets/guide.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="side">
+      <div class="brand">
+        <strong>pi-iterative-goal</strong>
+        <span>Operator and maintainer guide</span>
+      </div>
+      <nav class="nav" aria-label="Guide sections">
+        <a href="#quick-start">Quick Start</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#commands">Commands</a>
+        <a href="#tools">Tools</a>
+        <a href="#connectivity">Connectivity</a>
+        <a href="#policy">Policy</a>
+        <a href="#release">Release Flow</a>
+        <a href="#runtime">Agent Runtime</a>
+        <a href="#persistence">Audit</a>
+        <a href="#models">Models</a>
+        <a href="#sandbox">Sandbox QA</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+        <a href="#risks">Residual Risks</a>
+      </nav>
+    </aside>
+
+    <div class="content">
+      <header class="hero">
+        <p class="eyebrow">Pi extension guide</p>
+        <h1>Durable goal loops with governed tools, auditable state, and release authorization.</h1>
+        <p class="lede">
+          This guide covers the refactored pi-iterative-goal harness for operators and developers:
+          how to start and control a goal, which tools are available, what the policy engine allows,
+          how releases are authorized, and how to test the system without mutating real cloud or GitHub resources.
+        </p>
+        <div class="hero-metrics" aria-label="Key harness properties">
+          <div class="metric"><b>4</b><span>Required phases before evaluation</span></div>
+          <div class="metric"><b>13</b><span>Approved OpenRouter model entries</span></div>
+          <div class="metric"><b>18</b><span>Governed policy effects</span></div>
+          <div class="metric"><b>0</b><span>External assets in this guide</span></div>
+        </div>
+      </header>
+
+      <main>
+        <section id="quick-start">
+          <h2>Quick Start</h2>
+          <p>
+            Build the extension, let Pi load <code>dist/index.js</code>, then start a goal with an explicit success criterion.
+            The loop runs <code>research -> plan -> implement -> validate</code>, then an external evaluator decides whether the goal is met.
+          </p>
+          <pre><code>npm install
+npm run build
+
+# In Pi, from the repository that should own the goal:
+/goal-start Improve the checkout flow #criterion: npm run validate passes and the checkout smoke path is documented
+/goal-status --json</code></pre>
+          <div class="grid">
+            <div class="panel">
+              <h3>Normal Control</h3>
+              <ul>
+                <li>Pause with <code>/goal-pause</code>; this is the normal stop control.</li>
+                <li>Resume with <code>/goal-resume</code>; the harness rehydrates capabilities and sends a follow-up phase prompt.</li>
+                <li>Reset with <code>/goal-reset</code>; the active run is archived before state is cleared.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>Local Configuration</h3>
+              <p>Project settings live in <code>.pi/settings.json</code>. AWS and git finalization default to disabled unless explicitly configured.</p>
+              <pre><code>{
+  "iterativeGoal": {
+    "awsCli": { "enabled": false },
+    "finalization": {
+      "allowGitFinalization": false,
+      "allowCommit": false,
+      "allowPush": false,
+      "allowPR": false,
+      "fallback": "patch"
+    }
+  }
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="workflow">
+          <h2>Workflow Model</h2>
+          <p>
+            The harness owns continuation. Agent output is captured on `agent_end`, phase artifacts are persisted,
+            and only the evaluator can mark the goal as succeeded. A stale-write guard rejects tool reports that
+            do not match the active <code>runId</code> and <code>phaseAttemptId</code> in the current <code>[HARNESS_META]</code> block.
+          </p>
+          <div class="timeline">
+            <div class="step"><b>Research</b><span>Collect context, capability inventory, blockers, and repo constraints.</span></div>
+            <div class="step"><b>Plan</b><span>Produce allowed paths, checks, risk notes, and any accepted plan amendments.</span></div>
+            <div class="step"><b>Implement</b><span>Change only planned paths. Implementation verification compares changed files to the approved plan scope.</span></div>
+            <div class="step"><b>Validate</b><span>Run tests and gates, persist verification results, then queue the external evaluator.</span></div>
+            <div class="step"><b>Evaluate</b><span>Evaluator returns strict JSON. `goal_met: true` is the only success signal.</span></div>
+          </div>
+          <div class="tag-row">
+            <span class="tag">status: running</span>
+            <span class="tag">status: paused_by_user</span>
+            <span class="tag">status: recovering</span>
+            <span class="tag">status: succeeded</span>
+            <span class="tag">directive: external_blocked_complete</span>
+          </div>
+        </section>
+
+        <section id="commands">
+          <h2>Command Reference</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Command</th><th>Use</th><th>Notes</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>/goal-start &lt;goal&gt; [#criterion: ...]</code></td><td>Start or replace an autonomous run.</td><td>Preflights models and capabilities, then sends the research phase prompt.</td></tr>
+                <tr><td><code>/goal-status [--json]</code></td><td>Inspect active run, lock, evaluator state, artifacts, AWS and git policy.</td><td>`--json` is authoritative for automation.</td></tr>
+                <tr><td><code>/goal-dashboard</code></td><td>Show the interactive dashboard.</td><td>Requires interactive Pi UI support.</td></tr>
+                <tr><td><code>/goal-pause</code></td><td>Pause a running loop.</td><td>Use this instead of relying on model self-termination.</td></tr>
+                <tr><td><code>/goal-resume</code></td><td>Resume a paused loop.</td><td>Refreshes capability snapshot and starts a new phase attempt.</td></tr>
+                <tr><td><code>/goal-repair-capabilities</code></td><td>Re-run capability preflight and try model fallback repair.</td><td>Reports missing bash/subagent/AWS profile issues.</td></tr>
+                <tr><td><code>/goal-finalize [--mode patch|commit]</code></td><td>Write final patch artifacts or route to `goal_git` when commit mode is allowed.</td><td>Default behavior is patch-only.</td></tr>
+                <tr><td><code>/goal-authorize-release</code></td><td>Run the local pre-PR release authorization gate.</td><td>Requires evaluator success, no unresolved harness errors, clean local release gate evidence.</td></tr>
+                <tr><td><code>/goal-audit</code></td><td>Print run ID, event path, replay status, artifact path, and release authorization ID.</td><td>Fast operator handoff command.</td></tr>
+                <tr><td><code>/goal-replay</code></td><td>Replay the active event log and compare core state.</td><td>Legacy runs may be unavailable if they lack `run_created.initialState`.</td></tr>
+                <tr><td><code>/goal-trace &lt;term&gt;</code></td><td>Search run artifacts for a requirement or evidence term.</td><td>Returns matching phase/cycle/status lines.</td></tr>
+                <tr><td><code>/goal-reset</code></td><td>Archive and clear active run state.</td><td>Prompts before clearing.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tools">
+          <h2>Tool Reference</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Tool</th><th>Inputs</th><th>Behavior</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>goal_report_phase_result</code></td><td>`runId`, `phaseAttemptId`, `phase`, `status`, `summary`</td><td>Mandatory phase completion report. Rejects stale run or phase IDs.</td></tr>
+                <tr><td><code>goal_record_blocker</code></td><td>`runId`, `phaseAttemptId`, `phase`, `title`, `description`, `severity`</td><td>Records a recoverable harness blocker for evaluator review.</td></tr>
+                <tr><td><code>goal_request_capability_repair</code></td><td>`what`, `kind`, optional `runId`</td><td>Records missing tools/MCP/model issues and can switch to a healthy fallback model.</td></tr>
+                <tr><td><code>goal_checkpoint</code></td><td>None</td><td>Forces state persistence.</td></tr>
+                <tr><td><code>goal_shell</code></td><td>`command`, optional `cwd`, `purpose`, `allowDestructive`</td><td>Runs parsed executable-plus-argv commands through safety and policy checks. Blocks package installs and routed AWS/git finalization.</td></tr>
+                <tr><td><code>goal_aws_cli</code></td><td>`args`, `purpose`, optional `profile`, `region`, `cwd`, `allowMutation`</td><td>Runs AWS CLI only when enabled, profile preflight passes, and mutation families are explicitly allowed.</td></tr>
+                <tr><td><code>goal_git</code></td><td>`action`, `purpose`, plus action-specific fields</td><td>Guards status, branch, add, commit, push, and PR creation. PR creation requires a current `ReleaseAuthorization`.</td></tr>
+                <tr><td><code>goal_subagent</code></td><td>`role`, `task`, optional `allowedPaths`, `model`, `mode`, `cwd`</td><td>Routes scouts/reviewers through detected backends. Writer roles require explicit allowed paths and isolated worktree leasing.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="connectivity">
+          <h2>Connectivity Matrix</h2>
+          <p>
+            Capabilities are declared by provider manifests and enforced by `PolicyEngine` decisions.
+            Browser, MCP, and vision providers are contract stubs unless a backend is configured.
+          </p>
+          <div class="table-wrap">
+            <table class="matrix">
+              <thead>
+                <tr><th>Surface</th><th>Current Contract</th><th>Policy Boundary</th><th>Sandbox Status</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Filesystem</td><td>`filesystem.read`, `filesystem.write`, `filesystem.delete`</td><td>Writes/deletes must stay inside approved path scopes.</td><td><span class="status pass">mocked pass</span></td></tr>
+                <tr><td>Process</td><td>`process.exec` and `goal_shell`</td><td>Executable-plus-argv only; dangerous commands and package installs are denied.</td><td><span class="status pass">temp repo</span></td></tr>
+                <tr><td>AWS CLI</td><td>`goal_aws_cli` plus local `.pi/settings.json`</td><td>Disabled by default; mutating families require config and `allowMutation=true`.</td><td><span class="status pass">PATH shim</span></td></tr>
+                <tr><td>Git/GitHub CLI</td><td>`goal_git` for finalization actions</td><td>Commit/push/PR require finalization policy; PR also requires release authorization.</td><td><span class="status pass">dry-run only</span></td></tr>
+                <tr><td>Subagents</td><td>`goal_subagent` with tool/Agent/command/none detection</td><td>Writer roles require `allowedPaths`; subprocesses are policy-brokered.</td><td><span class="status pass">fallback checked</span></td></tr>
+                <tr><td>Web Fetch</td><td>`web.fetch` provider</td><td>Host allowlist, no redirects, public DNS check, private address denial.</td><td><span class="status pass">no live fetch</span></td></tr>
+                <tr><td>Browser</td><td>`browser.interact` provider</td><td>Requires explicit browser approval and host allowlist; no backend by default.</td><td><span class="status warn">contract only</span></td></tr>
+                <tr><td>MCP</td><td>`mcp.invoke` provider</td><td>Requires server/tool resource match and provider-scoped approval; no invoker by default.</td><td><span class="status warn">contract only</span></td></tr>
+                <tr><td>Vision</td><td>`vision.inspect` provider</td><td>No network access; backend must be configured.</td><td><span class="status warn">contract only</span></td></tr>
+                <tr><td>Package Installs</td><td>`package.install` policy effect</td><td>Denied until represented in an approved plan with lockfile effects.</td><td><span class="status pass">denied</span></td></tr>
+                <tr><td>CI/Cloud Placeholders</td><td>`ci.read`, `ci.trigger`, `cloud.read`, `cloud.mutate`, `secret.read` effects</td><td>Cloud mutations and secret reads require explicit operator approval.</td><td><span class="status warn">policy only</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="policy">
+          <h2>Policy Model</h2>
+          <p>
+            Every governed action is represented as an `ActionRequest`.
+            `PolicyEngine.decide()` returns a `PolicyDecision` of `allow`, `deny`, `require_approval`, or `transform`.
+            Allowed actions receive a one-use `CapabilityLease` with a five-minute expiry.
+          </p>
+          <div class="grid three">
+            <div class="panel">
+              <h3>Resource/Input Matching</h3>
+              <p>Filesystem paths, process command specs, URLs, and MCP server/tool IDs must match both the resource descriptor and structured input.</p>
+            </div>
+            <div class="panel">
+              <h3>Fail-Closed Network</h3>
+              <p>Private, metadata-like, credential-bearing, unallowlisted, or redirecting URLs are denied for governed fetch/browser actions.</p>
+            </div>
+            <div class="panel">
+              <h3>Finalization Separation</h3>
+              <p>Git finalization is routed through `goal_git`; shell commands can read git state but cannot stage, commit, push, or create PRs when finalization is enabled.</p>
+            </div>
+          </div>
+          <pre><code>ActionRequest {
+  actor, runId, effect, resource, input,
+  purpose, risk, dataClassification, allowedPaths?
+}
+
+PolicyDecision {
+  result, ruleIds, reason, lease?, transformedInput?
+}</code></pre>
+        </section>
+
+        <section id="release">
+          <h2>Release Flow</h2>
+          <p>
+            PR creation is intentionally two-step. The run first earns a SHA-bound `ReleaseAuthorization`;
+            only then can `goal_git` authorize `create_pr`. Any drift in HEAD, base, plan hash,
+            requirement hash, gate verdict hash, or evidence root hash invalidates the authorization.
+          </p>
+          <div class="timeline">
+            <div class="step"><b>1. Evaluate</b><span>Current evaluator verdict must have `goal_met: true`.</span></div>
+            <div class="step"><b>2. Gate</b><span>Local release gate requires no unresolved harness errors, clean tree, implementation verification, and passing validation evidence.</span></div>
+            <div class="step"><b>3. Authorize</b><span>`/goal-authorize-release` records the current repository ID, base SHA, HEAD SHA, hashes, allowed action, and expiry.</span></div>
+            <div class="step"><b>4. Dry Run</b><span>`goal_git` can render the PR request with `dryRun: true` without calling GitHub.</span></div>
+            <div class="step"><b>5. Open PR</b><span>Actual PR creation additionally requires `gh` availability and authentication.</span></div>
+          </div>
+        </section>
+
+        <section id="runtime">
+          <h2>Agent Runtime</h2>
+          <div class="grid">
+            <div class="panel">
+              <h3>Read-Only Roles</h3>
+              <p>Scout, requirements, planner, test, security, architecture, documentation, and release reviewer roles are treated as read-oriented by default.</p>
+            </div>
+            <div class="panel">
+              <h3>Writer Roles</h3>
+              <p>Implementer and Integrator roles require explicit `allowedPaths`; the subprocess task asks for an isolated worktree and limits permitted effects.</p>
+            </div>
+          </div>
+          <div class="callout warn">
+            <strong>Concurrency rule:</strong> overlap is allowed for scouting and review, but writes must be scoped, leased, and validated against the plan before release.
+          </div>
+        </section>
+
+        <section id="persistence">
+          <h2>Persistence And Audit</h2>
+          <p>
+            Runtime state is stored under `.pi/iterative-goal/`. New runs use run-scoped directories,
+            append-only `events.jsonl`, and a hash chain with `sequence`, `previousEventHash`, and `eventHash`.
+          </p>
+          <pre><code>.pi/iterative-goal/
+  active-run.json
+  runs/&lt;runId&gt;/
+    state.json
+    events.jsonl
+    latest.md
+    evaluator-state.json
+    evaluator-verdicts.jsonl
+    cycles/&lt;n&gt;/research|plan|implement|validate/</code></pre>
+          <p>
+            Use `/goal-audit` for paths, `/goal-replay` for state reconstruction, and `/goal-trace <term>` to connect requirements to phase evidence.
+          </p>
+        </section>
+
+        <section id="models">
+          <h2>Model Selection</h2>
+          <p>
+            The harness filters configured models against an approved OpenRouter allowlist.
+            The default primary is `openrouter/deepseek/deepseek-v4-flash`; default fallbacks are
+            `openrouter/deepseek/deepseek-v4-pro`, `openrouter/anthropic/claude-sonnet-4.6`, and
+            `openrouter/openrouter/fusion`.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Role</th><th>Approved Models</th></tr></thead>
+              <tbody>
+                <tr><td>Primary</td><td><code>deepseek/deepseek-v4-flash</code></td></tr>
+                <tr><td>Fallback</td><td><code>xiaomi/mimo-v2.5</code>, <code>minimax/minimax-m3</code>, <code>tencent/hy3-preview</code>, <code>openrouter/owl-alpha</code>, <code>z-ai/glm-5.2</code></td></tr>
+                <tr><td>Evaluator</td><td><code>deepseek/deepseek-v4-pro</code></td></tr>
+                <tr><td>Reviewer</td><td><code>anthropic/claude-opus-4.7</code>, <code>anthropic/claude-opus-4.8</code>, <code>anthropic/claude-sonnet-4.6</code></td></tr>
+                <tr><td>Router</td><td><code>openrouter/fusion</code>, <code>openrouter/pareto-code</code>, <code>openrouter/auto</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="sandbox">
+          <h2>Sandbox Testing</h2>
+          <p>
+            The validation bundle uses disposable temp repos, mocked Pi extension APIs, mocked AWS CLI behavior,
+            and policy-only negative cases. It does not create real GitHub PRs, mutate AWS, or write to cloud services.
+          </p>
+          <pre><code>node scripts/user-guide-sandbox-validation.mjs</code></pre>
+          <div class="grid">
+            <div class="panel">
+              <h3>Evidence Files</h3>
+              <ul>
+                <li><a href="sandbox-report.md">sandbox-report.md</a></li>
+                <li><a href="sandbox-report.json">sandbox-report.json</a></li>
+                <li><a href="screenshots/desktop.png">screenshots/desktop.png</a></li>
+                <li><a href="screenshots/mobile.png">screenshots/mobile.png</a></li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>Expected Checks</h3>
+              <ul>
+                <li>`npm run validate` passes.</li>
+                <li>Extension registers commands and tools from `dist/index.js`.</li>
+                <li>`goal_shell` runs safely in a temp git repo.</li>
+                <li>Mock AWS and git/PR dry-run paths remain local.</li>
+                <li>Package install, private URL, missing PR authorization, and stale phase writes are denied.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="troubleshooting">
+          <h2>Troubleshooting</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Symptom</th><th>Likely Cause</th><th>Operator Action</th></tr></thead>
+              <tbody>
+                <tr><td>Missing Pi tools</td><td>Capability snapshot does not include expected tool names.</td><td>Run `/goal-repair-capabilities`; use `goal_shell` when bash is unavailable.</td></tr>
+                <tr><td>AWS profile issues</td><td>No CLI, no session-manager-plugin, or no usable profile.</td><td>Check `.pi/settings.json`, `AWS_PROFILE`, `aws sso login`, and `/goal-status --json` AWS fields.</td></tr>
+                <tr><td>Git finalization blocked</td><td>Policy is default-deny or git command was attempted through shell.</td><td>Enable only the needed finalization booleans and use `goal_git`; patch fallback remains available.</td></tr>
+                <tr><td>PR denied</td><td>No current `ReleaseAuthorization`, failed local gate, or SHA/hash drift.</td><td>Validate, run `/goal-authorize-release`, then retry `goal_git` with the matching authorization ID.</td></tr>
+                <tr><td>MCP/browser/vision unavailable</td><td>Provider contracts exist but no backend/invoker is configured.</td><td>Treat as fail-closed and document fallback evidence; do not imply live backend support.</td></tr>
+                <tr><td>Policy denial</td><td>Resource/input mismatch, private URL, package install, or missing approval flag.</td><td>Read `ruleIds` and `reason`; adjust the plan or request explicit operator approval where supported.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="risks">
+          <h2>Residual Risks</h2>
+          <div class="callout danger">
+            <p>
+              Sandbox evidence proves local contracts, not real production infrastructure behavior.
+              DNS rebinding, time-of-check/time-of-use drift, stale external credentials, and unavailable provider backends
+              remain operational risks.
+            </p>
+          </div>
+          <ul>
+            <li>Web fetch performs a public DNS check before fetch, but network destinations can still change after resolution.</li>
+            <li>`ReleaseAuthorization` is SHA-bound, but it does not replace human review of the resulting PR body and diff.</li>
+            <li>Browser, MCP, and vision providers intentionally fail closed without configured backends.</li>
+            <li>Package installs remain denied until the harness has an approved plan and lockfile-aware capability path.</li>
+          </ul>
+        </section>
+
+        <p class="foot">
+          Generated for the refactored `pi-iterative-goal` harness. Source references are local TypeScript registrations,
+          provider manifests, and the sandbox report in this directory.
+        </p>
+      </main>
+    </div>
+  </div>
+  <script src="assets/guide.js"></script>
+</body>
+</html>

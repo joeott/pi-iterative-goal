@@ -1,0 +1,12 @@
+[
+  {
+    "id": "GIT-POLICY-001",
+    "severity": "info",
+    "category": "policy",
+    "requirementIds": ["R4", "R12"],
+    "message": "Git branch, stage, commit, push and PR effects now pass through PolicyEngine decisions before execution.",
+    "location": "src/git.ts, src/policy/engine.ts",
+    "status": "resolved",
+    "resolution": "Smoke test 15 covers git.pr.open and git.commit allow/deny decisions. A bounded model review was attempted but timed out with no findings output."
+  }
+]
