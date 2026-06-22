@@ -218,7 +218,14 @@ export type RunStatus =
   | "paused_by_user"
   | "recovering"
   | "succeeded"
-  | "completed_external_blockers";
+  | "completed_external_blockers"
+  | "waiting_for_approval"
+  | "blocked_external"
+  | "requirement_conflict"
+  | "budget_exhausted"
+  | "provider_unavailable"
+  | "policy_denied"
+  | "manual_intervention_required";
 
 export interface EvaluatorConfig {
   model: string;
@@ -274,6 +281,7 @@ export interface IterativeGoalState {
   phaseAttempts: PhaseAttempt[];
   evaluatorState: EvaluatorState | null;
   finalizationPolicy: FinalizationPolicy;
+  releaseAuthorization: ReleaseAuthorization | null;
 }
 
 // ── Persistence envelope ─────────────────────────────────────────────
@@ -444,6 +452,21 @@ export interface FinalizationPolicy {
   allowPush: boolean;
   allowPR: boolean;
   fallback: "patch" | "none";
+}
+
+export interface ReleaseAuthorization {
+  id: string;
+  runId: string;
+  repositoryId: string;
+  baseSha: string;
+  headSha: string;
+  planHash: string;
+  requirementsHash: string;
+  gateVerdictHash: string;
+  evidenceRootHash: string;
+  allowedAction: "git.pr.open";
+  issuedAt: string;
+  expiresAt: string;
 }
 
 // ── Model health cache ───────────────────────────────────────────────

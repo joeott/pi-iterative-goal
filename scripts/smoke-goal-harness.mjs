@@ -20,7 +20,10 @@
  *   node scripts/smoke-goal-harness.mjs
  */
 
-import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
+import { ok, strictEqual as eq, deepStrictEqual } from "node:assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // ── Test 1: Module imports ──────────────────────────────────────────
 
@@ -144,22 +147,28 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
 // ── Test 4: Diff allowlist detection ────────────────────────────────
 
 {
-  function isFileInAllowlist(file, planned) {
-    for (const p of planned) {
-      if (file === p || file.endsWith("/" + p) || p.endsWith(file)) return true;
-    }
-    return false;
-  }
+  const { extractPathScopesFromPlanText, pathInScopes } = await import("../dist/domain/path-scope.js");
 
-  const planned = ["src/utils.ts", "src/components/Button.tsx"];
-  const changed = ["src/utils.ts", "src/other.ts", "src/components/Button.tsx"];
+  const plan = [
+    "Exact files to modify:",
+    "- `src/utils.ts`",
+    "- `src/components/Button.tsx`",
+    "- `Dockerfile`",
+    "- `scripts/deploy`",
+  ].join("\n");
+  const planned = extractPathScopesFromPlanText(plan);
+  const changed = ["src/utils.ts", "src/other.ts", "src/components/Button.tsx", "Dockerfile", "scripts/deploy"];
 
-  const extraFiles = changed.filter(f => !isFileInAllowlist(f, planned));
+  const extraFiles = changed.filter(f => !pathInScopes(f, planned));
 
   eq(extraFiles.length, 1);
   eq(extraFiles[0], "src/other.ts");
+  eq(pathInScopes("src/components/Button.tsx", planned), true);
+  eq(pathInScopes("src/components/Button.tsx.bak", planned), false);
+  eq(pathInScopes("Dockerfile", planned), true);
+  eq(pathInScopes("scripts/deploy", planned), true);
 
-  console.log("✓ Test 4: Allowlist correctly detects out-of-plan file");
+  console.log("✓ Test 4: Typed path scopes reject fuzzy allowlist matches");
 }
 
 // ── Test 5: Validation script generation ────────────────────────────
@@ -172,14 +181,18 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
 
     ok(script.includes("ig-test-002-x1y2z3"), "script includes runId");
     ok(script.includes("cycle 1"), "script includes cycle");
-    ok(script.includes("set -uo pipefail"), "script has strict mode");
-    ok(script.includes("set +e"), "script disables errexit around test");
-    ok(script.includes("TEST_EXIT"), "script captures test exit code");
+    ok(script.includes("set -euo pipefail"), "script has strict mode");
+    ok(script.includes("spawnSync"), "script uses executable-plus-argv");
+    ok(!script.includes("eval "), "script does not use eval");
+    ok(!script.includes("|| true"), "script does not mask gate failure with || true");
     ok(script.includes("repo-state.txt"), "script creates repo-state.txt");
     ok(script.includes("diff.patch"), "script creates diff.patch");
     ok(!script.includes("> 2>"), "no shell syntax error (double redirect)");
 
-    console.log("✓ Test 5: Validation script generation produces valid bash");
+    const noCommandScript = generateValidationScript(state, "", "");
+    ok(noCommandScript.includes("'FAIL'"), "mandatory NOT_RUN checks fail the gate");
+
+    console.log("✓ Test 5: Validation script uses argv execution and fail-closed checks");
   } else {
     console.log("⚠ Test 5: generateValidationScript not exported (may be internal only)");
   }
@@ -334,7 +347,25 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
 {
   const { loadAwsCliConfig, assessAwsCliArgs } = await import("../dist/aws-cli.js");
 
-  const cfg = loadAwsCliConfig("/Users/joe/Projects/unify");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-aws-"));
+  fs.mkdirSync(path.join(tmp, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, ".pi", "settings.json"), JSON.stringify({
+    iterativeGoal: {
+      awsCli: {
+        enabled: true,
+        defaultRegion: "us-east-1",
+        allowMutatingFamilies: [
+          "ec2-start-stop-wait",
+          "ssm-session",
+          "ssm-send-command",
+          "s3-sync",
+          "s3-cp",
+          "logs-tail",
+        ],
+      },
+    },
+  }));
+  const cfg = loadAwsCliConfig(tmp);
   eq(cfg.enabled, true);
   eq(cfg.defaultRegion, "us-east-1");
   deepStrictEqual(cfg.allowMutatingFamilies, [
@@ -421,7 +452,21 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
   const { loadFinalizationPolicy, shouldBlockGitShellCommand } = await import("../dist/git.js");
   const { renderResumePrompt } = await import("../dist/phases.js");
 
-  const policy = loadFinalizationPolicy("/Users/joe/Projects/unify");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-git-"));
+  fs.mkdirSync(path.join(tmp, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, ".pi", "settings.json"), JSON.stringify({
+    iterativeGoal: {
+      finalization: {
+        allowGitFinalization: true,
+        allowCommit: true,
+        allowPush: true,
+        allowPR: true,
+        fallback: "patch",
+      },
+    },
+  }));
+
+  const policy = loadFinalizationPolicy(tmp);
   eq(policy.allowGitFinalization, true);
   eq(policy.allowCommit, true);
   eq(policy.allowPush, true);
@@ -479,6 +524,164 @@ import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
   ok(prompt.includes("push=yes"), "resume prompt includes git push capability");
 
   console.log("✓ Test 13: Git finalization config and prompt guidance behave as expected");
+}
+
+// ── Test 14: Model allowlist ────────────────────────────────────────
+
+{
+  const {
+    ALLOWED_MODELS,
+    DEFAULT_PRIMARY_MODEL,
+    DEFAULT_FALLBACK_MODELS,
+    isAllowedModel,
+    filterAllowedModels,
+  } = await import("../dist/domain/models.js");
+
+  ok(ALLOWED_MODELS.length >= 13, "model allowlist includes screenshot plus fusion/router models");
+  deepStrictEqual(DEFAULT_PRIMARY_MODEL, { provider: "openrouter", model: "deepseek/deepseek-v4-flash" });
+  ok(DEFAULT_FALLBACK_MODELS.some((m) => m.model === "openrouter/fusion"), "fusion fallback configured");
+  eq(isAllowedModel("openrouter", "deepseek/deepseek-v4-flash"), true);
+  eq(isAllowedModel("openrouter", "openai/o3-mini"), false);
+  deepStrictEqual(
+    filterAllowedModels([
+      { provider: "openrouter", model: "deepseek/deepseek-v4-flash" },
+      { provider: "openrouter", model: "openai/o3-mini" },
+    ]),
+    [{ provider: "openrouter", model: "deepseek/deepseek-v4-flash" }],
+  );
+
+  console.log("✓ Test 14: Model allowlist restricts stale/unapproved models");
+}
+
+// ── Test 15: Central policy engine ──────────────────────────────────
+
+{
+  const { PolicyEngine } = await import("../dist/policy/engine.js");
+  const { exactPathScope } = await import("../dist/domain/path-scope.js");
+  const policy = new PolicyEngine({ repoRoot: process.cwd(), allowNetworkHosts: ["example.com"] });
+
+  const allowedWrite = policy.decide({
+    id: "policy-1",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "fs.write",
+    resource: { type: "path", value: "src/index.ts" },
+    input: {},
+    purpose: "test",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [exactPathScope("src/index.ts")],
+  });
+  eq(allowedWrite.result, "allow");
+
+  const deniedWrite = policy.decide({
+    id: "policy-2",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "fs.write",
+    resource: { type: "path", value: "src/other.ts" },
+    input: {},
+    purpose: "test",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [exactPathScope("src/index.ts")],
+  });
+  eq(deniedWrite.result, "deny");
+
+  const prDenied = policy.decide({
+    id: "policy-3",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "git.pr.open",
+    resource: { type: "git", value: "create_pr" },
+    input: {},
+    purpose: "test",
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+  eq(prDenied.result, "deny");
+
+  console.log("✓ Test 15: Central policy engine denies out-of-scope writes and PR opens");
+}
+
+// ── Test 16: Event replay restores new runs ─────────────────────────
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-replay-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  const run = stateManager.createRun("Replay test", "Replay reconstructs core state");
+  stateManager.setPhase("plan");
+  stateManager.incrementCycle();
+  stateManager.recordArtifact({
+    phase: "plan",
+    cycle: 2,
+    status: "completed",
+    content: "plan content",
+    timestamp: new Date().toISOString(),
+    toolCalls: [],
+    toolErrors: [],
+  });
+  const replayed = stateManager.replayActiveState();
+  ok(replayed, "replay returns state");
+  eq(replayed.runId, run.runId);
+  eq(replayed.phase, "plan");
+  eq(replayed.cycle, 2);
+  eq(replayed.artifacts.plans.length, 1);
+
+  console.log("✓ Test 16: Event replay reconstructs new run state from events.jsonl");
+}
+
+// ── Test 17: Replay corruption fails closed for new runs ────────────
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-replay-corrupt-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  stateManager.createRun("Replay corruption test", "Replay does not fall back silently");
+  fs.appendFileSync(stateManager.getEventsPath(), "{not-json}\n");
+  eq(stateManager.replayActiveState(), null);
+
+  console.log("✓ Test 17: New-run replay corruption does not silently reconstruct from stale cache");
+}
+
+// ── Test 18: ReleaseAuthorization invalidates on HEAD change ────────
+
+{
+  const { validateReleaseAuthorization } = await import("../dist/release/controller.js");
+  const auth = {
+    id: "rel-test",
+    runId: "ig-rel",
+    repositoryId: "repo",
+    baseSha: "base",
+    headSha: "authorized-head",
+    planHash: "plan",
+    requirementsHash: "req",
+    gateVerdictHash: "gate",
+    evidenceRootHash: "evidence",
+    allowedAction: "git.pr.open",
+    issuedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const pi = {
+    async exec(_command, args) {
+      if (args.join(" ") === "remote get-url origin") return { code: 0, stdout: "repo\n", stderr: "" };
+      if (args.join(" ") === "merge-base HEAD origin/main") return { code: 0, stdout: "base\n", stderr: "" };
+      if (args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: "different-head\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  };
+  const result = await validateReleaseAuthorization({ pi, ctx: { cwd: process.cwd() }, authorization: auth, runId: "ig-rel" });
+  eq(result.ok, false);
+  ok(result.reason.includes("stale"));
+
+  console.log("✓ Test 18: ReleaseAuthorization is invalidated by a new HEAD");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

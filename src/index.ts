@@ -44,7 +44,6 @@ import {
   clearStatusBar,
   registerDashboardCommands,
 } from "./dashboard.js";
-import { checkCommand } from "./safety.js";
 import {
   loadAwsCliConfig,
   preflightAwsCli,
@@ -61,14 +60,27 @@ import {
 import {
   type PhaseArtifact,
   type Phase,
-  type PhaseAttempt,
   type PhaseLifecycleEvent,
-  type ModelHealthEntry,
   type IterativeGoalState,
   type CapabilitySnapshot,
   PHASE_ORDER,
   PhaseResultParams,
 } from "./types.js";
+import { createReleaseAuthorization, hashJson } from "./release/controller.js";
+import {
+  checkModelHealth,
+  findFirstHealthyFallback,
+  preflightAllModels,
+  startPhaseAttempt,
+} from "./kernel/workflow-engine.js";
+import {
+  getChangedFiles,
+  getDiffStat,
+  verifyImplementationAgainstPlan,
+} from "./workspace/change-set.js";
+import { runLocalReleaseGate } from "./review/gates/release-gate.js";
+import { commandSpecFromShellWords } from "./domain/verification.js";
+import { commandResource, PolicyEngine } from "./policy/engine.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
@@ -206,152 +218,6 @@ function isSyntheticCaptureFailure(artifact: PhaseArtifact | null): boolean {
   return artifact?.status === "failed_recoverable" && artifact.synthesis?.source === "synthetic_failure";
 }
 
-// ── Diff verification ────────────────────────────────────────────
-
-async function verifyImplementationAgainstPlan(
-  state: IterativeGoalState,
-  stateManager: StateManagerAPI,
-): Promise<{
-  changedFiles: string[];
-  diffStat: string;
-  allowlistViolation: boolean;
-  plannedFiles: string[];
-  extraFiles: string[];
-}> {
-  // Capture actual changed files via git
-  let changedFiles: string[] = [];
-  let diffStat = "";
-  try {
-    const { execSync } = require("node:child_process");
-    changedFiles = execSync("git diff --name-only", { encoding: "utf-8", timeout: 10_000 })
-      .trim().split("\n").filter(Boolean);
-    diffStat = execSync("git diff --stat", { encoding: "utf-8", timeout: 10_000 }).trim();
-  } catch {
-    log("git diff failed — cannot verify implementation");
-    return { changedFiles: [], diffStat: "", allowlistViolation: false, plannedFiles: [], extraFiles: [] };
-  }
-
-  // Write diff patch to run-scoped directory
-  const patchPath = stateManager.getArtifactPath(state.cycle, "implement", "diff.patch");
-  try {
-    const fs = require("node:fs");
-    const { execSync } = require("node:child_process");
-    fs.writeFileSync(patchPath, execSync("git diff", { encoding: "utf-8", timeout: 10_000 }));
-  } catch {}
-
-  // Parse plan allowlist from most recent plan artifact
-  const lastPlan = state.artifacts.plans.at(-1);
-  const plannedFiles = extractPlannedFiles(lastPlan?.content ?? "");
-
-  // Check for out-of-allowlist files
-  const extraFiles = changedFiles.filter(f => !isFileInAllowlist(f, plannedFiles));
-
-  // Persist verification result
-  const verifyPath = stateManager.getArtifactPath(state.cycle, "implement", "implementation-verification.json");
-  try {
-    const fs = require("node:fs");
-    fs.writeFileSync(verifyPath, JSON.stringify({
-      runId: state.runId,
-      cycle: state.cycle,
-      phase: "implement",
-      changedFiles,
-      diffStat,
-      plannedFiles,
-      extraFiles,
-      allowlistViolation: extraFiles.length > 0,
-      verifiedAt: new Date().toISOString(),
-    }, null, 2));
-  } catch {}
-
-  log(
-    `Implementation verification: ${changedFiles.length} changed, ${plannedFiles.length} planned, ${extraFiles.length} extra — violation=${extraFiles.length > 0}`,
-  );
-
-  return {
-    changedFiles,
-    diffStat,
-    allowlistViolation: extraFiles.length > 0,
-    plannedFiles,
-    extraFiles,
-  };
-}
-
-function extractPlannedFiles(planContent: string): string[] {
-  const files = new Set<string>();
-  // Match explicit file paths in plans: backtick-wrapped, quoted, or path-like
-  for (const p of [
-    /`([a-zA-Z0-9_\-/.]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))`/g,
-    /["']([a-zA-Z0-9_\-/.]+\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))["']/g,
-    /(?:^|\s)([a-zA-Z0-9_\-/]{2,}\.(?:ts|tsx|js|jsx|json|md|yaml|yml|css|html|sql))(?:$|\s|[,;])/gm,
-  ]) {
-    for (const m of planContent.matchAll(p)) {
-      const file = m[1].trim();
-      if (file.includes("/") || file.includes(".")) files.add(file);
-    }
-  }
-  return [...files];
-}
-
-function isFileInAllowlist(file: string, planned: string[]): boolean {
-  for (const p of planned) {
-    if (file === p || file.endsWith("/" + p) || p.endsWith(file) || file.includes(p) || p.includes(file)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// ── Model health ───────────────────────────────────────────────────
-
-async function checkModelHealth(
-  ctx: ExtensionContext,
-  provider: string,
-  modelId: string,
-): Promise<ModelHealthEntry> {
-  const model = ctx.modelRegistry.find(provider, modelId);
-  if (!model) {
-    return { model: modelId, provider, lastStatus: "unavailable",
-      lastCheckedAt: new Date().toISOString(), error: "Model not found in registry",
-      cooldownUntil: new Date(Date.now() + 300_000).toISOString() };
-  }
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok || !auth.apiKey) {
-    return { model: modelId, provider, lastStatus: "unavailable",
-      lastCheckedAt: new Date().toISOString(), error: "Auth failed or no API key",
-      cooldownUntil: new Date(Date.now() + 300_000).toISOString() };
-  }
-  try {
-    const { complete } = require("@earendil-works/pi-ai");
-    await complete(model, {
-      messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "Say OK." }], timestamp: Date.now() }],
-      systemPrompt: "",
-    }, { apiKey: auth.apiKey, headers: auth.headers, maxTokens: 1, signal: AbortSignal.timeout(15_000) });
-    return { model: modelId, provider, lastStatus: "available",
-      lastCheckedAt: new Date().toISOString(), error: null, cooldownUntil: null };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Model health check failed for ${provider}/${modelId}: ${msg}`);
-    return { model: modelId, provider, lastStatus: "unavailable",
-      lastCheckedAt: new Date().toISOString(), error: msg,
-      cooldownUntil: new Date(Date.now() + 300_000).toISOString() };
-  }
-}
-
-async function preflightAllModels(
-  ctx: ExtensionContext,
-  primary: { provider: string; model: string },
-  fallbacks: Array<{ provider: string; model: string }>,
-): Promise<Record<string, ModelHealthEntry>> {
-  const health: Record<string, ModelHealthEntry> = {};
-  const models = [primary, ...fallbacks];
-  for (const m of models) {
-    const key = `${m.provider}/${m.model}`;
-    health[key] = await checkModelHealth(ctx, m.provider, m.model);
-    log(`Model preflight ${key}: ${health[key].lastStatus}`);
-  }
-  return health;
-}
-
 function refreshAwsCliConfig(
   state: IterativeGoalState,
   cwd: string,
@@ -390,40 +256,6 @@ async function buildRuntimeCapabilitySnapshot(
   }
   snapshot.gitFinalization = await getGitCapability(pi, ctx, state.finalizationPolicy);
   return snapshot;
-}
-
-function isModelInCooldown(health: ModelHealthEntry | undefined): boolean {
-  if (!health || health.lastStatus !== "unavailable" || !health.cooldownUntil) return false;
-  return new Date(health.cooldownUntil) > new Date();
-}
-
-function findFirstHealthyFallback(
-  state: IterativeGoalState,
-  fallbackChain?: Array<{ provider: string; model: string }>,
-): { provider: string; model: string } | null {
-  for (const fb of state.config.fallbackModels) {
-    const key = `${fb.provider}/${fb.model}`;
-    if (isModelInCooldown(state.config.modelHealth[key])) continue;
-    if (fallbackChain && fallbackChain.some(f => f.provider === fb.provider && f.model === fb.model)) continue;
-    return fb;
-  }
-  return null;
-}
-
-async function loadConfiguredModel(
-  ctx: ExtensionContext | ExtensionCommandContext,
-  pi: ExtensionAPI,
-  provider: string,
-  modelId: string,
-): Promise<boolean> {
-  const model = ctx.modelRegistry.find(provider, modelId);
-  if (!model) {
-    log(`Configured model not found in registry: ${provider}/${modelId}`);
-    return false;
-  }
-  await pi.setModel(model);
-  log(`Loaded model: ${provider}/${modelId}`);
-  return true;
 }
 
 // ── Main Extension ──────────────────────────────────────────────────
@@ -930,15 +762,35 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
           log(`Blocked bash aws command: ${awsShellBlock}`);
           return { block: true, reason: awsShellBlock };
         }
-        const result = checkCommand(command, state.constraints.allowDestructiveOps, state.finalizationPolicy.allowGitFinalization);
-        if (!result.allowed) {
-          log(`Blocked bash: ${result.reason}`);
+        const commandSpec = commandSpecFromShellWords(command);
+        if (!commandSpec) {
+          log("Blocked bash: command must parse to executable-plus-argv");
+          return { block: true, reason: "Command must parse to executable-plus-argv." };
+        }
+        const policy = new PolicyEngine({ repoRoot: process.cwd() });
+        const decision = policy.decide({
+          id: `bash:${Date.now()}`,
+          actor: { kind: "tool", id: "bash" },
+          runId: state.runId,
+          effect: "process.exec",
+          resource: commandResource(commandSpec.executable, commandSpec.argv),
+          input: {
+            ...commandSpec,
+            allowDestructive: state.constraints.allowDestructiveOps,
+            allowGitFinalization: state.finalizationPolicy.allowGitFinalization,
+          },
+          purpose: "intercepted bash command",
+          risk: state.constraints.allowDestructiveOps ? "write" : "read",
+          dataClassification: "internal",
+        });
+        if (decision.result !== "allow") {
+          log(`Blocked bash: ${decision.reason}`);
           let suggestion = "";
           if (command.match(/\bgit\s+(add|commit)\b/) && !state.finalizationPolicy.allowGitFinalization) {
             const patchPath = stateManager.getArtifactPath(state.cycle, state.phase, "final.patch");
             suggestion = `\n\nGit finalization disabled. Patch: git diff > ${patchPath}`;
           }
-          return { block: true, reason: (result.reason ?? "") + suggestion };
+          return { block: true, reason: decision.reason + suggestion };
         }
       }
     }
@@ -1046,6 +898,12 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
           modelHealth: state.config.modelHealth,
           awsCli: state.config.awsCli,
           finalizationPolicy: state.finalizationPolicy,
+          releaseAuthorization: state.releaseAuthorization ? {
+            id: state.releaseAuthorization.id,
+            headSha: state.releaseAuthorization.headSha,
+            expiresAt: state.releaseAuthorization.expiresAt,
+            allowedAction: state.releaseAuthorization.allowedAction,
+          } : null,
           phaseAttempts: state.phaseAttempts.slice(-5).map(a => ({
             phaseAttemptId: a.phaseAttemptId, cycle: a.cycle, phase: a.phase,
             attempt: a.attempt, status: a.status,
@@ -1221,6 +1079,113 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("goal-authorize-release", {
+    description: "Run the local pre-PR release authorization gate for the current HEAD",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+
+      const verdict = state.evaluator.lastVerdict;
+      if (!verdict || verdict.goal_met !== true) {
+        ctx.ui.notify("Release authorization denied: evaluator has not accepted the current evidence.", "warning");
+        return;
+      }
+
+      const unresolved = state.errors.filter((err) => !err.resolved);
+      if (unresolved.length > 0) {
+        ctx.ui.notify(`Release authorization denied: ${unresolved.length} unresolved harness errors remain.`, "warning");
+        return;
+      }
+
+      const releaseGate = await runLocalReleaseGate(state, stateManager);
+      if (!releaseGate.ok) {
+        ctx.ui.notify(`Release authorization denied:\n${releaseGate.reasons.map((r) => `- ${r}`).join("\n")}`, "warning");
+        return;
+      }
+
+      try {
+        const auth = await createReleaseAuthorization({
+          pi,
+          ctx,
+          runId: state.runId,
+          planHash: hashJson(state.artifacts.plans.at(-1) ?? null),
+          requirementsHash: hashJson({ goal: state.goal, criterion: state.goalCriterion }),
+          gateVerdictHash: hashJson({ evaluator: verdict, localReleaseGate: releaseGate }),
+          evidenceRootHash: hashJson(state.artifacts),
+        });
+        stateManager.setReleaseAuthorization(auth);
+        ctx.ui.notify(`Release authorized for HEAD ${auth.headSha.slice(0, 12)}. Authorization: ${auth.id}`, "info");
+      } catch (err) {
+        ctx.ui.notify(`Release authorization failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("goal-audit", {
+    description: "Show audit pointers for the active iterative-goal run",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const replayed = stateManager.replayActiveState();
+      const lines = [
+        `Run ID: ${state.runId}`,
+        `Status: ${state.status}`,
+        `Cycle/phase: ${state.cycle}/${state.phase}`,
+        `Events: ${stateManager.getEventsPath()}`,
+        `Replay: ${replayed ? "ok" : "unavailable"}`,
+        `Artifacts: ${stateManager.getRunDir()}`,
+        `ReleaseAuthorization: ${state.releaseAuthorization?.id ?? "none"}`,
+      ];
+      ctx.ui.notify(lines.join("\n"), replayed ? "info" : "warning");
+    },
+  });
+
+  pi.registerCommand("goal-replay", {
+    description: "Replay the active run event log and compare core state",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const replayed = stateManager.replayActiveState();
+      if (!replayed) {
+        ctx.ui.notify(`Replay unavailable for ${stateManager.getEventsPath()}. Legacy runs may lack run_created.initialState.`, "warning");
+        return;
+      }
+      const comparison = {
+        runId: replayed.runId === state.runId,
+        status: replayed.status === state.status,
+        cycle: replayed.cycle === state.cycle,
+        phase: replayed.phase === state.phase,
+        errors: replayed.errors.length === state.errors.length,
+        attempts: replayed.phaseAttempts.length === state.phaseAttempts.length,
+      };
+      ctx.ui.notify(JSON.stringify({ replayed: true, comparison }, null, 2), Object.values(comparison).every(Boolean) ? "info" : "warning");
+    },
+  });
+
+  pi.registerCommand("goal-trace", {
+    description: "Trace requirement or evidence text in run artifacts: /goal-trace <term>",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const state = stateManager.getState();
+      const term = args.trim();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      if (!term) { ctx.ui.notify("Usage: /goal-trace <requirement-id-or-term>", "warning"); return; }
+      const matches: string[] = [];
+      for (const [label, artifacts] of Object.entries({
+        research: state.artifacts.research,
+        plans: state.artifacts.plans,
+        implementations: state.artifacts.implementations,
+        validations: state.artifacts.validations,
+      })) {
+        for (const artifact of artifacts) {
+          if (artifact.content.includes(term)) {
+            matches.push(`${label} cycle=${artifact.cycle} status=${artifact.status}`);
+          }
+        }
+      }
+      ctx.ui.notify(matches.length > 0 ? matches.join("\n") : `No artifact trace found for: ${term}`, matches.length > 0 ? "info" : "warning");
+    },
+  });
+
   pi.registerCommand("goal-reset", {
     description: "Reset state",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -1258,88 +1223,6 @@ function archiveActiveRun(): void {
 }
 
 // ── Helper: get changed files for PR description ────────────────────
-
-async function getChangedFiles(): Promise<string[]> {
-  try {
-    const { execSync } = require("node:child_process");
-    return execSync("git diff --name-only", { encoding: "utf-8", timeout: 10_000 })
-      .trim().split("\n").filter(Boolean);
-  } catch { return []; }
-}
-
-async function getDiffStat(): Promise<string> {
-  try {
-    const { execSync } = require("node:child_process");
-    return execSync("git diff --stat", { encoding: "utf-8", timeout: 10_000 }).trim();
-  } catch { return "unavailable"; }
-}
-
-// ── Phase attempt helper ─────────────────────────────────────────
-
-async function startPhaseAttempt(
-  state: IterativeGoalState | null,
-  stateManager: StateManagerAPI,
-  phase: Phase,
-  snapshot: CapabilitySnapshot | null,
-  pi: ExtensionAPI,
-  ctx?: ExtensionContext | ExtensionCommandContext,
-): Promise<void> {
-  if (!state) return;
-
-  const existingAttempts = state.phaseAttempts.filter(
-    (a: PhaseAttempt) => a.cycle === state.cycle && a.phase === phase,
-  );
-  const attemptNum = existingAttempts.length + 1;
-  const phaseAttemptId = `${state.runId}/c${state.cycle}/${phase}/a${attemptNum}`;
-
-  // Check model health for primary; auto-fallback if unavailable
-  const primaryKey = `${state.config.primaryModel.provider}/${state.config.primaryModel.model}`;
-  const primaryHealth = state.config.modelHealth[primaryKey];
-  let effectiveModel = state.config.primaryModel;
-  const fallbackChain: Array<{ provider: string; model: string; reason: string }> = [];
-
-  if (isModelInCooldown(primaryHealth)) {
-    log(`Primary model ${primaryKey} in cooldown — searching fallbacks`);
-    const fb = findFirstHealthyFallback(state);
-    if (fb) {
-      fallbackChain.push({ ...effectiveModel, reason: `${primaryKey} in cooldown` });
-      effectiveModel = fb;
-      log(`Using fallback: ${fb.provider}/${fb.model}`);
-    }
-  }
-
-  if (ctx) {
-    await loadConfiguredModel(ctx, pi, effectiveModel.provider, effectiveModel.model);
-  }
-
-  const attempt: PhaseAttempt = {
-    runId: state.runId, cycle: state.cycle, phase, attempt: attemptNum,
-    phaseAttemptId,
-    modelProvider: effectiveModel.provider, modelModel: effectiveModel.model,
-    fallbackChain,
-    startedAt: new Date().toISOString(),
-    status: "running",
-    outputReceived: false, resultParsed: false, artifactsPersisted: false, resultCommitted: false,
-  };
-
-  stateManager.startPhaseAttempt(attempt);
-  stateManager.acquireLock(state.runId, phaseAttemptId);
-
-  stateManager.recordPhaseEvent({
-    runId: state.runId, cycle: state.cycle, phase, phaseAttemptId, attempt: attemptNum,
-    kind: "phase_started", timestamp: new Date().toISOString(),
-    details: { model: `${effectiveModel.provider}/${effectiveModel.model}` },
-  });
-
-  stateManager.recordPhaseEvent({
-    runId: state.runId, cycle: state.cycle, phase, phaseAttemptId, attempt: attemptNum,
-    kind: "tool_preflight_recorded", timestamp: new Date().toISOString(),
-    details: {
-      activeTools: snapshot?.activeTools ?? [],
-      awsCli: snapshot?.awsCli ?? null,
-    },
-  });
-}
 
 // ── Safe synthesis (with nonce matching) ──────────────────────────
 

@@ -1,0 +1,76 @@
+```json
+[
+  {
+    "id": "FINDING-001",
+    "severity": "high",
+    "category": "pr_auth_bypass",
+    "requirementIds": ["PR_CREATION_REQUIRES_VALID_AUTHORIZATION"],
+    "message": "PR creation in git.ts checks releaseAuthorizationId and calls validateReleaseAuthorization, but does not verify that the current HEAD matches the headSha stored in the authorization. If validateReleaseAuthorization does not check headSha, a user can authorize a release, make additional changes, and still create a PR using the stale authorization.",
+    "location": "src/git.ts:240-250",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-002",
+    "severity": "high",
+    "category": "policy_bypass",
+    "requirementIds": ["SHELL_COMMANDS_MUST_BE_GATED_BY_POLICY"],
+    "message": "PolicyEngine in shell.ts is instantiated with `new PolicyEngine({ repoRoot: cwd })` without any allowedPaths, allowNetworkHosts, or other constraints. This likely makes the policy a no-op that allows all commands, bypassing the intended policy gate. The old safety check (checkCommand) still runs, but the policy engine provides no additional restriction.",
+    "location": "src/shell.ts:177",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-003",
+    "severity": "high",
+    "category": "policy_bypass",
+    "requirementIds": ["SUBAGENTS_MUST_RESPECT_PARENT_POLICY"],
+    "message": "Subagent.ts now spawns a pi subprocess via PiSubprocessAgentPool. If the subprocess does not inherit the parent's policy constraints (path scopes, git finalization policy, AWS CLI config), a subagent could perform actions that the parent would block, such as writing to out-of-scope files or creating PRs without authorization.",
+    "location": "src/subagents.ts:125-140",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-004",
+    "severity": "high",
+    "category": "path_scope_escape",
+    "requirementIds": ["IMPLEMENTATION_VERIFICATION_MUST_DETECT_OUT_OF_SCOPE_FILES"],
+    "message": "verifyImplementationAgainstPlan in index.ts uses extractPathScopesFromPlanText and pathInScopes. If these functions do not normalize paths (e.g., resolve '..' or symlinks), a file like 'src/../other.ts' could bypass the allowlist. The implementation of these functions is not visible in this diff.",
+    "location": "src/index.ts:250-256",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-005",
+    "severity": "high",
+    "category": "release_gate_bypass",
+    "requirementIds": ["RELEASE_AUTHORIZATION_REQUIRES_COMPLETE_IMPLEMENTATION"],
+    "message": "The goal-authorize-release command only checks evaluator verdict (goal_met=true) and unresolved errors. It does not verify that all planned files have been modified or that the implementation matches the plan. A user could authorize a release with an incomplete implementation as long as the evaluator incorrectly reports goal_met=true.",
+    "location": "src/index.ts:1212-1225",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-006",
+    "severity": "high",
+    "category": "external_dependency_not_reviewed",
+    "requirementIds": ["PR_CREATION_REQUIRES_VALID_AUTHORIZATION"],
+    "message": "The PR creation gate depends on validateReleaseAuthorization from release/controller.js, which is not included in this diff. If that function has a bug (e.g., always returns ok), the entire PR authorization gate is broken.",
+    "location": "src/git.ts:243 (import)",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-007",
+    "severity": "medium",
+    "category": "event_replay_mismatch",
+    "requirementIds": ["STATE_MUST_BE_RECOVERABLE_FROM_EVENTS"],
+    "message": "The replayEvents function in state.ts handles many event types but does not have a catch-all for unknown event types. If a new event type is added in the future (e.g., for new state fields), the replay will silently ignore it, leading to stale state on restore. This could cause the system to operate on incomplete state.",
+    "location": "src/state.ts:166-260",
+    "status": "open"
+  },
+  {
+    "id": "FINDING-008",
+    "severity": "medium",
+    "category": "stale_write",
+    "requirementIds": ["STATE_MUST_BE_RECOVERABLE_FROM_EVENTS"],
+    "message": "The restore function in state.ts tries event replay first, then falls back to state.json. If events.jsonl is corrupted (e.g., a single malformed line), replayEvents returns null and the system falls back to the potentially stale state.json snapshot. This could silently lose recent state changes.",
+    "location": "src/state.ts:843-870",
+    "status": "open"
+  }
+]
+```

@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { StateManagerAPI } from "./state.js";
 import type { FinalizationPolicy } from "./types.js";
+import { hashJson, validateReleaseAuthorization } from "./release/controller.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 
@@ -128,6 +129,7 @@ const GoalGitParams = Type.Object({
   body: Type.Optional(Type.String({ description: "PR body" })),
   base: Type.Optional(Type.String({ description: "PR base branch" })),
   draft: Type.Optional(Type.Boolean({ description: "Create draft PR", default: false })),
+  releaseAuthorizationId: Type.Optional(Type.String({ description: "Required for create_pr; must match the active release authorization" })),
   purpose: Type.String({ description: "Why this git action is needed" }),
 });
 
@@ -235,6 +237,26 @@ export function registerGoalGitTool(
           }
           case "create_pr": {
             if (!policy.allowPR) throw new Error("PR creation is disabled by finalization policy.");
+            if (!state) throw new Error("PR creation requires an active iterative-goal run.");
+            const releaseAuthorizationId = typeof params.releaseAuthorizationId === "string" ? params.releaseAuthorizationId : missing("releaseAuthorizationId");
+            if (!state.releaseAuthorization || state.releaseAuthorization.id !== releaseAuthorizationId) {
+              throw new Error("PR creation requires a matching ReleaseAuthorization from the pre-PR release gate.");
+            }
+            const releaseAuthCheck = await validateReleaseAuthorization({
+              pi,
+              ctx,
+              authorization: state.releaseAuthorization,
+              runId: state.runId,
+              expected: {
+                planHash: hashJson(state.artifacts.plans.at(-1) ?? null),
+                requirementsHash: hashJson({ goal: state.goal, criterion: state.goalCriterion }),
+                gateVerdictHash: hashJson({ evaluator: state.evaluator.lastVerdict }),
+                evidenceRootHash: hashJson(state.artifacts),
+              },
+            });
+            if (!releaseAuthCheck.ok) {
+              throw new Error(releaseAuthCheck.reason);
+            }
             if (!gitInfo.ghAvailable) throw new Error("gh is not installed.");
             if (!gitInfo.ghAuthenticated) throw new Error("gh is installed but not authenticated.");
             const title = typeof params.title === "string" ? params.title : missing("title");

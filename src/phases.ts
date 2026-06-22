@@ -14,6 +14,10 @@ import {
 } from "./types.js";
 import type { SubagentBackend } from "./types.js";
 import { renderCapabilitySummary, buildNamespaces } from "./capabilities.js";
+import {
+  generateValidationScriptFromSpecs,
+  verificationSpecsFromLegacyCommands,
+} from "./domain/verification.js";
 
 function hasTool(ns: CapabilityNamespaces, name: string): boolean {
   return ns.builtinTools.includes(name) || ns.extensionTools.includes(name) || ns.sdkTools.includes(name);
@@ -313,70 +317,9 @@ export function renderCompactionSummary(state: IterativeGoalState): string {
 // ── Validation script generator ──────────────────────────────────────
 
 export function generateValidationScript(state: IterativeGoalState, testCommand: string, gateCommand: string): string {
-  const cycleDir = `.pi/iterative-goal/runs/${state.runId}/cycles/${state.cycle}/validate`;
-  return [
-    "#!/usr/bin/env bash",
-    "set -uo pipefail",
-    `ARTIFACT_DIR="${cycleDir}"`,
-    'mkdir -p "$ARTIFACT_DIR"',
-    "",
-    `echo "=== VALIDATION RUN ${state.runId} / cycle ${state.cycle} ===" | tee "$ARTIFACT_DIR/validation.log"`,
-    'echo "Started at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$ARTIFACT_DIR/validation.log"',
-    "",
-    "# 1. Repo state",
-    'echo "--- Repo State ---" > "$ARTIFACT_DIR/repo-state.txt"',
-    "{",
-    '  echo "Git status (porcelain):"',
-    "  git status --porcelain",
-    "  echo",
-    '  echo "Full git status:"',
-    "  git status",
-    "  echo",
-    '  echo "Changed files:"',
-    "  git diff --name-only",
-    "  echo",
-    '  echo "Diff stat:"',
-    "  git diff --stat",
-    "  echo",
-    '  echo "Recent log:"',
-    "  git log --oneline -5",
-    '} >> "$ARTIFACT_DIR/repo-state.txt" 2>&1',
-    'echo "Repo state captured."',
-    "",
-    "# 2. Tests",
-    'echo "--- Tests ---" > "$ARTIFACT_DIR/test-results.txt"',
-    `TEST_CMD="${testCommand.replace(/"/g, '\\"')}"`,
-    'if [ -n "$TEST_CMD" ]; then',
-    '  echo "Running: $TEST_CMD"',
-    '  set +e',
-    '  eval "$TEST_CMD" >> "$ARTIFACT_DIR/test-results.txt" 2>&1',
-    "  TEST_EXIT=$?",
-    '  set -e',
-    '  echo "Exit code: $TEST_EXIT" | tee -a "$ARTIFACT_DIR/test-results.txt"',
-    "else",
-    '  echo "No test command provided." | tee -a "$ARTIFACT_DIR/test-results.txt"',
-    "  TEST_EXIT=0",
-    "fi",
-    "",
-    "# 3. Gates",
-    'echo "--- Gates ---" > "$ARTIFACT_DIR/gate-results.txt"',
-    `GATE_CMD="${gateCommand.replace(/"/g, '\\"')}"`,
-    'if [ -n "$GATE_CMD" ]; then',
-    '  echo "Running: $GATE_CMD"',
-    "  set +e",
-    '  eval "$GATE_CMD" >> "$ARTIFACT_DIR/gate-results.txt" 2>&1 || true',
-    "  set -e",
-    '  echo "Gate check complete."',
-    "else",
-    '  echo "No gate command provided."',
-    "fi",
-    "",
-    "# 4. Patch",
-    'git diff > "$ARTIFACT_DIR/diff.patch" 2>&1 || true',
-    'echo "Patch saved to $ARTIFACT_DIR/diff.patch"',
-    "",
-    'echo "=== VALIDATION COMPLETE ===" | tee -a "$ARTIFACT_DIR/validation.log"',
-    'echo "Finished at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$ARTIFACT_DIR/validation.log"',
-    "exit $TEST_EXIT",
-  ].join("\n");
+  return generateValidationScriptFromSpecs({
+    runId: state.runId,
+    cycle: state.cycle,
+    checks: verificationSpecsFromLegacyCommands(testCommand, gateCommand),
+  });
 }

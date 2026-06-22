@@ -15,6 +15,8 @@ import type {
   EvaluatorVerdict,
   EvaluatorState,
 } from "./types.js";
+import { EvaluatorPromptSchema } from "./types.js";
+import { parseWithSchema } from "./domain/validate.js";
 import { type StateManagerAPI } from "./state.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -99,41 +101,35 @@ function fallbackVerdict(reason: string): EvaluatorVerdict {
 // ── Parsing ─────────────────────────────────────────────────────────
 
 function parseVerdict(text: string): EvaluatorVerdict | null {
+  const trimmed = text.trim();
+  const jsonText = trimmed.startsWith("{") && trimmed.endsWith("}")
+    ? trimmed
+    : (trimmed.match(/\{[\s\S]*\}/)?.[0] ?? "");
+  if (!jsonText) return null;
   try {
-    const raw = JSON.parse(text);
-    return normalizeVerdict(raw);
-  } catch {}
-
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const raw = JSON.parse(jsonMatch[0]);
-      return normalizeVerdict(raw);
-    } catch {}
+    const parsed = JSON.parse(jsonText);
+    if (parsed.next_cycle_directive && !parsed.next_focus) {
+      parsed.next_focus = parsed.next_cycle_directive.focus;
+      parsed.next_focus_reason = parsed.next_cycle_directive.reason;
+    }
+    const raw = parseWithSchema<any>(EvaluatorPromptSchema, parsed, "Evaluator verdict");
+    return {
+      goal_met: raw.goal_met,
+      confidence: raw.confidence,
+      completion_blockers: raw.completion_blockers,
+      accepted_evidence: raw.accepted_evidence,
+      rejected_evidence: raw.rejected_evidence,
+      remaining_work: raw.remaining_work,
+      next_cycle_directive: {
+        focus: raw.next_focus,
+        reason: raw.next_focus_reason,
+      },
+      safety_notes: raw.safety_notes,
+    };
+  } catch (err) {
+    log(`Evaluator schema validation failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
   }
-
-  return null;
-}
-
-function normalizeVerdict(raw: any): EvaluatorVerdict {
-  return {
-    goal_met: Boolean(raw.goal_met),
-    confidence: Number(raw.confidence) || 0,
-    completion_blockers: Array.isArray(raw.completion_blockers) ? raw.completion_blockers : [],
-    accepted_evidence: Array.isArray(raw.accepted_evidence) ? raw.accepted_evidence : [],
-    rejected_evidence: Array.isArray(raw.rejected_evidence) ? raw.rejected_evidence : [],
-    remaining_work: Array.isArray(raw.remaining_work)
-      ? raw.remaining_work.map((w: any) => ({
-          priority: w.priority || "medium",
-          description: w.description || "",
-        }))
-      : [],
-    next_cycle_directive: {
-      focus: raw.next_focus ?? raw.next_cycle_directive?.focus ?? "research",
-      reason: raw.next_focus_reason ?? raw.next_cycle_directive?.reason ?? "",
-    },
-    safety_notes: Array.isArray(raw.safety_notes) ? raw.safety_notes : [],
-  };
 }
 
 // ── Heartbeat updater ───────────────────────────────────────────────

@@ -26,7 +26,8 @@
  *               prompt.md, result.json, test-results.txt, gate-results.txt, repo-state.txt
  *
  * Atomic persistence: write .tmp → fsync → rename.
- * State rebuilt from events.jsonl on restore.
+ * New runs are restored from events.jsonl first. Snapshots remain a legacy
+ * fallback and performance cache.
  *
  * Also uses pi.appendEntry() for session-level checkpoints
  * that survive compaction.
@@ -49,11 +50,17 @@ import {
   type PhaseLifecycleEvent,
   type EvaluatorState,
   type FinalizationPolicy,
+  type ReleaseAuthorization,
   PHASE_ORDER,
 } from "./types.js";
+import {
+  DEFAULT_PRIMARY_MODEL,
+  DEFAULT_FALLBACK_MODELS,
+  filterAllowedModels,
+  normalizeConfiguredModel,
+} from "./domain/models.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
-const DEFAULT_PRIMARY_MODEL = { provider: "openrouter", model: "deepseek/deepseek-v4-pro" } as const;
 const DEFAULT_AWS_CLI_CONFIG = {
   enabled: false,
   defaultRegion: "us-east-1",
@@ -94,12 +101,15 @@ export interface StateManagerAPI {
   // ── New: evaluator state ───────────────────────────────────────
   setEvaluatorState(es: EvaluatorState): void;
   getEvaluatorState(): EvaluatorState | null;
+  setReleaseAuthorization(auth: ReleaseAuthorization | null): void;
 
   // ── New: artifact path helpers ─────────────────────────────────
   getRunDir(): string;
   getCycleDir(cycle: number): string;
   getPhaseDir(cycle: number, phase: Phase): string;
   getArtifactPath(cycle: number, phase: Phase, filename: string): string;
+  getEventsPath(): string;
+  replayActiveState(): IterativeGoalState | null;
 
   restore(ctx: ExtensionContext): IterativeGoalState | null;
 }
@@ -151,6 +161,112 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     const eventsPath = runEventsPath();
     if (!eventsPath) return;
     appendJsonLine(eventsPath, { ...event, timestamp: new Date().toISOString() });
+  }
+
+  function replayEvents(eventsPath: string): IterativeGoalState | null {
+    if (!fs.existsSync(eventsPath)) return null;
+    const lines = fs.readFileSync(eventsPath, "utf-8").split(/\r?\n/).filter(Boolean);
+    let replayed: IterativeGoalState | null = null;
+
+    for (const line of lines) {
+      let event: any;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return null;
+      }
+
+      if (event.type === "run_created" && event.initialState) {
+        replayed = migrateState(JSON.parse(JSON.stringify(event.initialState)));
+        continue;
+      }
+      if (!replayed) continue;
+
+      switch (event.type) {
+        case "phase_attempt_started":
+          replayed.phaseAttempts.push(event.attempt);
+          break;
+        case "phase_attempt_completed": {
+          const attempt = replayed.phaseAttempts.find(a => a.phaseAttemptId === event.phaseAttemptId);
+          if (attempt) {
+            attempt.status = event.status;
+            attempt.endedAt = event.timestamp;
+          }
+          break;
+        }
+        case "artifact_recorded": {
+          const artifact = event.artifact as PhaseArtifact;
+          const key = phaseToArtifactKey(artifact.phase);
+          (replayed.artifacts[key] as PhaseArtifact[]).push(artifact);
+          break;
+        }
+        case "verdict_recorded":
+          replayed.evaluator.lastVerdict = event.verdict;
+          replayed.artifacts.evaluatorReports.push(event.verdict);
+          break;
+        case "error_recorded":
+          replayed.errors.push(event.error);
+          break;
+        case "status_changed":
+          replayed.status = event.status;
+          break;
+        case "phase_changed":
+          replayed.phase = event.phase;
+          break;
+        case "cycle_incremented":
+          replayed.cycle = event.cycle;
+          break;
+        case "lock_acquired":
+          replayed.lock.activeRunId = event.runId;
+          replayed.lock.activePhaseId = event.phaseAttemptId;
+          replayed.lock.phaseLeaseOwner = event.phaseAttemptId;
+          replayed.lock.phaseStartedAt = event.timestamp;
+          replayed.lock.phaseStatus = "running";
+          break;
+        case "lock_released":
+          if (replayed.lock.phaseLeaseOwner === event.phaseAttemptId) {
+            replayed.lock.activePhaseId = null;
+            replayed.lock.phaseLeaseOwner = "";
+          }
+          break;
+        case "queued_phases_cancelled":
+          replayed.lock.queuedPhaseIds = [];
+          replayed.lock.phaseStatus = "paused";
+          break;
+        case "evaluator_state_updated":
+          replayed.evaluatorState = event.evaluatorState;
+          break;
+        case "release_authorization_updated":
+          replayed.releaseAuthorization = event.authorization ?? null;
+          break;
+        case "capabilities_updated":
+          replayed.capabilities = event.capabilities;
+          break;
+        case "goal_met":
+          replayed.status = "succeeded";
+          replayed.lock.phaseStatus = "verdict_recorded";
+          break;
+        case "completed_external_blockers":
+          replayed.status = "completed_external_blockers";
+          replayed.lock.phaseStatus = "verdict_recorded";
+          break;
+        case "phase_lifecycle":
+          break;
+        default:
+          return null;
+      }
+    }
+
+    return replayed;
+  }
+
+  function eventsRequireReplay(eventsPath: string): boolean {
+    if (!fs.existsSync(eventsPath)) return false;
+    try {
+      return fs.readFileSync(eventsPath, "utf-8").includes('"initialState"');
+    } catch {
+      return false;
+    }
   }
 
   function persistAllInternal(): void {
@@ -207,6 +323,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           : [...DEFAULT_AWS_CLI_CONFIG.allowMutatingFamilies],
       };
     }
+    raw.config.primaryModel = normalizeConfiguredModel(raw.config.primaryModel);
+    raw.config.fallbackModels = filterAllowedModels(raw.config.fallbackModels ?? []);
+    if (raw.config.fallbackModels.length === 0) {
+      raw.config.fallbackModels = DEFAULT_FALLBACK_MODELS.map((model) => ({ ...model }));
+    }
+    if (!("releaseAuthorization" in raw)) raw.releaseAuthorization = null;
     raw.version = 2;
     return raw as IterativeGoalState;
   }
@@ -413,8 +535,8 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           completionRequiresEvaluator: true,
         },
         config: {
-          primaryModel: config?.primaryModel ?? DEFAULT_PRIMARY_MODEL,
-          fallbackModels: config?.fallbackModels ?? [],
+          primaryModel: normalizeConfiguredModel(config?.primaryModel),
+          fallbackModels: filterAllowedModels(config?.fallbackModels ?? DEFAULT_FALLBACK_MODELS.map((model) => ({ ...model }))),
           blockedModels: config?.blockedModels ?? [],
           modelHealth: config?.modelHealth ?? {},
           awsCli: {
@@ -462,6 +584,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           allowPR: false,
           fallback: "patch",
         },
+        releaseAuthorization: null,
       };
 
       ensureRunDirs();
@@ -471,6 +594,8 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         type: "run_created",
         runId,
         goal,
+        goalCriterion,
+        initialState: state,
         timestamp: new Date().toISOString(),
       });
 
@@ -492,6 +617,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       state.lock.phaseStartedAt = new Date().toISOString();
       state.lock.phaseStatus = "running";
       persistLock();
+      appendEvent({ type: "lock_acquired", runId, phaseAttemptId, timestamp: new Date().toISOString() });
       return true;
     },
 
@@ -501,6 +627,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       state.lock.activePhaseId = null;
       state.lock.phaseLeaseOwner = "";
       persistLock();
+      appendEvent({ type: "lock_released", runId, phaseAttemptId, timestamp: new Date().toISOString() });
     },
 
     isLocked(): boolean {
@@ -567,15 +694,24 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       if (!state) return;
       state.evaluatorState = es;
       persistEvaluatorState();
+      appendEvent({ type: "evaluator_state_updated", evaluatorState: es, timestamp: new Date().toISOString() });
     },
 
     getEvaluatorState(): EvaluatorState | null {
       return state?.evaluatorState ?? null;
     },
 
+    setReleaseAuthorization(auth: ReleaseAuthorization | null): void {
+      if (!state) return;
+      state.releaseAuthorization = auth;
+      appendEvent({ type: "release_authorization_updated", authorization: auth, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
     setCapabilities(snapshot: CapabilitySnapshot): void {
       if (!state) return;
       state.capabilities = snapshot;
+      appendEvent({ type: "capabilities_updated", capabilities: snapshot, timestamp: new Date().toISOString() });
     },
 
     recordError(error: IterativeGoalError): void {
@@ -615,6 +751,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         const verdictsPath = path.join(runDir, "evaluator-verdicts.jsonl");
         appendJsonLine(verdictsPath, verdict as unknown as Record<string, unknown>);
       }
+      appendEvent({ type: "verdict_recorded", verdict, timestamp: new Date().toISOString() });
     },
 
     setStatus(status: RunStatus): void {
@@ -624,17 +761,20 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         state.lock.phaseStatus = "paused";
         persistLock();
       }
+      appendEvent({ type: "status_changed", status, timestamp: new Date().toISOString() });
       persistAllInternal();
     },
 
     setPhase(phase: Phase): void {
       if (!state) return;
       state.phase = phase;
+      appendEvent({ type: "phase_changed", phase, timestamp: new Date().toISOString() });
     },
 
     incrementCycle(): void {
       if (!state) return;
       state.cycle += 1;
+      appendEvent({ type: "cycle_incremented", cycle: state.cycle, timestamp: new Date().toISOString() });
     },
 
     markSucceeded(): void {
@@ -691,10 +831,86 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       updateLatestMd();
     },
 
+    getEventsPath(): string {
+      return runEventsPath();
+    },
+
+    replayActiveState(): IterativeGoalState | null {
+      const replayed = replayEvents(runEventsPath());
+      return replayed ? migrateState(replayed) : null;
+    },
+
     restore(ctx: ExtensionContext): IterativeGoalState | null {
       initStateDir(ctx.cwd);
 
-      // Check session entries first
+      // Event log is authoritative for new runs. Legacy snapshots remain a fallback.
+      if (stateDir) {
+        const activeRunPath = path.join(stateDir, "active-run.json");
+        let activeRunId: string | null = null;
+        if (fs.existsSync(activeRunPath)) {
+          try {
+            const lock: RunLock = JSON.parse(fs.readFileSync(activeRunPath, "utf-8"));
+            activeRunId = lock.activeRunId;
+          } catch { /* ignore */ }
+        }
+
+        if (activeRunId) {
+          runDir = path.join(stateDir, "runs", activeRunId);
+          const activeEventsPath = path.join(runDir, "events.jsonl");
+          const replayed = replayEvents(activeEventsPath);
+          if (replayed) {
+            state = migrateState(replayed);
+            ensureRunDirs();
+            persistToDisk();
+            updateLatestMd();
+            return state;
+          }
+          if (eventsRequireReplay(activeEventsPath)) return null;
+          const statePath = path.join(runDir, "state.json");
+          if (fs.existsSync(statePath)) {
+            try {
+              const envelope = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PersistenceEnvelope;
+              if (envelope.state) {
+                state = migrateState(envelope.state);
+                ensureRunDirs();
+                return state;
+              }
+            } catch { /* corrupted, ignore */ }
+          }
+        }
+
+        // Fall back: scan runs directory for the latest replayable run first.
+        const runsDir = path.join(stateDir, "runs");
+        if (fs.existsSync(runsDir)) {
+          const runs = fs.readdirSync(runsDir);
+          runs.sort().reverse();
+          for (const runId of runs) {
+            runDir = path.join(runsDir, runId);
+            const replayed = replayEvents(path.join(runDir, "events.jsonl"));
+            if (replayed) {
+              state = migrateState(replayed);
+              ensureRunDirs();
+              persistToDisk();
+              updateLatestMd();
+              return state;
+            }
+          }
+          for (const runId of runs) {
+            const sp = path.join(runsDir, runId, "state.json");
+            if (!fs.existsSync(sp)) continue;
+            try {
+              const envelope = JSON.parse(fs.readFileSync(sp, "utf-8")) as PersistenceEnvelope;
+              if (envelope.state) {
+                state = migrateState(envelope.state);
+                runDir = path.join(runsDir, runId);
+                return state;
+              }
+            } catch { /* continue */ }
+          }
+        }
+      }
+
+      // Final legacy fallback: session entries.
       const entries = ctx.sessionManager.getEntries();
       const lastEntry = [...entries]
         .reverse()
@@ -711,54 +927,6 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             updateLatestMd();
           }
           return state;
-        }
-      }
-
-      // Fall back to disk: find latest run
-      if (stateDir) {
-        const activeRunPath = path.join(stateDir, "active-run.json");
-        let activeRunId: string | null = null;
-        if (fs.existsSync(activeRunPath)) {
-          try {
-            const lock: RunLock = JSON.parse(fs.readFileSync(activeRunPath, "utf-8"));
-            activeRunId = lock.activeRunId;
-          } catch { /* ignore */ }
-        }
-
-        if (activeRunId) {
-          runDir = path.join(stateDir, "runs", activeRunId);
-          const statePath = path.join(runDir, "state.json");
-          if (fs.existsSync(statePath)) {
-            try {
-              const envelope = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PersistenceEnvelope;
-              if (envelope.state) {
-                state = migrateState(envelope.state);
-                ensureRunDirs();
-                return state;
-              }
-            } catch { /* corrupted, ignore */ }
-          }
-        }
-
-        // Fall back: scan runs directory for the latest
-        const runsDir = path.join(stateDir, "runs");
-        if (fs.existsSync(runsDir)) {
-          const runs = fs.readdirSync(runsDir).filter(d => {
-            const s = path.join(runsDir, d, "state.json");
-            return fs.existsSync(s);
-          });
-          runs.sort().reverse();
-          for (const runId of runs) {
-            const sp = path.join(runsDir, runId, "state.json");
-            try {
-              const envelope = JSON.parse(fs.readFileSync(sp, "utf-8")) as PersistenceEnvelope;
-              if (envelope.state) {
-                state = migrateState(envelope.state);
-                runDir = path.join(runsDir, runId);
-                return state;
-              }
-            } catch { /* continue */ }
-          }
         }
       }
 
