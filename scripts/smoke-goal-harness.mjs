@@ -824,7 +824,69 @@ import path from "node:path";
   eq(invalidAction.ok, false);
   ok(typeof invalidAction.error === "string" && invalidAction.error.length > 0, "invalid provider output is rejected by schema");
 
-  console.log("✓ Test 15: Central policy and broker validate scope, release auth, and provider output");
+  const { CapabilityRegistry } = await import("../dist/capabilities/registry.js");
+  const registry = new CapabilityRegistry();
+  const provider = {
+    async manifest() {
+      return {
+        providerId: "mock-web",
+        version: "1.0.0",
+        capabilities: [{
+          id: "mock-web.fetch",
+          effect: "network.fetch",
+          risk: "read",
+          inputSchema: Type.Object({ url: Type.String() }),
+          outputSchema: Type.Object({ body: Type.String() }),
+          networkAccess: "allowlisted",
+          credentialRequirements: [],
+          idempotent: true,
+          concurrencySafe: true,
+          outputSensitivity: "public",
+        }],
+      };
+    },
+    async preflight() {
+      return { ok: true, checkedAt: new Date().toISOString() };
+    },
+    async invoke() {
+      return { requestId: "mock", decision: prAllowed, ok: true, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() };
+    },
+  };
+  const manifest = await registry.register(provider);
+  eq(manifest.providerId, "mock-web");
+  eq(registry.listManifests().length, 1);
+  await registry.register(provider).then(
+    () => { throw new Error("duplicate provider registration unexpectedly succeeded"); },
+    (err) => ok(String(err.message).includes("already registered")),
+  );
+
+  const invalidProvider = {
+    ...provider,
+    async manifest() {
+      return {
+        providerId: "bad-web",
+        version: "1.0.0",
+        capabilities: [{
+          id: "bad-web.fetch",
+          effect: "network.fetch",
+          risk: "read",
+          inputSchema: Type.Object({ url: Type.String() }),
+          outputSchema: Type.Object({ body: Type.String() }),
+          networkAccess: "none",
+          credentialRequirements: [],
+          idempotent: true,
+          concurrencySafe: true,
+          outputSensitivity: "public",
+        }],
+      };
+    },
+  };
+  await registry.register(invalidProvider).then(
+    () => { throw new Error("invalid provider manifest unexpectedly succeeded"); },
+    (err) => ok(String(err.message).includes("networkAccess=none")),
+  );
+
+  console.log("✓ Test 15: Central policy, broker, and provider manifest contracts validate effects");
 }
 
 // ── Test 16: Event replay restores new runs ─────────────────────────
