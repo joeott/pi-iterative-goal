@@ -7,6 +7,7 @@ import {
   pathInScopes,
   serializePathScope,
 } from "../domain/path-scope.js";
+import { extractAcceptedAmendmentScopes } from "../domain/plan.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
@@ -61,7 +62,9 @@ export async function verifyImplementationAgainstPlan(
   } catch {}
 
   const lastPlan = state.artifacts.plans.at(-1);
-  const plannedScopes = extractPathScopesFromPlanText(lastPlan?.content ?? "");
+  const basePlanScopes = extractPathScopesFromPlanText(lastPlan?.content ?? "");
+  const amendmentScopes = extractAcceptedAmendmentScopes(lastPlan?.content ?? "");
+  const plannedScopes = [...basePlanScopes, ...amendmentScopes];
   const plannedFiles = plannedScopes.map(serializePathScope);
   const extraFiles = changedFiles.filter((file) => !pathInScopes(file, plannedScopes));
 
@@ -74,6 +77,8 @@ export async function verifyImplementationAgainstPlan(
       changedFiles,
       diffStat,
       plannedFiles,
+      basePlanFiles: basePlanScopes.map(serializePathScope),
+      acceptedAmendmentFiles: amendmentScopes.map(serializePathScope),
       extraFiles,
       allowlistViolation: extraFiles.length > 0,
       verifiedAt: new Date().toISOString(),

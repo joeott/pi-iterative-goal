@@ -148,6 +148,7 @@ import path from "node:path";
 
 {
   const { extractPathScopesFromPlanText, pathInScopes } = await import("../dist/domain/path-scope.js");
+  const { extractAcceptedAmendmentScopes } = await import("../dist/domain/plan.js");
 
   const plan = [
     "Exact files to modify:",
@@ -167,6 +168,43 @@ import path from "node:path";
   eq(pathInScopes("src/components/Button.tsx.bak", planned), false);
   eq(pathInScopes("Dockerfile", planned), true);
   eq(pathInScopes("scripts/deploy", planned), true);
+
+  const amendedPlan = [
+    plan,
+    "```json",
+    JSON.stringify({
+      type: "PlanAmendment",
+      id: "amend-1",
+      status: "accepted",
+      discovery: "Need a fixture file for the new path-scope test.",
+      affectedRequirements: ["R2"],
+      newAllowedPaths: ["fixtures/new-path.txt"],
+      newCapabilities: [],
+      riskChange: "low",
+      revisedChecks: [],
+      reviewer: "test-reviewer",
+      reviewedAt: new Date().toISOString(),
+    }),
+    "```",
+    "```json",
+    JSON.stringify({
+      type: "PlanAmendment",
+      id: "amend-2",
+      status: "proposed",
+      discovery: "Unreviewed broadening.",
+      affectedRequirements: ["R2"],
+      newAllowedPaths: ["fixtures/unreviewed.txt"],
+      newCapabilities: [],
+      riskChange: "low",
+      revisedChecks: [],
+      reviewer: "",
+      reviewedAt: "",
+    }),
+    "```",
+  ].join("\n");
+  const amendmentScopes = extractAcceptedAmendmentScopes(amendedPlan);
+  eq(pathInScopes("fixtures/new-path.txt", amendmentScopes), true);
+  eq(pathInScopes("fixtures/unreviewed.txt", amendmentScopes), false);
 
   console.log("✓ Test 4: Typed path scopes reject fuzzy allowlist matches");
 }

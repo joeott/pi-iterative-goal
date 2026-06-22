@@ -9,7 +9,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
 | R1 | Validation uses executable plus argv, no `eval`, per-check exit codes, mandatory missing checks fail, gate failure affects status | Partial | `src/domain/verification.ts`, smoke test 5; full gate matrix still pending |
-| R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Partial | `src/domain/path-scope.ts`, smoke tests 4 and 15; amendments not implemented |
+| R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Complete | `src/domain/path-scope.ts`, `src/domain/plan.ts`, `src/workspace/change-set.ts`, smoke tests 4 and 15 |
 | R3 | Typed domain objects and runtime validation at model/tool/plugin boundaries | Partial | `src/domain/*`, `src/evaluator.ts`; plugin/provider contract tests pending |
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`, `src/git.ts`; AWS/direct providers not fully broker-routed |
 | R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Complete | `src/release/controller.ts`, `src/release/pr-body.ts`, `src/git.ts`, smoke tests 18-19; runtime dry-run PR smoke validated auth and generated structured PR body |
@@ -48,6 +48,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | REL-FLOW-001 | high | runtime/release slice | resolved | `goal_git create_pr` now reruns the local release gate and validates the same evaluator plus localReleaseGate hash used when authorization is issued. |
 | REL-FLOW-002 | medium | runtime/release slice | resolved | `goal_git` refreshes finalization policy from current project settings on each invocation, avoiding stale replayed policy. |
 | GIT-POLICY-001 | info | git policy slice | resolved | Git branch/stage/commit/push/PR effects now consult `PolicyEngine`; smoke test 15 covers commit and PR allow/deny decisions. |
+| PLAN-AMEND-001 | info | plan amendment slice | resolved | Accepted typed `PlanAmendment` scopes are honored during change-set verification; proposed/unreviewed amendment scopes are ignored. |
 
 ## Slice Evidence
 
@@ -62,4 +63,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Policy hardening: `PolicyEngine` now calls `resolveContainedPath()` for `fs.write`/`fs.delete`; smoke test 15 denies a write under a repo-local symlink to an external directory.
 - `2026-06-22`: Release-flow runtime smoke: seeded a paused valid run in `/tmp/pi-iterative-goal-pr-dryrun-bhTPRK`; Pi loaded the extension and `goal_git create_pr` with `dryRun:true` authorized the exact ReleaseAuthorization and rendered a structured PR body without opening a PR.
 - `2026-06-22`: Git policy slice: `goal_git` now creates `ActionRequest`-style policy decisions for git branch/stage/commit/push/PR effects; `npm run validate` passed.
-- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`.
+- `2026-06-22`: Plan amendment slice: typed accepted amendments can broaden path scope; proposed/unreviewed amendments do not. `npm run validate` passed.
+- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`.

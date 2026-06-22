@@ -1,0 +1,12 @@
+[
+  {
+    "id": "PLAN-AMEND-001",
+    "severity": "info",
+    "category": "scope_control",
+    "requirementIds": ["R2", "R12"],
+    "message": "Plan broadening is represented as a typed PlanAmendment and only accepted amendments contribute path scopes during implementation verification.",
+    "location": "src/domain/plan.ts, src/workspace/change-set.ts",
+    "status": "resolved",
+    "resolution": "Smoke test 4 confirms accepted amendment paths are allowed while proposed/unreviewed amendment paths are not."
+  }
+]
