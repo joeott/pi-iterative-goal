@@ -41,7 +41,7 @@ export function generateValidationScriptFromSpecs(params: {
     `export ARTIFACT_DIR=${JSON.stringify(artifactDir)}`,
     'mkdir -p "$ARTIFACT_DIR"',
     `export CHECKS_JSON=${JSON.stringify(checksJson)}`,
-    'RESULTS_JSONL="$ARTIFACT_DIR/verification-results.jsonl"',
+    'export RESULTS_JSONL="$ARTIFACT_DIR/verification-results.jsonl"',
     ': > "$RESULTS_JSONL"',
     "",
     `echo "=== VALIDATION RUN ${params.runId} / cycle ${params.cycle} ===" | tee "$ARTIFACT_DIR/validation.log"`,

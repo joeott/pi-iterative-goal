@@ -21,6 +21,7 @@
  */
 
 import { ok, strictEqual as eq, deepStrictEqual } from "node:assert";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -230,7 +231,72 @@ import path from "node:path";
     const noCommandScript = generateValidationScript(state, "", "");
     ok(noCommandScript.includes("'FAIL'"), "mandatory NOT_RUN checks fail the gate");
 
-    console.log("✓ Test 5: Validation script uses argv execution and fail-closed checks");
+    function makeValidationRepo(prefix) {
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+      eq(spawnSync("git", ["init"], { cwd: repo, encoding: "utf8" }).status, 0);
+      eq(spawnSync("git", ["config", "user.email", "smoke@example.invalid"], { cwd: repo, encoding: "utf8" }).status, 0);
+      eq(spawnSync("git", ["config", "user.name", "Smoke Test"], { cwd: repo, encoding: "utf8" }).status, 0);
+      fs.writeFileSync(path.join(repo, "README.md"), "# smoke\n");
+      eq(spawnSync("git", ["add", "README.md"], { cwd: repo, encoding: "utf8" }).status, 0);
+      eq(spawnSync("git", ["commit", "-m", "init"], { cwd: repo, encoding: "utf8" }).status, 0);
+      return repo;
+    }
+
+    function runValidationScript({ runId, cycle, testCommand, gateCommand, prefix }) {
+      const repo = makeValidationRepo(prefix);
+      const generated = generateValidationScript({ runId, cycle }, testCommand, gateCommand);
+      const scriptPath = path.join(repo, "validate.sh");
+      fs.writeFileSync(scriptPath, generated, { mode: 0o755 });
+      const result = spawnSync("bash", [scriptPath], { cwd: repo, encoding: "utf8" });
+      const resultsPath = path.join(repo, ".pi", "iterative-goal", "runs", runId, "cycles", String(cycle), "validate", "verification-results.jsonl");
+      const results = fs.readFileSync(resultsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      return { result, results };
+    }
+
+    const successRun = runValidationScript({
+      runId: "ig-test-validate-success",
+      cycle: 1,
+      testCommand: "node -e \"process.exit(0)\"",
+      gateCommand: "node -e \"process.exit(0)\"",
+      prefix: "pi-ig-validate-success-",
+    });
+    eq(successRun.result.status, 0);
+    deepStrictEqual(successRun.results.map((r) => [r.id, r.status, r.exitCode]), [
+      ["tests", "PASS", 0],
+      ["gates", "PASS", 0],
+    ]);
+
+    const failingGateRun = runValidationScript({
+      runId: "ig-test-validate-failing-gate",
+      cycle: 1,
+      testCommand: "node -e \"process.exit(0)\"",
+      gateCommand: "node -e \"process.exit(7)\"",
+      prefix: "pi-ig-validate-failing-gate-",
+    });
+    eq(failingGateRun.result.status, 7);
+    deepStrictEqual(failingGateRun.results.map((r) => [r.id, r.status, r.exitCode]), [
+      ["tests", "PASS", 0],
+      ["gates", "FAIL", 7],
+    ]);
+
+    const missingRun = runValidationScript({
+      runId: "ig-test-validate-missing",
+      cycle: 1,
+      testCommand: "",
+      gateCommand: "",
+      prefix: "pi-ig-validate-missing-",
+    });
+    eq(missingRun.result.status, 1);
+    deepStrictEqual(missingRun.results.map((r) => [r.id, r.status, r.exitCode]), [
+      ["tests", "FAIL", null],
+      ["gates", "FAIL", null],
+    ]);
+
+    console.log("✓ Test 5: Validation script executes argv checks, records exit codes, and fails closed");
   } else {
     console.log("⚠ Test 5: generateValidationScript not exported (may be internal only)");
   }

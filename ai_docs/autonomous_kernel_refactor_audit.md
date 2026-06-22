@@ -8,7 +8,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| R1 | Validation uses executable plus argv, no `eval`, per-check exit codes, mandatory missing checks fail, gate failure affects status | Partial | `src/domain/verification.ts`, smoke test 5; full gate matrix still pending |
+| R1 | Validation uses executable plus argv, no `eval`, per-check exit codes, mandatory missing checks fail, gate failure affects status | Complete | `src/domain/verification.ts`, smoke test 5 executes generated scripts in temporary git repos and verifies success, gate failure, and missing-command failures |
 | R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Complete | `src/domain/path-scope.ts`, `src/domain/plan.ts`, `src/workspace/change-set.ts`, smoke tests 4 and 15 |
 | R3 | Typed domain objects and runtime validation at model/tool/plugin boundaries | Partial | `src/domain/*`, `src/evaluator.ts`; plugin/provider contract tests pending |
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`, `src/git.ts`; AWS/direct providers not fully broker-routed |
@@ -66,4 +66,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Git policy slice: `goal_git` now creates `ActionRequest`-style policy decisions for git branch/stage/commit/push/PR effects; `npm run validate` passed.
 - `2026-06-22`: Plan amendment slice: typed accepted amendments can broaden path scope; proposed/unreviewed amendments do not. `npm run validate` passed.
 - `2026-06-22`: Agent isolation slice: isolated writer worktree patch capture, cleanup, overlap checks and schema validation are covered by smoke test 16.
+- `2026-06-22`: Validation-gate slice: smoke test 5 now executes generated validation scripts in temporary git repositories; success returns 0 with PASS/PASS evidence, gate failure returns the gate exit code with per-check JSONL evidence, and missing mandatory commands return 1 with FAIL/FAIL evidence. `npm run validate` passed.
 - Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`.
