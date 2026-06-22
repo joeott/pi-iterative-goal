@@ -703,6 +703,39 @@ import path from "node:path";
 // ── Test 16: Event replay restores new runs ─────────────────────────
 
 {
+  const { execFileSync } = await import("node:child_process");
+  const { Type } = await import("typebox");
+  const { createAgentTask, pathsOverlap, prepareIsolatedWorktree, validateStructuredOutput } = await import("../dist/agents/pool.js");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-agent-worktree-"));
+  execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "smoke@example.com"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "Smoke"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repo });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repo, stdio: "ignore" });
+
+  const workspace = prepareIsolatedWorktree(repo, "writer-test");
+  fs.writeFileSync(path.join(workspace.path, "README.md"), "hello from isolated worktree\n");
+  const patch = workspace.capturePatch();
+  ok(patch.includes("hello from isolated worktree"), "isolated worktree patch captures writer changes");
+  workspace.cleanup();
+  eq(fs.existsSync(workspace.path), false);
+  eq(execFileSync("git", ["status", "--short"], { cwd: repo, encoding: "utf8" }).trim(), "");
+  eq(pathsOverlap(["src/a.ts"], ["src/a.ts"]), true);
+  eq(pathsOverlap(["src/*.ts"], ["src/a.ts"]), true);
+  eq(pathsOverlap(["src/a.ts"], ["docs/a.md"]), false);
+  const structuredTask = createAgentTask("Scout", "return json", {
+    outputSchema: Type.Object({ ok: Type.Boolean(), note: Type.String() }),
+  });
+  eq(validateStructuredOutput(structuredTask, '{"ok":true,"note":"done"}').ok, true);
+  eq(validateStructuredOutput(structuredTask, '{"ok":"yes","note":"done"}').ok, false);
+
+  console.log("✓ Test 16: Isolated writer worktree captures patch without touching main worktree");
+}
+
+// ── Test 17: Event replay restores new runs ─────────────────────────
+
+{
   const { createStateManager } = await import("../dist/state.js");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-replay-"));
   const pi = { appendEntry() {} };
@@ -728,10 +761,10 @@ import path from "node:path";
   eq(replayed.cycle, 2);
   eq(replayed.artifacts.plans.length, 1);
 
-  console.log("✓ Test 16: Event replay reconstructs new run state from events.jsonl");
+  console.log("✓ Test 17: Event replay reconstructs new run state from events.jsonl");
 }
 
-// ── Test 17: Replay corruption fails closed for new runs ────────────
+// ── Test 18: Replay corruption fails closed for new runs ────────────
 
 {
   const { createStateManager } = await import("../dist/state.js");
@@ -744,10 +777,10 @@ import path from "node:path";
   fs.appendFileSync(stateManager.getEventsPath(), "{not-json}\n");
   eq(stateManager.replayActiveState(), null);
 
-  console.log("✓ Test 17: New-run replay corruption does not silently reconstruct from stale cache");
+  console.log("✓ Test 18: New-run replay corruption does not silently reconstruct from stale cache");
 }
 
-// ── Test 18: ReleaseAuthorization invalidates on HEAD change ────────
+// ── Test 19: ReleaseAuthorization invalidates on HEAD change ────────
 
 {
   const { validateReleaseAuthorization } = await import("../dist/release/controller.js");
@@ -799,10 +832,10 @@ import path from "node:path";
   eq(staleGate.ok, false);
   ok(staleGate.reason.includes("gate verdict hash"));
 
-  console.log("✓ Test 18: ReleaseAuthorization is invalidated by a new HEAD");
+  console.log("✓ Test 19: ReleaseAuthorization is invalidated by a new HEAD");
 }
 
-// ── Test 19: Structured PR body generation ─────────────────────────
+// ── Test 20: Structured PR body generation ─────────────────────────
 
 {
   const { generatePullRequestBody } = await import("../dist/release/pr-body.js");
@@ -857,7 +890,7 @@ import path from "node:path";
   ok(body.includes("ReleaseAuthorization: rel-body"));
   ok(body.includes("npm run validate"));
 
-  console.log("✓ Test 19: Structured PR body generation includes evidence matrix and authorization");
+  console.log("✓ Test 20: Structured PR body generation includes evidence matrix and authorization");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

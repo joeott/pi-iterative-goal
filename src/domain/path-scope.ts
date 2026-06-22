@@ -5,7 +5,7 @@ export type PathScope =
   | { kind: "exact"; path: string }
   | { kind: "glob"; pattern: string };
 
-const SAFE_REPO_PATH = /^[A-Za-z0-9._/@+-][A-Za-z0-9._/@+\-]*$/;
+const SAFE_REPO_PATH = /^[A-Za-z0-9._/@+\-*][A-Za-z0-9._/@+\-*]*$/;
 
 export function normalizeRepoPath(raw: string): string {
   const clean = raw.trim().replace(/\\/g, "/").replace(/^\.\/+/, "");

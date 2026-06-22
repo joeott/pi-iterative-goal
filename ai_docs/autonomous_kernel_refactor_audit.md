@@ -13,7 +13,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | R3 | Typed domain objects and runtime validation at model/tool/plugin boundaries | Partial | `src/domain/*`, `src/evaluator.ts`; plugin/provider contract tests pending |
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`, `src/git.ts`; AWS/direct providers not fully broker-routed |
 | R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Complete | `src/release/controller.ts`, `src/release/pr-body.ts`, `src/git.ts`, smoke tests 18-19; runtime dry-run PR smoke validated auth and generated structured PR body |
-| R6 | Real AgentPool/Pi subprocess backend with cancel/map/usage and writer isolation controls | Partial | `src/agents/pool.ts`, `src/subagents.ts`; writer roles fail closed until worktree ownership lands |
+| R6 | Real AgentPool/Pi subprocess backend with cancel/map/usage and writer isolation controls | Complete | `src/agents/pool.ts`, `src/subagents.ts`, smoke test 16; writer roles use isolated worktrees, patch capture, write-scope overlap checks and structured output validation |
 | R7 | Workflow kernel extraction and `index.ts` composition root target | Partial | `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts`, `src/review/gates/release-gate.ts`, `src/ui/commands.ts`; `src/index.ts` is reduced but still orchestration-heavy |
 | R8 | Event log authoritative with SQLite WAL or deterministic replay; audit/trace/replay commands | Partial | `src/state.ts` deterministic replay for new runs, `/goal-audit`, `/goal-replay`, `/goal-trace`, smoke tests 16-17 |
 | R9 | Model defaults/local config limited to approved OpenRouter set and verified live | Complete | `src/domain/models.ts`, local `~/.pi/agent/settings.json`, local `~/.pi/agent/models.json`; `pi --list-models` verified all 13 slugs; OpenRouter Fusion page verified live |
@@ -49,6 +49,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | REL-FLOW-002 | medium | runtime/release slice | resolved | `goal_git` refreshes finalization policy from current project settings on each invocation, avoiding stale replayed policy. |
 | GIT-POLICY-001 | info | git policy slice | resolved | Git branch/stage/commit/push/PR effects now consult `PolicyEngine`; smoke test 15 covers commit and PR allow/deny decisions. |
 | PLAN-AMEND-001 | info | plan amendment slice | resolved | Accepted typed `PlanAmendment` scopes are honored during change-set verification; proposed/unreviewed amendment scopes are ignored. |
+| AGENT-ISO-001 | info | agent isolation slice | resolved | Writer subagents use disposable detached git worktrees, return patches, clean workspaces, reject overlapping active write scopes and validate structured outputs. |
 
 ## Slice Evidence
 
@@ -64,4 +65,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Release-flow runtime smoke: seeded a paused valid run in `/tmp/pi-iterative-goal-pr-dryrun-bhTPRK`; Pi loaded the extension and `goal_git create_pr` with `dryRun:true` authorized the exact ReleaseAuthorization and rendered a structured PR body without opening a PR.
 - `2026-06-22`: Git policy slice: `goal_git` now creates `ActionRequest`-style policy decisions for git branch/stage/commit/push/PR effects; `npm run validate` passed.
 - `2026-06-22`: Plan amendment slice: typed accepted amendments can broaden path scope; proposed/unreviewed amendments do not. `npm run validate` passed.
-- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`.
+- `2026-06-22`: Agent isolation slice: isolated writer worktree patch capture, cleanup, overlap checks and schema validation are covered by smoke test 16.
+- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`.

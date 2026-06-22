@@ -50,6 +50,9 @@ const GoalSubagentParams = Type.Object({
     default: "Scout",
   })),
   task: Type.String({ description: "Task to delegate to the subagent" }),
+  allowedPaths: Type.Optional(Type.Array(Type.String(), {
+    description: "Required for writer roles; repository-relative paths the subagent may modify in its isolated worktree.",
+  })),
   model: Type.Optional(Type.String({
     description: "Optional Pi model ID to pass to the subprocess backend",
   })),
@@ -96,17 +99,19 @@ export function registerGoalSubagentTool(
       const role = (params.role as AgentRole | undefined) ?? "Scout";
       const agent = String(params.agent ?? role);
       const task = String(params.task ?? "");
+      const allowedPaths = Array.isArray(params.allowedPaths) ? params.allowedPaths as string[] : [];
+      const writerRole = role === "Implementer" || role === "Integrator";
       log(`goal_subagent called: agent=${agent}, role=${role}, backend=${backend.kind}`);
 
-      if (role === "Implementer" || role === "Integrator") {
+      if (writerRole && allowedPaths.length === 0) {
         return {
           content: [{
             type: "text" as const,
-            text: "POLICY BLOCK: writer subagents require an isolated worktree manager and scoped write lease. Use read-only reviewer/scout roles until that provider is implemented.",
+            text: "POLICY BLOCK: writer subagents require explicit allowedPaths and an isolated worktree lease.",
           }],
           details: {
             backendKind: "none",
-            backendDetail: "writer-subagents-disabled-without-worktree-lease",
+            backendDetail: "writer-subagents-require-allowed-paths",
             fallback: true,
             result: "policy-blocked",
           } satisfies GoalSubagentDetails,
@@ -144,7 +149,9 @@ export function registerGoalSubagentTool(
       const pool = new PiSubprocessAgentPool((params.cwd as string | undefined) ?? ctx.cwd);
       const agentTask = createAgentTask(role, task, {
         modelProfile: typeof params.model === "string" ? params.model : "",
-        workspace: "read_only_snapshot",
+        workspace: writerRole ? "isolated_worktree" : "read_only_snapshot",
+        permittedEffects: writerRole ? ["fs.write", "process.exec"] : [],
+        allowedPaths,
         budget: { maxTurns: 4, maxTokens: 16000, timeoutMs: 300_000 },
       });
       const result = await pool.submit(agentTask, _signal ?? undefined);
