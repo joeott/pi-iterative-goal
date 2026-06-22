@@ -1,4 +1,5 @@
 import type { PolicyDecision, PolicyEngine, ActionRequest } from "../policy/engine.js";
+import { parseWithSchema } from "../domain/validate.js";
 
 export interface ActionResult<T = unknown> {
   requestId: string;
@@ -12,10 +13,22 @@ export interface ActionResult<T = unknown> {
 
 export type ActionHandler<T = unknown> = (request: ActionRequest, signal?: AbortSignal) => Promise<T>;
 
+export interface ActionInvocationOptions {
+  signal?: AbortSignal;
+  outputSchema?: object;
+}
+
 export class CapabilityBroker {
   constructor(private readonly policy: PolicyEngine) {}
 
-  async invoke<T>(request: ActionRequest, handler: ActionHandler<T>, signal?: AbortSignal): Promise<ActionResult<T>> {
+  async invoke<T>(
+    request: ActionRequest,
+    handler: ActionHandler<T>,
+    signalOrOptions?: AbortSignal | ActionInvocationOptions,
+  ): Promise<ActionResult<T>> {
+    const options = isAbortSignal(signalOrOptions)
+      ? { signal: signalOrOptions }
+      : signalOrOptions ?? {};
     const startedAt = new Date().toISOString();
     const decision = this.policy.decide(request);
     if (decision.result !== "allow") {
@@ -30,12 +43,15 @@ export class CapabilityBroker {
     }
 
     try {
-      const output = await handler(request, signal);
+      const output = await handler(request, options.signal);
+      const validatedOutput = options.outputSchema
+        ? parseWithSchema<T>(options.outputSchema, output, `Capability output for ${request.effect}`)
+        : output;
       return {
         requestId: request.id,
         decision,
         ok: true,
-        output,
+        output: validatedOutput,
         startedAt,
         finishedAt: new Date().toISOString(),
       };
@@ -50,4 +66,8 @@ export class CapabilityBroker {
       };
     }
   }
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return !!value && typeof value === "object" && "aborted" in value && "addEventListener" in value;
 }

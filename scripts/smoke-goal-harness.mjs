@@ -660,6 +660,8 @@ import path from "node:path";
 // ── Test 15: Central policy engine ──────────────────────────────────
 
 {
+  const { Type } = await import("typebox");
+  const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
   const { PolicyEngine } = await import("../dist/policy/engine.js");
   const { exactPathScope } = await import("../dist/domain/path-scope.js");
   const policy = new PolicyEngine({ repoRoot: process.cwd(), allowNetworkHosts: ["example.com"] });
@@ -763,7 +765,36 @@ import path from "node:path";
   });
   eq(symlinkDenied.result, "deny");
 
-  console.log("✓ Test 15: Central policy engine denies out-of-scope writes and PR opens");
+  const broker = new CapabilityBroker(policy);
+  const brokerRequest = {
+    id: "broker-1",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "https://example.com/data.json" },
+    input: {},
+    purpose: "test provider schema validation",
+    risk: "read",
+    dataClassification: "public",
+  };
+  const outputSchema = Type.Object({ ok: Type.Boolean(), text: Type.String() });
+  const validAction = await broker.invoke(
+    brokerRequest,
+    async () => ({ ok: true, text: "validated" }),
+    { outputSchema },
+  );
+  eq(validAction.ok, true);
+  deepStrictEqual(validAction.output, { ok: true, text: "validated" });
+
+  const invalidAction = await broker.invoke(
+    { ...brokerRequest, id: "broker-2" },
+    async () => ({ ok: "yes", text: "invalid" }),
+    { outputSchema },
+  );
+  eq(invalidAction.ok, false);
+  ok(typeof invalidAction.error === "string" && invalidAction.error.length > 0, "invalid provider output is rejected by schema");
+
+  console.log("✓ Test 15: Central policy and broker validate scope, release auth, and provider output");
 }
 
 // ── Test 16: Event replay restores new runs ─────────────────────────
