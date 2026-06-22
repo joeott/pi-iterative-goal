@@ -163,6 +163,79 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     appendJsonLine(eventsPath, { ...event, timestamp: new Date().toISOString() });
   }
 
+  type ReplayHandler = (replayed: IterativeGoalState, event: any) => void;
+
+  const replayHandlers: Record<string, ReplayHandler> = {
+    phase_attempt_started(replayed, event) {
+      replayed.phaseAttempts.push(event.attempt);
+    },
+    phase_attempt_completed(replayed, event) {
+      const attempt = replayed.phaseAttempts.find(a => a.phaseAttemptId === event.phaseAttemptId);
+      if (attempt) {
+        attempt.status = event.status;
+        attempt.endedAt = event.timestamp;
+      }
+    },
+    artifact_recorded(replayed, event) {
+      const artifact = event.artifact as PhaseArtifact;
+      const key = phaseToArtifactKey(artifact.phase);
+      (replayed.artifacts[key] as PhaseArtifact[]).push(artifact);
+    },
+    verdict_recorded(replayed, event) {
+      replayed.evaluator.lastVerdict = event.verdict;
+      replayed.artifacts.evaluatorReports.push(event.verdict);
+    },
+    error_recorded(replayed, event) {
+      replayed.errors.push(event.error);
+    },
+    status_changed(replayed, event) {
+      replayed.status = event.status;
+    },
+    phase_changed(replayed, event) {
+      replayed.phase = event.phase;
+    },
+    cycle_incremented(replayed, event) {
+      replayed.cycle = event.cycle;
+    },
+    lock_acquired(replayed, event) {
+      replayed.lock.activeRunId = event.runId;
+      replayed.lock.activePhaseId = event.phaseAttemptId;
+      replayed.lock.phaseLeaseOwner = event.phaseAttemptId;
+      replayed.lock.phaseStartedAt = event.timestamp;
+      replayed.lock.phaseStatus = "running";
+    },
+    lock_released(replayed, event) {
+      if (replayed.lock.phaseLeaseOwner === event.phaseAttemptId) {
+        replayed.lock.activePhaseId = null;
+        replayed.lock.phaseLeaseOwner = "";
+      }
+    },
+    queued_phases_cancelled(replayed) {
+      replayed.lock.queuedPhaseIds = [];
+      replayed.lock.phaseStatus = "paused";
+    },
+    evaluator_state_updated(replayed, event) {
+      replayed.evaluatorState = event.evaluatorState;
+    },
+    release_authorization_updated(replayed, event) {
+      replayed.releaseAuthorization = event.authorization ?? null;
+    },
+    capabilities_updated(replayed, event) {
+      replayed.capabilities = event.capabilities;
+    },
+    goal_met(replayed) {
+      replayed.status = "succeeded";
+      replayed.lock.phaseStatus = "verdict_recorded";
+    },
+    completed_external_blockers(replayed) {
+      replayed.status = "completed_external_blockers";
+      replayed.lock.phaseStatus = "verdict_recorded";
+    },
+    phase_lifecycle() {
+      // Lifecycle events are audit evidence and do not mutate reconstructed state.
+    },
+  };
+
   function replayEvents(eventsPath: string): IterativeGoalState | null {
     if (!fs.existsSync(eventsPath)) return null;
     const lines = fs.readFileSync(eventsPath, "utf-8").split(/\r?\n/).filter(Boolean);
@@ -182,79 +255,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       }
       if (!replayed) continue;
 
-      switch (event.type) {
-        case "phase_attempt_started":
-          replayed.phaseAttempts.push(event.attempt);
-          break;
-        case "phase_attempt_completed": {
-          const attempt = replayed.phaseAttempts.find(a => a.phaseAttemptId === event.phaseAttemptId);
-          if (attempt) {
-            attempt.status = event.status;
-            attempt.endedAt = event.timestamp;
-          }
-          break;
-        }
-        case "artifact_recorded": {
-          const artifact = event.artifact as PhaseArtifact;
-          const key = phaseToArtifactKey(artifact.phase);
-          (replayed.artifacts[key] as PhaseArtifact[]).push(artifact);
-          break;
-        }
-        case "verdict_recorded":
-          replayed.evaluator.lastVerdict = event.verdict;
-          replayed.artifacts.evaluatorReports.push(event.verdict);
-          break;
-        case "error_recorded":
-          replayed.errors.push(event.error);
-          break;
-        case "status_changed":
-          replayed.status = event.status;
-          break;
-        case "phase_changed":
-          replayed.phase = event.phase;
-          break;
-        case "cycle_incremented":
-          replayed.cycle = event.cycle;
-          break;
-        case "lock_acquired":
-          replayed.lock.activeRunId = event.runId;
-          replayed.lock.activePhaseId = event.phaseAttemptId;
-          replayed.lock.phaseLeaseOwner = event.phaseAttemptId;
-          replayed.lock.phaseStartedAt = event.timestamp;
-          replayed.lock.phaseStatus = "running";
-          break;
-        case "lock_released":
-          if (replayed.lock.phaseLeaseOwner === event.phaseAttemptId) {
-            replayed.lock.activePhaseId = null;
-            replayed.lock.phaseLeaseOwner = "";
-          }
-          break;
-        case "queued_phases_cancelled":
-          replayed.lock.queuedPhaseIds = [];
-          replayed.lock.phaseStatus = "paused";
-          break;
-        case "evaluator_state_updated":
-          replayed.evaluatorState = event.evaluatorState;
-          break;
-        case "release_authorization_updated":
-          replayed.releaseAuthorization = event.authorization ?? null;
-          break;
-        case "capabilities_updated":
-          replayed.capabilities = event.capabilities;
-          break;
-        case "goal_met":
-          replayed.status = "succeeded";
-          replayed.lock.phaseStatus = "verdict_recorded";
-          break;
-        case "completed_external_blockers":
-          replayed.status = "completed_external_blockers";
-          replayed.lock.phaseStatus = "verdict_recorded";
-          break;
-        case "phase_lifecycle":
-          break;
-        default:
-          return null;
-      }
+      const handler = replayHandlers[event.type];
+      if (!handler) return null;
+      handler(replayed, event);
     }
 
     return replayed;

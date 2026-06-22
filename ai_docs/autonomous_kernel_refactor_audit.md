@@ -42,7 +42,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | DES-SUB-01 | high | Ousterhout | waived-intentional | The target design starts with `PiSubprocessBackend`; non-CLI tool backends can be added behind `AgentPool` later. |
 | DES-TYPES-01 | high | Ousterhout | resolved | `goal_git create_pr` validates plan, requirements, gate and evidence hashes against the active state before opening a PR. |
 | DES-STATE-01 | medium | Ousterhout | intentional | New-run event logs are authoritative by design; legacy snapshots remain a compatibility fallback. |
-| DES-EVT-01 | medium | Ousterhout | open | The replay switch remains shallow and should become an event reducer map in the next state-module slice. |
+| DES-EVT-01 | medium | Ousterhout | resolved | Replay now uses an event-handler map instead of a linearly growing switch while preserving fail-closed behavior for unknown new-run events. |
 | DES-CMD-01 | medium | Ousterhout | partially-resolved | Release-gate, change-set and phase-startup internals moved out of `index.ts`; command registration still belongs in a UI adapter module. |
 | FINDING-009 | medium | adversarial slice 2 | resolved | Path-scope extraction now handles explicit extensionless repo paths such as `Dockerfile` and `scripts/deploy`; smoke test 4 covers this. |
 
@@ -50,4 +50,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 
 - `2026-06-22`: `npm run validate` passed locally with 18 smoke checks.
 - `2026-06-22`: Extracted `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts` and `src/review/gates/release-gate.ts`; `src/index.ts` is 1295 lines after extraction.
+- `2026-06-22`: Refactored authoritative event replay into an event-handler map; `npm run validate` passed.
 - Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`.
