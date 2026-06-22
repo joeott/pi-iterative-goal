@@ -85,27 +85,7 @@ export class PiSubprocessAgentPool implements AgentPool {
       }
     }
 
-    const prompt = [
-      `Role: ${task.role}`,
-      "",
-      "You are running as an isolated subagent for pi-iterative-goal.",
-      `Workspace mode: ${task.workspace}`,
-      `Permitted effects: ${task.permittedEffects.join(", ") || "none"}`,
-      `Allowed paths: ${task.allowedPaths.join(", ") || "none"}`,
-      "",
-      task.instructions,
-      "",
-      "Return concise structured findings. Do not claim success without evidence.",
-    ].join("\n");
-
-    const args = ["--mode", "json", "-p", "--no-session"];
-    if (task.workspace === "read_only_snapshot") {
-      args.push("--tools", "read,grep,find,ls");
-    } else {
-      args.push("--tools", "read,grep,find,ls,edit,write,bash");
-    }
-    if (task.modelProfile) args.push("--model", task.modelProfile);
-    args.push(prompt);
+    const args = buildPiSubprocessArgs(task);
 
     return await new Promise<AgentResult<T>>((resolve) => {
       const proc = spawn("pi", args, { cwd: runCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
@@ -214,6 +194,31 @@ export class PiSubprocessAgentPool implements AgentPool {
     }
     return null;
   }
+}
+
+export function buildPiSubprocessArgs(task: AgentTask): string[] {
+  const prompt = [
+    `Role: ${task.role}`,
+    "",
+    "You are running as an isolated subagent for pi-iterative-goal.",
+    `Workspace mode: ${task.workspace}`,
+    `Permitted effects: ${task.permittedEffects.join(", ") || "none"}`,
+    `Allowed paths: ${task.allowedPaths.join(", ") || "none"}`,
+    "",
+    task.instructions,
+    "",
+    "Return concise structured findings. Do not claim success without evidence.",
+  ].join("\n");
+
+  const args = ["--mode", "json", "-p", "--no-session"];
+  if (task.workspace === "read_only_snapshot") {
+    args.push("--tools", "read,grep,find,ls");
+  } else {
+    args.push("--tools", "read,grep,find,ls,edit,write,bash");
+  }
+  if (task.modelProfile) args.push("--model", task.modelProfile);
+  args.push(prompt);
+  return args;
 }
 
 export interface IsolatedWorkspace {

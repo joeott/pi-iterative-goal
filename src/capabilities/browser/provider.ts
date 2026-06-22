@@ -52,10 +52,27 @@ export class BrowserProvider implements CapabilityProvider {
   }
 
   async invoke(request: ActionRequest, signal: AbortSignal): Promise<ActionResult> {
+    if (!this.backend) return providerUnavailable(request.id, "No browser backend configured.");
+    const backend = this.backend;
     const broker = new CapabilityBroker(this.policy);
     return broker.invoke(request, async () => {
-      if (!this.backend) throw new Error("No browser backend configured.");
-      return await this.backend(request, signal);
+      return await backend(request, signal);
     }, { signal, outputSchema: BrowserOutputSchema });
   }
+}
+
+function providerUnavailable(requestId: string, reason: string): ActionResult {
+  const now = new Date().toISOString();
+  return {
+    requestId,
+    ok: false,
+    error: reason,
+    startedAt: now,
+    finishedAt: now,
+    decision: {
+      result: "deny",
+      ruleIds: ["provider.browser.unavailable"],
+      reason,
+    },
+  };
 }

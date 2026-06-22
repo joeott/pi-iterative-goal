@@ -1,0 +1,87 @@
+{
+  "reviewer": "pi subprocess / openrouter/deepseek/deepseek-v4-flash",
+  "scope": "critical policy/provider/release/path-scope/validation diff",
+  "reviewedAt": "2026-06-22",
+  "findings": [
+    {
+      "id": "FINAL-SEC-001",
+      "sourceId": "FIND-001",
+      "severity": "blocker",
+      "category": "security",
+      "path": "src/policy/engine.ts",
+      "message": "Policy resource descriptors could diverge from executable/input fields used by providers.",
+      "status": "resolved",
+      "disposition": "PolicyEngine now rejects fs/process/network/browser/MCP resource/input mismatch; subagent broker requests use the same Pi argv builder as the subprocess backend; smoke test 15 covers process, network and fs.read mismatch."
+    },
+    {
+      "id": "FINAL-SEC-002",
+      "sourceId": "FIND-002",
+      "severity": "high",
+      "category": "security",
+      "path": "src/capabilities/web/provider.ts",
+      "message": "Fetch followed redirects by default, creating SSRF risk.",
+      "status": "resolved",
+      "disposition": "WebFetchProvider uses redirect:'manual' and blocks every 3xx response before reading the body."
+    },
+    {
+      "id": "FINAL-SEC-003",
+      "sourceId": "F001",
+      "severity": "high",
+      "category": "security",
+      "path": "src/policy/engine.ts",
+      "message": "Governed URLs allowed userinfo/credentials.",
+      "status": "resolved",
+      "disposition": "parseGovernedUrl rejects URL credentials with a generic error; smoke test 15 covers credential URL denial."
+    },
+    {
+      "id": "FINAL-SEC-004",
+      "sourceId": "SSRF-IPV6-BYPASS",
+      "severity": "blocker",
+      "category": "security",
+      "path": "src/policy/engine.ts",
+      "message": "Private-host checks missed IPv6 private/link-local and IPv4-mapped IPv6 literals.",
+      "status": "resolved",
+      "disposition": "Policy and web DNS guards now deny localhost, metadata, RFC1918 IPv4, IPv4-mapped IPv6, unique-local and link-local IPv6; smoke test 15 covers IPv4-mapped loopback."
+    },
+    {
+      "id": "FINAL-SEC-005",
+      "sourceId": "SSRF-DNS-REBINDING",
+      "severity": "high",
+      "category": "security",
+      "path": "src/capabilities/web/provider.ts",
+      "message": "Fetch did not resolve and reject private DNS answers before network access.",
+      "status": "resolved-with-residual-risk",
+      "disposition": "WebFetchProvider resolves all addresses before fetch and rejects private/metadata answers; residual DNS TOCTOU risk remains because global fetch resolves separately."
+    },
+    {
+      "id": "FINAL-SEC-006",
+      "sourceId": "FETCH-NO-TIMEOUT",
+      "severity": "high",
+      "category": "availability",
+      "path": "src/capabilities/web/provider.ts",
+      "message": "Web fetch had no timeout guard.",
+      "status": "resolved",
+      "disposition": "WebFetchProvider combines caller signal with AbortSignal.timeout(default 30000ms); timeoutMs is schema-validated."
+    },
+    {
+      "id": "FINAL-SEC-007",
+      "sourceId": "AUDIT-FALSE-ALLOW",
+      "severity": "medium",
+      "category": "audit",
+      "path": "src/capabilities/browser/provider.ts",
+      "message": "No-backend providers could return decision.result=allow with ok=false.",
+      "status": "resolved",
+      "disposition": "Browser, MCP and vision providers return explicit provider.*.unavailable denials before broker invocation when no backend/delegate is configured; smoke test 15 covers vision."
+    },
+    {
+      "id": "FINAL-SEC-008",
+      "sourceId": "FS-TOCTOU-SYMLINK",
+      "severity": "medium",
+      "category": "security",
+      "path": "src/domain/path-scope.ts",
+      "message": "A local symlink swap between containment check and filesystem I/O remains theoretically possible.",
+      "status": "waived-residual",
+      "disposition": "Existing checks resolve containment before broker approval and provider I/O; full mitigation requires fd-level no-follow/openat semantics and is tracked as residual risk for a later sandboxed filesystem adapter."
+    }
+  ]
+}

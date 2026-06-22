@@ -9,7 +9,7 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type SubagentBackend, type CapabilitySnapshot, type ToolInfo } from "./types.js";
 import { detectSubagentBackend } from "./capabilities.js";
-import { PiSubprocessAgentPool, createAgentTask, type AgentRole } from "./agents/pool.js";
+import { PiSubprocessAgentPool, buildPiSubprocessArgs, createAgentTask, type AgentRole } from "./agents/pool.js";
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
 import { parsePathScope } from "./domain/path-scope.js";
@@ -157,15 +157,16 @@ export function registerGoalSubagentTool(
         budget: { maxTurns: 4, maxTokens: 16000, timeoutMs: 300_000 },
       });
       const broker = new CapabilityBroker(new PolicyEngine({ repoRoot: cwd }));
+      const subprocessArgs = buildPiSubprocessArgs(agentTask);
       const brokered = await broker.invoke({
         id: `goal_subagent:${agentTask.id}`,
         actor: { kind: "tool", id: "goal_subagent" },
         runId: "goal_subagent",
         effect: "process.exec",
-        resource: commandResource("pi", ["--mode", "json", "-p", "--no-session"]),
+        resource: commandResource("pi", subprocessArgs),
         input: {
           executable: "pi",
-          argv: ["--mode", "json", "-p", "--no-session"],
+          argv: subprocessArgs,
           cwd,
           allowDestructive: writerRole,
           allowGitFinalization: false,

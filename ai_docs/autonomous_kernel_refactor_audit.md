@@ -57,6 +57,11 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | DES-CAP-001 | info | Ousterhout capability slice | resolved | Provider-specific schema and health details are hidden behind manifest/registry contracts. |
 | DES-IDX-001 | medium | Ousterhout capability slice | resolved | `index.ts` is now a 139-line composition root; lifecycle, commands, tools, synthesis and interception are extracted behind narrow modules. |
 | DES-FS-001 | info | Ousterhout capability slice | resolved | Filesystem provider owns read/write/delete execution while broker and policy remain centralized. |
+| FINAL-SEC-001 | blocker | final security review | resolved | Resource/input mismatch is denied for fs/process/network/browser/MCP; subagent broker uses exact subprocess argv. |
+| FINAL-SEC-002 | high | final security review | resolved | Governed web fetch blocks redirects instead of following them. |
+| FINAL-SEC-003 | high | final security review | resolved | Governed URLs reject userinfo/credentials and private/metadata hosts including IPv6 variants. |
+| FINAL-SEC-004 | high | final security review | resolved-with-residual-risk | Web fetch performs DNS preflight and timeout enforcement; DNS rebinding between preflight and fetch remains tracked residual risk. |
+| FINAL-SEC-005 | medium | final security review | waived-residual | Symlink TOCTOU requires a later fd-level filesystem adapter or external sandbox to fully eliminate. |
 
 ## Slice Evidence
 
@@ -89,4 +94,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Lifecycle extraction slice: moved `agent_end`, session restore/shutdown/compaction handling and phase transition orchestration into `src/kernel/lifecycle.ts`; `src/index.ts` is 139 lines and `npm run validate` passed.
 - `2026-06-22`: CLI capability slice: added `src/capabilities/process/provider.ts`, centralized package-install denial under `policy.package.install`, moved debug logging to `.pi/iterative-goal/debug.log` or `PI_ITERATIVE_GOAL_DEBUG_LOG`, and replaced project-specific AWS profile defaults with explicit/env/configured profile resolution. `npm run validate` passed.
 - `2026-06-22`: Provider closure slice: added brokered web fetch, browser interaction, MCP invocation and vision inspection provider contracts; browser/MCP are approval-gated and no-backend providers fail closed. `npm run validate` passed.
-- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`, `ai_docs/reviews/capability-persistence-slice-findings.json`, `ai_docs/reviews/ousterhout-capability-slice-findings.json`.
+- `2026-06-22`: Final security review slice: independent Pi subprocess review found policy/resource mismatch, governed-fetch SSRF and no-backend false-allow issues; blocker/high findings were remediated and `npm run validate` passed.
+- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`, `ai_docs/reviews/capability-persistence-slice-findings.json`, `ai_docs/reviews/ousterhout-capability-slice-findings.json`, `ai_docs/reviews/final-security-review-findings.json`.

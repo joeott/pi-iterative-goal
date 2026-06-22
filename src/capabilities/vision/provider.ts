@@ -51,10 +51,27 @@ export class VisionProvider implements CapabilityProvider {
   }
 
   async invoke(request: ActionRequest, signal: AbortSignal): Promise<ActionResult> {
+    if (!this.backend) return providerUnavailable(request.id, "No vision backend configured.");
+    const backend = this.backend;
     const broker = new CapabilityBroker(this.policy);
     return broker.invoke(request, async () => {
-      if (!this.backend) throw new Error("No vision backend configured.");
-      return await this.backend(request, signal);
+      return await backend(request, signal);
     }, { signal, outputSchema: VisionOutputSchema });
   }
+}
+
+function providerUnavailable(requestId: string, reason: string): ActionResult {
+  const now = new Date().toISOString();
+  return {
+    requestId,
+    ok: false,
+    error: reason,
+    startedAt: now,
+    finishedAt: now,
+    decision: {
+      result: "deny",
+      ruleIds: ["provider.vision.unavailable"],
+      reason,
+    },
+  };
 }

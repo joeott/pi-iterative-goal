@@ -52,10 +52,27 @@ export class McpProvider implements CapabilityProvider {
   }
 
   async invoke(request: ActionRequest, signal: AbortSignal): Promise<ActionResult> {
+    if (!this.invoker) return providerUnavailable(request.id, "No MCP invoker configured.");
+    const invoker = this.invoker;
     const broker = new CapabilityBroker(this.policy);
     return broker.invoke(request, async () => {
-      if (!this.invoker) throw new Error("No MCP invoker configured.");
-      return await this.invoker(request, signal);
+      return await invoker(request, signal);
     }, { signal, outputSchema: McpOutputSchema });
   }
+}
+
+function providerUnavailable(requestId: string, reason: string): ActionResult {
+  const now = new Date().toISOString();
+  return {
+    requestId,
+    ok: false,
+    error: reason,
+    startedAt: now,
+    finishedAt: now,
+    decision: {
+      result: "deny",
+      ruleIds: ["provider.mcp.unavailable"],
+      reason,
+    },
+  };
 }

@@ -798,6 +798,94 @@ import path from "node:path";
   eq(packageInstallDenied.result, "deny");
   ok(packageInstallDenied.ruleIds.includes("policy.package.install"));
 
+  const mismatchedProcessDenied = policy.decide({
+    id: "policy-3f",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "process.exec",
+    resource: { type: "command", value: "node --version" },
+    input: {
+      executable: "npm",
+      argv: ["install", "left-pad"],
+      allowDestructive: true,
+    },
+    purpose: "test process resource/input match",
+    risk: "write",
+    dataClassification: "internal",
+  });
+  eq(mismatchedProcessDenied.result, "deny");
+  ok(mismatchedProcessDenied.ruleIds.includes("policy.resource.input-match"));
+
+  const mismatchedNetworkDenied = policy.decide({
+    id: "policy-3g",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "https://example.com/data.json" },
+    input: { url: "https://metadata.google.internal/" },
+    purpose: "test network resource/input match",
+    risk: "read",
+    dataClassification: "public",
+  });
+  eq(mismatchedNetworkDenied.result, "deny");
+  ok(mismatchedNetworkDenied.ruleIds.includes("policy.resource.input-match"));
+
+  const mismatchedReadDenied = policy.decide({
+    id: "policy-3h",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "fs.read",
+    resource: { type: "path", value: "README.md" },
+    input: { path: "../secret.txt" },
+    purpose: "test fs read resource/input match",
+    risk: "read",
+    dataClassification: "internal",
+  });
+  eq(mismatchedReadDenied.result, "deny");
+  ok(mismatchedReadDenied.ruleIds.includes("policy.resource.input-match"));
+
+  const credentialUrlDenied = policy.decide({
+    id: "policy-3i",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "https://user:pass@example.com/data.json" },
+    input: { url: "https://user:pass@example.com/data.json" },
+    purpose: "test governed URL credentials",
+    risk: "read",
+    dataClassification: "public",
+  });
+  eq(credentialUrlDenied.result, "deny");
+  ok(credentialUrlDenied.reason.includes("URL credentials"));
+
+  const metadataUrlDenied = policy.decide({
+    id: "policy-3j",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "http://169.254.169.254/latest/meta-data" },
+    input: { url: "http://169.254.169.254/latest/meta-data" },
+    purpose: "test governed URL private host",
+    risk: "read",
+    dataClassification: "public",
+  });
+  eq(metadataUrlDenied.result, "deny");
+  ok(metadataUrlDenied.ruleIds.includes("policy.network.private-address"));
+
+  const ipv6PrivateUrlDenied = policy.decide({
+    id: "policy-3k",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "http://[::ffff:127.0.0.1]/" },
+    input: { url: "http://[::ffff:127.0.0.1]/" },
+    purpose: "test governed URL ipv6 mapped host",
+    risk: "read",
+    dataClassification: "public",
+  });
+  eq(ipv6PrivateUrlDenied.result, "deny");
+  ok(ipv6PrivateUrlDenied.ruleIds.includes("policy.network.private-address"));
+
   const symlinkRepo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-symlink-"));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-outside-"));
   fs.mkdirSync(path.join(symlinkRepo, "src"));
@@ -986,7 +1074,7 @@ import path from "node:path";
   ok(deniedWebAction.decision.ruleIds.includes("policy.network.allowlist"));
 
   const { BrowserProvider } = await import("../dist/capabilities/browser/provider.js");
-  const browserProvider = new BrowserProvider(policy);
+  const browserProvider = new BrowserProvider(policy, async () => ({ action: "open", ok: true, message: "not reached" }));
   const browserManifest = await registry.register(browserProvider);
   ok(browserManifest.capabilities.some((capability) => capability.effect === "browser.interact"));
   const deniedBrowserAction = await browserProvider.invoke({
@@ -1004,7 +1092,7 @@ import path from "node:path";
   ok(deniedBrowserAction.decision.ruleIds.includes("policy.browser.approval"));
 
   const { McpProvider } = await import("../dist/capabilities/mcp/provider.js");
-  const mcpProvider = new McpProvider(policy);
+  const mcpProvider = new McpProvider(policy, async () => ({ serverId: "server", toolName: "tool", result: {} }));
   const mcpManifest = await registry.register(mcpProvider);
   ok(mcpManifest.capabilities.some((capability) => capability.effect === "mcp.invoke"));
   const deniedMcpAction = await mcpProvider.invoke({
@@ -1037,7 +1125,8 @@ import path from "node:path";
     dataClassification: "internal",
   }, new AbortController().signal);
   eq(visionAction.ok, false);
-  eq(visionAction.decision.result, "allow");
+  eq(visionAction.decision.result, "deny");
+  ok(visionAction.decision.ruleIds.includes("provider.vision.unavailable"));
 
   console.log("✓ Test 15: Central policy, broker, and provider manifest contracts validate effects");
 }
