@@ -3,6 +3,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { complete } from "@earendil-works/pi-ai";
 import type { StateManagerAPI } from "../state.js";
 import type {
   CapabilitySnapshot,
@@ -45,7 +46,6 @@ export async function checkModelHealth(
     };
   }
   try {
-    const { complete } = require("@earendil-works/pi-ai");
     await complete(model, {
       messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "Say OK." }], timestamp: Date.now() }],
       systemPrompt: "",
@@ -79,10 +79,14 @@ export async function preflightAllModels(
 ): Promise<Record<string, ModelHealthEntry>> {
   const health: Record<string, ModelHealthEntry> = {};
   const models = [primary, ...fallbacks];
-  for (const model of models) {
+  const entries = await Promise.all(models.map(async (model) => {
     const key = `${model.provider}/${model.model}`;
-    health[key] = await checkModelHealth(ctx, model.provider, model.model);
-    log(`Model preflight ${key}: ${health[key].lastStatus}`);
+    const entry = await checkModelHealth(ctx, model.provider, model.model);
+    return { key, entry };
+  }));
+  for (const { key, entry } of entries) {
+    health[key] = entry;
+    log(`Model preflight ${key}: ${entry.lastStatus}`);
   }
   return health;
 }

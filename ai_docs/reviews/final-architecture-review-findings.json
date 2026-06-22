@@ -1,0 +1,77 @@
+{
+  "reviewer": "pi subprocess / openrouter/deepseek/deepseek-v4-flash",
+  "scope": "composition root, kernel, capability providers, UI adapters and agent pool diff",
+  "reviewedAt": "2026-06-22",
+  "findings": [
+    {
+      "id": "FINAL-ARCH-001",
+      "sourceId": "worktree-leak",
+      "severity": "blocker",
+      "category": "resource-management",
+      "path": "src/agents/pool.ts",
+      "message": "Crash-prone isolated writer worktrees could be orphaned.",
+      "status": "resolved",
+      "disposition": "Isolated worktrees are registered in a process-level cleanup map and removed on cleanup/beforeExit/exit where possible; manual git worktree prune remains an external crash recovery fallback."
+    },
+    {
+      "id": "FINAL-ARCH-002",
+      "sourceId": "usage-tracking-race",
+      "severity": "blocker",
+      "category": "correctness",
+      "path": "src/agents/pool.ts",
+      "message": "Subprocess JSON event usage parsing ignored partial lines.",
+      "status": "resolved",
+      "disposition": "Stdout JSON parsing now buffers incomplete lines across chunks and accumulates usage from any message.usage payload."
+    },
+    {
+      "id": "FINAL-ARCH-003",
+      "sourceId": "duplicated-unavailable",
+      "severity": "blocker",
+      "category": "architecture",
+      "path": "src/capabilities/*/provider.ts",
+      "message": "Provider-unavailable action result construction was duplicated.",
+      "status": "resolved",
+      "disposition": "Extracted shared `providerUnavailable()` helper in `src/capabilities/unavailable.ts`."
+    },
+    {
+      "id": "FINAL-ARCH-004",
+      "sourceId": "sequential-health-checks",
+      "severity": "medium",
+      "category": "performance",
+      "path": "src/kernel/workflow-engine.ts",
+      "message": "Model preflight health checks ran sequentially.",
+      "status": "resolved",
+      "disposition": "Model health preflight now runs checks with `Promise.all` and records results afterward."
+    },
+    {
+      "id": "FINAL-ARCH-005",
+      "sourceId": "dynamic-require",
+      "severity": "medium",
+      "category": "maintainability",
+      "path": "src/kernel/workflow-engine.ts",
+      "message": "Dynamic require of `@earendil-works/pi-ai` leaked module-loader complexity.",
+      "status": "resolved",
+      "disposition": "Replaced dynamic require with a static import of `complete`."
+    },
+    {
+      "id": "FINAL-ARCH-006",
+      "sourceId": "redirect-blocked",
+      "severity": "high",
+      "category": "security",
+      "path": "src/capabilities/web/provider.ts",
+      "message": "All redirects are blocked, including same-host upgrades.",
+      "status": "waived-intentional",
+      "disposition": "Conservative redirect denial is intentional for this security-sensitive harness; safe redirect following can be added later as a separate policy transform."
+    },
+    {
+      "id": "FINAL-ARCH-007",
+      "sourceId": "paths-overlap-false-positive",
+      "severity": "high",
+      "category": "scheduler",
+      "path": "src/agents/pool.ts",
+      "message": "Write-scope overlap may be conservative for some glob pairs.",
+      "status": "waived-intentional",
+      "disposition": "False positives reduce concurrency but preserve writer isolation; no unsafe false-negative case was identified in the covered tests."
+    }
+  ]
+}

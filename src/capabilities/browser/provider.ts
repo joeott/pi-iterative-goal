@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { CapabilityBroker, type ActionResult } from "../broker.js";
 import type { CapabilityManifest, CapabilityProvider, ProviderContext, ProviderHealth } from "../manifest.js";
 import type { ActionRequest, PolicyEngine } from "../../policy/engine.js";
+import { providerUnavailable } from "../unavailable.js";
 
 const BrowserInputSchema = Type.Object({
   action: Type.String({ minLength: 1 }),
@@ -52,27 +53,11 @@ export class BrowserProvider implements CapabilityProvider {
   }
 
   async invoke(request: ActionRequest, signal: AbortSignal): Promise<ActionResult> {
-    if (!this.backend) return providerUnavailable(request.id, "No browser backend configured.");
+    if (!this.backend) return providerUnavailable(request.id, "browser", "No browser backend configured.");
     const backend = this.backend;
     const broker = new CapabilityBroker(this.policy);
     return broker.invoke(request, async () => {
       return await backend(request, signal);
     }, { signal, outputSchema: BrowserOutputSchema });
   }
-}
-
-function providerUnavailable(requestId: string, reason: string): ActionResult {
-  const now = new Date().toISOString();
-  return {
-    requestId,
-    ok: false,
-    error: reason,
-    startedAt: now,
-    finishedAt: now,
-    decision: {
-      result: "deny",
-      ruleIds: ["provider.browser.unavailable"],
-      reason,
-    },
-  };
 }

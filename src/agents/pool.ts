@@ -92,6 +92,7 @@ export class PiSubprocessAgentPool implements AgentPool {
       this.running.set(task.id, proc);
       let stdout = "";
       let stderr = "";
+      let stdoutLineBuffer = "";
       const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
       const timeout = setTimeout(() => {
         proc.kill("SIGTERM");
@@ -105,23 +106,9 @@ export class PiSubprocessAgentPool implements AgentPool {
       proc.stdout.on("data", (chunk) => {
         const text = chunk.toString();
         stdout += text;
-        for (const line of text.split(/\r?\n/)) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            const message = event.message;
-            if (event.type === "message_end" && message?.role === "assistant") {
-              usage.turns += 1;
-              usage.input += message.usage?.input ?? 0;
-              usage.output += message.usage?.output ?? 0;
-              usage.cacheRead += message.usage?.cacheRead ?? 0;
-              usage.cacheWrite += message.usage?.cacheWrite ?? 0;
-              usage.cost += message.usage?.cost?.total ?? 0;
-            }
-          } catch {
-            // Preserve raw output even if the subprocess is not in JSON mode.
-          }
-        }
+        const lines = (stdoutLineBuffer + text).split(/\r?\n/);
+        stdoutLineBuffer = lines.pop() ?? "";
+        for (const line of lines) accumulateUsageFromJsonLine(line, usage);
       });
       proc.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
       proc.on("close", (code) => {
@@ -196,6 +183,29 @@ export class PiSubprocessAgentPool implements AgentPool {
   }
 }
 
+function accumulateUsageFromJsonLine(
+  line: string,
+  usage: AgentResult["usage"],
+): void {
+  if (!line.trim()) return;
+  try {
+    const event = JSON.parse(line);
+    const message = event.message;
+    if (message?.usage) {
+      usage.input += message.usage.input ?? 0;
+      usage.output += message.usage.output ?? 0;
+      usage.cacheRead += message.usage.cacheRead ?? 0;
+      usage.cacheWrite += message.usage.cacheWrite ?? 0;
+      usage.cost += message.usage.cost?.total ?? 0;
+    }
+    if (event.type === "message_end" && message?.role === "assistant") {
+      usage.turns += 1;
+    }
+  } catch {
+    // Preserve raw output even if the subprocess emits non-JSON lines.
+  }
+}
+
 export function buildPiSubprocessArgs(task: AgentTask): string[] {
   const prompt = [
     `Role: ${task.role}`,
@@ -232,6 +242,7 @@ export function prepareIsolatedWorktree(repoRoot: string, taskId: string): Isola
   const safeId = taskId.replace(/[^A-Za-z0-9._-]/g, "-");
   const workspacePath = path.join(os.tmpdir(), `pi-ig-agent-${safeId}-${crypto.randomBytes(4).toString("hex")}`);
   execFileSync("git", ["worktree", "add", "--detach", workspacePath, "HEAD"], { cwd: repoRoot, stdio: "ignore" });
+  registerWorktreeForCleanup(repoRoot, workspacePath);
   return {
     path: workspacePath,
     capturePatch() {
@@ -247,8 +258,34 @@ export function prepareIsolatedWorktree(repoRoot: string, taskId: string): Isola
       } catch {
         try { fs.rmSync(workspacePath, { recursive: true, force: true }); } catch {}
       }
+      unregisterWorktreeForCleanup(repoRoot, workspacePath);
     },
   };
+}
+
+const pendingWorktreeCleanups = new Map<string, string>();
+let cleanupHandlersRegistered = false;
+
+function registerWorktreeForCleanup(repoRoot: string, workspacePath: string): void {
+  pendingWorktreeCleanups.set(workspacePath, repoRoot);
+  if (cleanupHandlersRegistered) return;
+  cleanupHandlersRegistered = true;
+  const cleanupAll = () => {
+    for (const [workspace, root] of pendingWorktreeCleanups.entries()) {
+      try {
+        execFileSync("git", ["worktree", "remove", "--force", workspace], { cwd: root, stdio: "ignore", timeout: 30_000 });
+      } catch {
+        try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+      }
+      pendingWorktreeCleanups.delete(workspace);
+    }
+  };
+  process.once("beforeExit", cleanupAll);
+  process.once("exit", cleanupAll);
+}
+
+function unregisterWorktreeForCleanup(_repoRoot: string, workspacePath: string): void {
+  pendingWorktreeCleanups.delete(workspacePath);
 }
 
 function failedResult<T>(task: AgentTask<T>, stderr: string): AgentResult<T> {
