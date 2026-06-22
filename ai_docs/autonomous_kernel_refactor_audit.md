@@ -9,7 +9,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
 | R1 | Validation uses executable plus argv, no `eval`, per-check exit codes, mandatory missing checks fail, gate failure affects status | Partial | `src/domain/verification.ts`, smoke test 5; full gate matrix still pending |
-| R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Partial | `src/domain/path-scope.ts`, smoke test 4; amendments not implemented |
+| R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Partial | `src/domain/path-scope.ts`, smoke tests 4 and 15; amendments not implemented |
 | R3 | Typed domain objects and runtime validation at model/tool/plugin boundaries | Partial | `src/domain/*`, `src/evaluator.ts`; plugin/provider contract tests pending |
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`; AWS/git direct adapters not fully broker-routed |
 | R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Partial | `src/release/controller.ts`, `src/git.ts`, smoke test 18; PR body generator incomplete |
@@ -56,4 +56,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Runtime smoke: `/goal-start` in `/tmp/pi-iterative-goal-start-smoke-CJatWs` registered commands/tools, captured capabilities, started `research`, and recorded a nonce-matched research artifact; no tracked file changes occurred.
 - `2026-06-22`: Runtime smoke: pre-PR authorization remained absent (`releaseAuthorization: null`) before evaluator/release gates.
 - `2026-06-22`: Model verification: `pi --list-models` found all 13 configured OpenRouter slugs; `pi --version` started cleanly.
+- `2026-06-22`: Policy hardening: `PolicyEngine` now calls `resolveContainedPath()` for `fs.write`/`fs.delete`; smoke test 15 denies a write under a repo-local symlink to an external directory.
 - Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`.

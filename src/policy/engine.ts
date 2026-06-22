@@ -1,5 +1,10 @@
 import * as path from "node:path";
-import { pathInScopes, type PathScope, normalizeRepoPath } from "../domain/path-scope.js";
+import {
+  pathInScopes,
+  type PathScope,
+  normalizeRepoPath,
+  resolveContainedPath,
+} from "../domain/path-scope.js";
 import { checkCommand } from "../safety.js";
 
 export type Effect =
@@ -85,6 +90,7 @@ export class PolicyEngine {
       const resourcePath = request.resource.value;
       try {
         const normalized = normalizeRepoPath(resourcePath);
+        resolveContainedPath(this.context.repoRoot, normalized);
         if (!request.allowedPaths || !pathInScopes(normalized, request.allowedPaths)) {
           return deny("policy.fs.scope", `Filesystem ${request.effect} denied outside active task path scope: ${resourcePath}`);
         }

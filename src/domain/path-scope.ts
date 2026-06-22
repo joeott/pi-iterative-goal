@@ -40,11 +40,22 @@ export function resolveContainedPath(repoRoot: string, repoRelativePath: string)
   const normalized = normalizeRepoPath(repoRelativePath);
   const rootReal = fs.realpathSync(repoRoot);
   const target = path.resolve(rootReal, normalized);
-  const existing = fs.existsSync(target) ? fs.realpathSync(target) : path.resolve(rootReal, path.dirname(normalized));
-  if (existing !== rootReal && !existing.startsWith(rootReal + path.sep)) {
+  const anchor = nearestExistingPath(target);
+  const anchorReal = fs.realpathSync(anchor);
+  if (anchorReal !== rootReal && !anchorReal.startsWith(rootReal + path.sep)) {
     throw new Error(`Path escapes repository root through symlink: ${repoRelativePath}`);
   }
   return target;
+}
+
+function nearestExistingPath(target: string): string {
+  let current = target;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+  return current;
 }
 
 function globToRegExp(pattern: string): RegExp {

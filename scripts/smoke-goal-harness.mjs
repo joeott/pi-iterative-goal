@@ -601,6 +601,25 @@ import path from "node:path";
   });
   eq(prDenied.result, "deny");
 
+  const symlinkRepo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-symlink-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-outside-"));
+  fs.mkdirSync(path.join(symlinkRepo, "src"));
+  fs.symlinkSync(outside, path.join(symlinkRepo, "src", "outside"));
+  const symlinkPolicy = new PolicyEngine({ repoRoot: symlinkRepo });
+  const symlinkDenied = symlinkPolicy.decide({
+    id: "policy-4",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "fs.write",
+    resource: { type: "path", value: "src/outside/file.txt" },
+    input: {},
+    purpose: "test symlink containment",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [exactPathScope("src/outside/file.txt")],
+  });
+  eq(symlinkDenied.result, "deny");
+
   console.log("✓ Test 15: Central policy engine denies out-of-scope writes and PR opens");
 }
 
