@@ -10,6 +10,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type SubagentBackend, type CapabilitySnapshot, type ToolInfo } from "./types.js";
 import { detectSubagentBackend } from "./capabilities.js";
 import { PiSubprocessAgentPool, createAgentTask, type AgentRole } from "./agents/pool.js";
+import { CapabilityBroker } from "./capabilities/broker.js";
+import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
+import { parsePathScope } from "./domain/path-scope.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 function log(msg: string) {
@@ -70,6 +73,7 @@ export interface GoalSubagentDetails {
   backendDetail: string;
   fallback: boolean;
   result: string;
+  policyDecision?: PolicyDecision;
 }
 
 export function registerGoalSubagentTool(
@@ -146,7 +150,8 @@ export function registerGoalSubagentTool(
         };
       }
 
-      const pool = new PiSubprocessAgentPool((params.cwd as string | undefined) ?? ctx.cwd);
+      const cwd = (params.cwd as string | undefined) ?? ctx.cwd;
+      const pool = new PiSubprocessAgentPool(cwd);
       const agentTask = createAgentTask(role, task, {
         modelProfile: typeof params.model === "string" ? params.model : "",
         workspace: writerRole ? "isolated_worktree" : "read_only_snapshot",
@@ -154,7 +159,44 @@ export function registerGoalSubagentTool(
         allowedPaths,
         budget: { maxTurns: 4, maxTokens: 16000, timeoutMs: 300_000 },
       });
-      const result = await pool.submit(agentTask, _signal ?? undefined);
+      const broker = new CapabilityBroker(new PolicyEngine({ repoRoot: cwd }));
+      const brokered = await broker.invoke({
+        id: `goal_subagent:${agentTask.id}`,
+        actor: { kind: "tool", id: "goal_subagent" },
+        runId: "goal_subagent",
+        effect: "process.exec",
+        resource: commandResource("pi", ["--mode", "json", "-p", "--no-session"]),
+        input: {
+          executable: "pi",
+          argv: ["--mode", "json", "-p", "--no-session"],
+          cwd,
+          allowDestructive: writerRole,
+          allowGitFinalization: false,
+        },
+        purpose: `subagent:${role}`,
+        risk: writerRole ? "write" : "read",
+        dataClassification: "internal",
+        allowedPaths: allowedPaths.map(parsePathScope),
+      }, async () => pool.submit(agentTask, _signal ?? undefined), _signal ?? undefined);
+
+      if (!brokered.ok || !brokered.output) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `SUBAGENT POLICY BLOCK: ${brokered.error ?? brokered.decision.reason}`,
+          }],
+          details: {
+            backendKind: "command",
+            backendDetail: "PiSubprocessAgentPool",
+            fallback: true,
+            result: "policy-blocked",
+            policyDecision: brokered.decision,
+          } satisfies GoalSubagentDetails,
+          isError: true,
+        };
+      }
+
+      const result = brokered.output;
 
       return {
         content: [
@@ -175,6 +217,7 @@ export function registerGoalSubagentTool(
           backendDetail: "PiSubprocessAgentPool",
           fallback: !result.ok,
           result: JSON.stringify(result),
+          policyDecision: brokered.decision,
         } satisfies GoalSubagentDetails,
         isError: !result.ok,
       };
