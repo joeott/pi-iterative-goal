@@ -15,6 +15,7 @@ export const EffectValues = [
   "network.fetch",
   "browser.interact",
   "vision.inspect",
+  "mcp.invoke",
   "git.branch",
   "git.stage",
   "git.commit",

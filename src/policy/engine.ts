@@ -15,6 +15,7 @@ export type Effect =
   | "network.fetch"
   | "browser.interact"
   | "vision.inspect"
+  | "mcp.invoke"
   | "git.branch"
   | "git.stage"
   | "git.commit"
@@ -33,7 +34,7 @@ export interface ActorIdentity {
 }
 
 export interface ResourceDescriptor {
-  type: "path" | "command" | "url" | "git" | "cloud" | "unknown";
+  type: "path" | "command" | "url" | "git" | "cloud" | "mcp" | "unknown";
   value: string;
 }
 
@@ -164,6 +165,29 @@ export class PolicyEngine {
         if (!hostAllowed) return deny("policy.network.allowlist", `Network destination is not allowlisted: ${url.hostname}`);
       } catch {
         return deny("policy.network.allowlist", `Invalid URL: ${request.resource.value}`);
+      }
+    }
+
+    if (request.effect === "browser.interact") {
+      rules.push("policy.browser.approval");
+      if (!inputFlag(request.input, "allowBrowserInteraction")) {
+        return deny("policy.browser.approval", "Browser interaction requires an explicit browser capability approval.");
+      }
+      if (request.resource.type === "url") {
+        try {
+          const url = new URL(request.resource.value);
+          const hostAllowed = this.context.allowNetworkHosts?.includes(url.hostname) ?? false;
+          if (!hostAllowed) return deny("policy.browser.allowlist", `Browser destination is not allowlisted: ${url.hostname}`);
+        } catch {
+          return deny("policy.browser.allowlist", `Invalid browser URL: ${request.resource.value}`);
+        }
+      }
+    }
+
+    if (request.effect === "mcp.invoke") {
+      rules.push("policy.mcp.approval");
+      if (!inputFlag(request.input, "allowMcpInvoke")) {
+        return deny("policy.mcp.approval", "MCP invocation requires an explicit provider-scoped approval.");
       }
     }
 

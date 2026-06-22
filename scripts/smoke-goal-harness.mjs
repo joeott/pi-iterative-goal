@@ -967,6 +967,78 @@ import path from "node:path";
   eq(processAction.ok, true);
   ok(processAction.output.stdout.trim().startsWith("v"), "process provider captures stdout");
 
+  const { WebFetchProvider } = await import("../dist/capabilities/web/provider.js");
+  const webProvider = new WebFetchProvider(policy);
+  const webManifest = await registry.register(webProvider);
+  ok(webManifest.capabilities.some((capability) => capability.effect === "network.fetch"));
+  const deniedWebAction = await webProvider.invoke({
+    id: "web-1",
+    actor: { kind: "tool", id: "web-smoke" },
+    runId: "ig-policy",
+    effect: "network.fetch",
+    resource: { type: "url", value: "https://not-allowlisted.invalid/" },
+    input: { url: "https://not-allowlisted.invalid/" },
+    purpose: "web provider denied smoke",
+    risk: "read",
+    dataClassification: "public",
+  }, new AbortController().signal);
+  eq(deniedWebAction.ok, false);
+  ok(deniedWebAction.decision.ruleIds.includes("policy.network.allowlist"));
+
+  const { BrowserProvider } = await import("../dist/capabilities/browser/provider.js");
+  const browserProvider = new BrowserProvider(policy);
+  const browserManifest = await registry.register(browserProvider);
+  ok(browserManifest.capabilities.some((capability) => capability.effect === "browser.interact"));
+  const deniedBrowserAction = await browserProvider.invoke({
+    id: "browser-1",
+    actor: { kind: "tool", id: "browser-smoke" },
+    runId: "ig-policy",
+    effect: "browser.interact",
+    resource: { type: "url", value: "https://example.com/" },
+    input: { action: "open", url: "https://example.com/" },
+    purpose: "browser provider denied smoke",
+    risk: "privileged",
+    dataClassification: "internal",
+  }, new AbortController().signal);
+  eq(deniedBrowserAction.ok, false);
+  ok(deniedBrowserAction.decision.ruleIds.includes("policy.browser.approval"));
+
+  const { McpProvider } = await import("../dist/capabilities/mcp/provider.js");
+  const mcpProvider = new McpProvider(policy);
+  const mcpManifest = await registry.register(mcpProvider);
+  ok(mcpManifest.capabilities.some((capability) => capability.effect === "mcp.invoke"));
+  const deniedMcpAction = await mcpProvider.invoke({
+    id: "mcp-1",
+    actor: { kind: "tool", id: "mcp-smoke" },
+    runId: "ig-policy",
+    effect: "mcp.invoke",
+    resource: { type: "mcp", value: "server/tool" },
+    input: { serverId: "server", toolName: "tool", args: {} },
+    purpose: "mcp provider denied smoke",
+    risk: "privileged",
+    dataClassification: "internal",
+  }, new AbortController().signal);
+  eq(deniedMcpAction.ok, false);
+  ok(deniedMcpAction.decision.ruleIds.includes("policy.mcp.approval"));
+
+  const { VisionProvider } = await import("../dist/capabilities/vision/provider.js");
+  const visionProvider = new VisionProvider(policy);
+  const visionManifest = await registry.register(visionProvider);
+  ok(visionManifest.capabilities.some((capability) => capability.effect === "vision.inspect"));
+  const visionAction = await visionProvider.invoke({
+    id: "vision-1",
+    actor: { kind: "tool", id: "vision-smoke" },
+    runId: "ig-policy",
+    effect: "vision.inspect",
+    resource: { type: "path", value: "assets/screenshot.png" },
+    input: { assetIds: ["asset-1"], task: "ui_review" },
+    purpose: "vision provider no-backend smoke",
+    risk: "read",
+    dataClassification: "internal",
+  }, new AbortController().signal);
+  eq(visionAction.ok, false);
+  eq(visionAction.decision.result, "allow");
+
   console.log("✓ Test 15: Central policy, broker, and provider manifest contracts validate effects");
 }
 
