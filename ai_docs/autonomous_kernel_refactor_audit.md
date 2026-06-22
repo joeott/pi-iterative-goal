@@ -50,6 +50,12 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | GIT-POLICY-001 | info | git policy slice | resolved | Git branch/stage/commit/push/PR effects now consult `PolicyEngine`; smoke test 15 covers commit and PR allow/deny decisions. |
 | PLAN-AMEND-001 | info | plan amendment slice | resolved | Accepted typed `PlanAmendment` scopes are honored during change-set verification; proposed/unreviewed amendment scopes are ignored. |
 | AGENT-ISO-001 | info | agent isolation slice | resolved | Writer subagents use disposable detached git worktrees, return patches, clean workspaces, reject overlapping active write scopes and validate structured outputs. |
+| CAP-POL-001 | info | capability/persistence slice | resolved | Capability manifests, broker output schemas, AWS broker evidence and filesystem provider policy checks are covered by smoke tests 11 and 15. |
+| CAP-POL-002 | medium | capability/persistence slice | open | Subagent/browser/MCP provider effects are not yet uniformly broker-enforced; tracked as remaining R4 work. |
+| EVT-AUD-001 | info | capability/persistence slice | resolved | Chained event-log replay rejects tampering and corrupt replay. |
+| DES-CAP-001 | info | Ousterhout capability slice | resolved | Provider-specific schema and health details are hidden behind manifest/registry contracts. |
+| DES-IDX-001 | medium | Ousterhout capability slice | open | `index.ts` remains larger than the composition-root target; lifecycle and command extraction remain R7 work. |
+| DES-FS-001 | info | Ousterhout capability slice | resolved | Filesystem provider owns read/write/delete execution while broker and policy remain centralized. |
 
 ## Slice Evidence
 
@@ -74,4 +80,4 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Provider-contract slice: added runtime capability manifest validation and a registry; smoke test 15 rejects duplicate providers and invalid network manifests while accepting a valid provider contract. `npm run validate` passed.
 - `2026-06-22`: Tool-interception extraction slice: moved bash interception and process policy checks into `src/ui/tool-interception.ts`; `src/index.ts` is 912 lines after extraction and `npm run validate` passed.
 - `2026-06-22`: Filesystem-provider slice: added a brokered filesystem provider for read/write/delete manifests; smoke test 15 verifies allowed writes persist and out-of-scope writes are denied without touching disk. `npm run validate` passed.
-- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`.
+- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`, `ai_docs/reviews/git-policy-slice-findings.json`, `ai_docs/reviews/plan-amendment-slice-findings.json`, `ai_docs/reviews/agent-isolation-slice-findings.json`, `ai_docs/reviews/capability-persistence-slice-findings.json`, `ai_docs/reviews/ousterhout-capability-slice-findings.json`.
