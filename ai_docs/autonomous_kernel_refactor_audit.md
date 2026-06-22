@@ -16,11 +16,11 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | R6 | Real AgentPool/Pi subprocess backend with cancel/map/usage and writer isolation controls | Partial | `src/agents/pool.ts`, `src/subagents.ts`; writer roles fail closed until worktree ownership lands |
 | R7 | Workflow kernel extraction and `index.ts` composition root target | Partial | `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts`, `src/review/gates/release-gate.ts`, `src/ui/commands.ts`; `src/index.ts` is reduced but still orchestration-heavy |
 | R8 | Event log authoritative with SQLite WAL or deterministic replay; audit/trace/replay commands | Partial | `src/state.ts` deterministic replay for new runs, `/goal-audit`, `/goal-replay`, `/goal-trace`, smoke tests 16-17 |
-| R9 | Model defaults/local config limited to approved OpenRouter set and verified live | Partial | `src/domain/models.ts`, local `~/.pi/agent/*`; live verification performed manually |
+| R9 | Model defaults/local config limited to approved OpenRouter set and verified live | Complete | `src/domain/models.ts`, local `~/.pi/agent/settings.json`, local `~/.pi/agent/models.json`; `pi --list-models` verified all 13 slugs; OpenRouter Fusion page verified live |
 | R10 | Quality loop after slices: build/tests, adversarial review, Ousterhout review, structured ReviewFinding records, remediate blocker/high | Partial | `ai_docs/reviews/*`, review disposition table below; second review pass pending |
 | R11 | Small audit-friendly commits on dedicated branch | In progress | branch created; commits pending |
 | R12 | Testing requirements: repo-local fixtures, unit/adapter/adversarial/replay/release-gate tests | Partial | smoke expanded; adapter/replay/runtime tests incomplete |
-| R13 | Real local Pi runtime smoke in disposable repo with no unintended writes | Not done | pending |
+| R13 | Real local Pi runtime smoke in disposable repo with no unintended writes | Partial | `goal_shell` tool smoke passed in `/tmp/pi-iterative-goal-tool-smoke-sbtswS`; `/goal-start` created run state and nonce-matched research artifact in `/tmp/pi-iterative-goal-start-smoke-CJatWs`; tracked files remained clean |
 | R14 | Final PR/audit packet with requirement-to-evidence matrix, tests, review results, rollback, audit run ID | Not done | this audit file is seed |
 
 ## Review Findings
@@ -52,4 +52,8 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Extracted `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts` and `src/review/gates/release-gate.ts`; `src/index.ts` is 1295 lines after extraction.
 - `2026-06-22`: Refactored authoritative event replay into an event-handler map; `npm run validate` passed.
 - `2026-06-22`: Extracted governance commands into `src/ui/commands.ts`; `src/index.ts` is 1189 lines after extraction and `npm run validate` passed.
+- `2026-06-22`: Runtime smoke: `pi --extension dist/index.js --tools goal_shell` executed `pwd` in `/tmp/pi-iterative-goal-tool-smoke-sbtswS` with exit code 0 and no tracked file changes.
+- `2026-06-22`: Runtime smoke: `/goal-start` in `/tmp/pi-iterative-goal-start-smoke-CJatWs` registered commands/tools, captured capabilities, started `research`, and recorded a nonce-matched research artifact; no tracked file changes occurred.
+- `2026-06-22`: Runtime smoke: pre-PR authorization remained absent (`releaseAuthorization: null`) before evaluator/release gates.
+- `2026-06-22`: Model verification: `pi --list-models` found all 13 configured OpenRouter slugs; `pi --version` started cleanly.
 - Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`.
