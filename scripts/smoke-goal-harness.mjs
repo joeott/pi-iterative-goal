@@ -449,7 +449,7 @@ import path from "node:path";
 // ── Test 11: AWS CLI config parsing and safety classification ──────
 
 {
-  const { loadAwsCliConfig, assessAwsCliArgs } = await import("../dist/aws-cli.js");
+  const { loadAwsCliConfig, assessAwsCliArgs, registerGoalAwsCliTool } = await import("../dist/aws-cli.js");
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-aws-"));
   fs.mkdirSync(path.join(tmp, ".pi"), { recursive: true });
@@ -495,7 +495,37 @@ import path from "node:path";
   const blockedFamily = assessAwsCliArgs(["iam", "create-user"], cfg, true);
   eq(blockedFamily.allowed, false);
 
-  console.log("✓ Test 11: AWS CLI config parsing and safety classification behave as expected");
+  let registeredAwsTool = null;
+  const fakePi = {
+    registerTool(tool) {
+      registeredAwsTool = tool;
+    },
+    async exec(command, args) {
+      if (command === "which") return { code: 0, stdout: `/usr/bin/${args[0]}\n`, stderr: "", killed: false };
+      if (command === "aws" && args.join(" ") === "configure list-profiles") {
+        return { code: 0, stdout: "unify\n", stderr: "", killed: false };
+      }
+      if (command === "aws" && args.includes("get-caller-identity")) {
+        return { code: 0, stdout: JSON.stringify({ Account: "123456789012", Arn: "arn:aws:iam::123456789012:user/test", UserId: "AIDA" }), stderr: "", killed: false };
+      }
+      return { code: 1, stdout: "", stderr: `unexpected command: ${command} ${args.join(" ")}`, killed: false };
+    },
+  };
+  registerGoalAwsCliTool(fakePi, { getState: () => null });
+  ok(registeredAwsTool, "goal_aws_cli registered");
+  const awsResult = await registeredAwsTool.execute(
+    "tool-aws",
+    { args: ["sts", "get-caller-identity"], purpose: "broker smoke", cwd: tmp },
+    undefined,
+    undefined,
+    { cwd: tmp },
+  );
+  eq(awsResult.isError, false);
+  eq(awsResult.details.allowed, true);
+  eq(awsResult.details.policyDecision.result, "allow");
+  ok(awsResult.details.policyDecision.ruleIds.includes("policy.process.no-shell-strings"));
+
+  console.log("✓ Test 11: AWS CLI config, safety classification, and broker policy evidence behave as expected");
 }
 
 // ── Test 12: Resume prompt includes AWS guidance when enabled ──────
