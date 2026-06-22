@@ -858,7 +858,18 @@ import path from "node:path";
   eq(replayed.cycle, 2);
   eq(replayed.artifacts.plans.length, 1);
 
-  console.log("✓ Test 17: Event replay reconstructs new run state from events.jsonl");
+  const eventLines = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n");
+  const events = eventLines.map((line) => JSON.parse(line));
+  ok(events.every((event, index) => event.sequence === index + 1), "events have monotonic sequence numbers");
+  ok(events.every((event) => typeof event.eventHash === "string" && event.eventHash.length === 64), "events have hashes");
+  eq(events[0].previousEventHash, "0".repeat(64));
+  eq(events[1].previousEventHash, events[0].eventHash);
+
+  const tampered = events.map((event) => event.type === "phase_changed" ? { ...event, phase: "validate" } : event);
+  fs.writeFileSync(stateManager.getEventsPath(), tampered.map((event) => JSON.stringify(event)).join("\n") + "\n");
+  eq(stateManager.replayActiveState(), null);
+
+  console.log("✓ Test 17: Event replay reconstructs new run state and rejects hash-chain tampering");
 }
 
 // ── Test 18: Replay corruption fails closed for new runs ────────────

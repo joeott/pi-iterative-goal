@@ -34,6 +34,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -138,6 +139,48 @@ function appendJsonLine(filePath: string, obj: Record<string, unknown>): void {
   fs.appendFileSync(filePath, line);
 }
 
+const EMPTY_EVENT_HASH = "0".repeat(64);
+
+function hashEventPayload(event: Record<string, unknown>): string {
+  const { eventHash: _eventHash, ...payload } = event;
+  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function readLastEventMetadata(filePath: string): { sequence: number; eventHash: string } {
+  if (!fs.existsSync(filePath)) return { sequence: 0, eventHash: EMPTY_EVENT_HASH };
+  const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) return { sequence: 0, eventHash: EMPTY_EVENT_HASH };
+  const last = JSON.parse(lines.at(-1)!) as Record<string, unknown>;
+  return {
+    sequence: typeof last.sequence === "number" ? last.sequence : lines.length,
+    eventHash: typeof last.eventHash === "string" ? last.eventHash : hashEventPayload(last),
+  };
+}
+
+function verifyEventHashChain(events: Array<Record<string, unknown>>): boolean {
+  let previousHash = EMPTY_EVENT_HASH;
+  let sawChainedEvent = false;
+
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i];
+    const eventHash = event.eventHash;
+
+    if (typeof eventHash === "string") {
+      sawChainedEvent = true;
+      if (event.sequence !== i + 1) return false;
+      if (event.previousEventHash !== previousHash) return false;
+      if (hashEventPayload(event) !== eventHash) return false;
+      previousHash = eventHash;
+      continue;
+    }
+
+    if (sawChainedEvent) return false;
+    previousHash = hashEventPayload(event);
+  }
+
+  return true;
+}
+
 export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   let state: IterativeGoalState | null = null;
   let stateDir = "";
@@ -160,7 +203,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   function appendEvent(event: Record<string, unknown>): void {
     const eventsPath = runEventsPath();
     if (!eventsPath) return;
-    appendJsonLine(eventsPath, { ...event, timestamp: new Date().toISOString() });
+    const previous = readLastEventMetadata(eventsPath);
+    const auditable = {
+      ...event,
+      timestamp: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
+      sequence: previous.sequence + 1,
+      previousEventHash: previous.eventHash,
+    };
+    appendJsonLine(eventsPath, { ...auditable, eventHash: hashEventPayload(auditable) });
   }
 
   type ReplayHandler = (replayed: IterativeGoalState, event: any) => void;
@@ -239,6 +289,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   function replayEvents(eventsPath: string): IterativeGoalState | null {
     if (!fs.existsSync(eventsPath)) return null;
     const lines = fs.readFileSync(eventsPath, "utf-8").split(/\r?\n/).filter(Boolean);
+    const parsedEvents: Array<Record<string, unknown>> = [];
     let replayed: IterativeGoalState | null = null;
 
     for (const line of lines) {
@@ -248,13 +299,19 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       } catch {
         return null;
       }
+      parsedEvents.push(event);
+    }
 
+    if (!verifyEventHashChain(parsedEvents)) return null;
+
+    for (const event of parsedEvents) {
       if (event.type === "run_created" && event.initialState) {
         replayed = migrateState(JSON.parse(JSON.stringify(event.initialState)));
         continue;
       }
       if (!replayed) continue;
 
+      if (typeof event.type !== "string") return null;
       const handler = replayHandlers[event.type];
       if (!handler) return null;
       handler(replayed, event);
