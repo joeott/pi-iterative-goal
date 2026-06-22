@@ -14,7 +14,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`; AWS/git direct adapters not fully broker-routed |
 | R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Partial | `src/release/controller.ts`, `src/git.ts`, smoke test 18; PR body generator incomplete |
 | R6 | Real AgentPool/Pi subprocess backend with cancel/map/usage and writer isolation controls | Partial | `src/agents/pool.ts`, `src/subagents.ts`; writer roles fail closed until worktree ownership lands |
-| R7 | Workflow kernel extraction and `index.ts` composition root target | Partial | `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts`, `src/review/gates/release-gate.ts`; `src/index.ts` is reduced but still orchestration-heavy |
+| R7 | Workflow kernel extraction and `index.ts` composition root target | Partial | `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts`, `src/review/gates/release-gate.ts`, `src/ui/commands.ts`; `src/index.ts` is reduced but still orchestration-heavy |
 | R8 | Event log authoritative with SQLite WAL or deterministic replay; audit/trace/replay commands | Partial | `src/state.ts` deterministic replay for new runs, `/goal-audit`, `/goal-replay`, `/goal-trace`, smoke tests 16-17 |
 | R9 | Model defaults/local config limited to approved OpenRouter set and verified live | Partial | `src/domain/models.ts`, local `~/.pi/agent/*`; live verification performed manually |
 | R10 | Quality loop after slices: build/tests, adversarial review, Ousterhout review, structured ReviewFinding records, remediate blocker/high | Partial | `ai_docs/reviews/*`, review disposition table below; second review pass pending |
@@ -43,7 +43,7 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | DES-TYPES-01 | high | Ousterhout | resolved | `goal_git create_pr` validates plan, requirements, gate and evidence hashes against the active state before opening a PR. |
 | DES-STATE-01 | medium | Ousterhout | intentional | New-run event logs are authoritative by design; legacy snapshots remain a compatibility fallback. |
 | DES-EVT-01 | medium | Ousterhout | resolved | Replay now uses an event-handler map instead of a linearly growing switch while preserving fail-closed behavior for unknown new-run events. |
-| DES-CMD-01 | medium | Ousterhout | partially-resolved | Release-gate, change-set and phase-startup internals moved out of `index.ts`; command registration still belongs in a UI adapter module. |
+| DES-CMD-01 | medium | Ousterhout | resolved | Governance commands moved into `src/ui/commands.ts`; `index.ts` delegates release/audit/replay/trace registration to a UI adapter. |
 | FINDING-009 | medium | adversarial slice 2 | resolved | Path-scope extraction now handles explicit extensionless repo paths such as `Dockerfile` and `scripts/deploy`; smoke test 4 covers this. |
 
 ## Slice Evidence
@@ -51,4 +51,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: `npm run validate` passed locally with 18 smoke checks.
 - `2026-06-22`: Extracted `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts` and `src/review/gates/release-gate.ts`; `src/index.ts` is 1295 lines after extraction.
 - `2026-06-22`: Refactored authoritative event replay into an event-handler map; `npm run validate` passed.
+- `2026-06-22`: Extracted governance commands into `src/ui/commands.ts`; `src/index.ts` is 1189 lines after extraction and `npm run validate` passed.
 - Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`.
