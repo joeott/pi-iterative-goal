@@ -12,15 +12,15 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | R2 | Typed path scopes replace regex/fuzzy allowlists; repo-relative normalization; symlink containment before writes; plan broadening via amendments | Partial | `src/domain/path-scope.ts`, smoke tests 4 and 15; amendments not implemented |
 | R3 | Typed domain objects and runtime validation at model/tool/plugin boundaries | Partial | `src/domain/*`, `src/evaluator.ts`; plugin/provider contract tests pending |
 | R4 | Central CapabilityBroker and PolicyEngine for fs/process/git/AWS/cloud/package/network/subagent/future effects | Partial | `src/policy/engine.ts`, `src/capabilities/broker.ts`, `src/shell.ts`; AWS/git direct adapters not fully broker-routed |
-| R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Partial | `src/release/controller.ts`, `src/git.ts`, smoke test 18; PR body generator incomplete |
+| R5 | SHA-bound ReleaseAuthorization required for PR creation and structured PR evidence | Complete | `src/release/controller.ts`, `src/release/pr-body.ts`, `src/git.ts`, smoke tests 18-19; runtime dry-run PR smoke validated auth and generated structured PR body |
 | R6 | Real AgentPool/Pi subprocess backend with cancel/map/usage and writer isolation controls | Partial | `src/agents/pool.ts`, `src/subagents.ts`; writer roles fail closed until worktree ownership lands |
 | R7 | Workflow kernel extraction and `index.ts` composition root target | Partial | `src/kernel/workflow-engine.ts`, `src/workspace/change-set.ts`, `src/review/gates/release-gate.ts`, `src/ui/commands.ts`; `src/index.ts` is reduced but still orchestration-heavy |
 | R8 | Event log authoritative with SQLite WAL or deterministic replay; audit/trace/replay commands | Partial | `src/state.ts` deterministic replay for new runs, `/goal-audit`, `/goal-replay`, `/goal-trace`, smoke tests 16-17 |
 | R9 | Model defaults/local config limited to approved OpenRouter set and verified live | Complete | `src/domain/models.ts`, local `~/.pi/agent/settings.json`, local `~/.pi/agent/models.json`; `pi --list-models` verified all 13 slugs; OpenRouter Fusion page verified live |
-| R10 | Quality loop after slices: build/tests, adversarial review, Ousterhout review, structured ReviewFinding records, remediate blocker/high | Partial | `ai_docs/reviews/*`, review disposition table below; second review pass pending |
+| R10 | Quality loop after slices: build/tests, adversarial review, Ousterhout review, structured ReviewFinding records, remediate blocker/high | Partial | `ai_docs/reviews/*`, review disposition table below; broader final review still pending |
 | R11 | Small audit-friendly commits on dedicated branch | In progress | branch created; commits pending |
 | R12 | Testing requirements: repo-local fixtures, unit/adapter/adversarial/replay/release-gate tests | Partial | smoke expanded; adapter/replay/runtime tests incomplete |
-| R13 | Real local Pi runtime smoke in disposable repo with no unintended writes | Partial | `goal_shell` tool smoke passed in `/tmp/pi-iterative-goal-tool-smoke-sbtswS`; `/goal-start` created run state and nonce-matched research artifact in `/tmp/pi-iterative-goal-start-smoke-CJatWs`; tracked files remained clean |
+| R13 | Real local Pi runtime smoke in disposable repo with no unintended writes | Partial | `goal_shell` tool smoke passed in `/tmp/pi-iterative-goal-tool-smoke-sbtswS`; `/goal-start` created run state and nonce-matched research artifact in `/tmp/pi-iterative-goal-start-smoke-CJatWs`; PR dry-run smoke passed in `/tmp/pi-iterative-goal-pr-dryrun-bhTPRK`; tracked files remained clean |
 | R14 | Final PR/audit packet with requirement-to-evidence matrix, tests, review results, rollback, audit run ID | Not done | this audit file is seed |
 
 ## Review Findings
@@ -45,6 +45,8 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 | DES-EVT-01 | medium | Ousterhout | resolved | Replay now uses an event-handler map instead of a linearly growing switch while preserving fail-closed behavior for unknown new-run events. |
 | DES-CMD-01 | medium | Ousterhout | resolved | Governance commands moved into `src/ui/commands.ts`; `index.ts` delegates release/audit/replay/trace registration to a UI adapter. |
 | FINDING-009 | medium | adversarial slice 2 | resolved | Path-scope extraction now handles explicit extensionless repo paths such as `Dockerfile` and `scripts/deploy`; smoke test 4 covers this. |
+| REL-FLOW-001 | high | runtime/release slice | resolved | `goal_git create_pr` now reruns the local release gate and validates the same evaluator plus localReleaseGate hash used when authorization is issued. |
+| REL-FLOW-002 | medium | runtime/release slice | resolved | `goal_git` refreshes finalization policy from current project settings on each invocation, avoiding stale replayed policy. |
 
 ## Slice Evidence
 
@@ -57,4 +59,5 @@ Authoritative goal: `ai_docs/autonomous_kernel_refactor_goal.md`
 - `2026-06-22`: Runtime smoke: pre-PR authorization remained absent (`releaseAuthorization: null`) before evaluator/release gates.
 - `2026-06-22`: Model verification: `pi --list-models` found all 13 configured OpenRouter slugs; `pi --version` started cleanly.
 - `2026-06-22`: Policy hardening: `PolicyEngine` now calls `resolveContainedPath()` for `fs.write`/`fs.delete`; smoke test 15 denies a write under a repo-local symlink to an external directory.
-- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`.
+- `2026-06-22`: Release-flow runtime smoke: seeded a paused valid run in `/tmp/pi-iterative-goal-pr-dryrun-bhTPRK`; Pi loaded the extension and `goal_git create_pr` with `dryRun:true` authorized the exact ReleaseAuthorization and rendered a structured PR body without opening a PR.
+- Review artifacts: `ai_docs/reviews/adversarial-slice-001-findings.json`, `ai_docs/reviews/ousterhout-slice-001-findings.json`, `ai_docs/reviews/adversarial-slice-002-findings.json`, `ai_docs/reviews/release-flow-slice-findings.json`.

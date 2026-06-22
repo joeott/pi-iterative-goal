@@ -700,7 +700,87 @@ import path from "node:path";
   eq(result.ok, false);
   ok(result.reason.includes("stale"));
 
+  const staleGate = await validateReleaseAuthorization({
+    pi: {
+      async exec(_command, args) {
+        if (args.join(" ") === "remote get-url origin") return { code: 0, stdout: "repo\n", stderr: "" };
+        if (args.join(" ") === "merge-base HEAD origin/main") return { code: 0, stdout: "base\n", stderr: "" };
+        if (args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: "authorized-head\n", stderr: "" };
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    },
+    ctx: { cwd: process.cwd() },
+    authorization: auth,
+    runId: "ig-rel",
+    expected: {
+      planHash: "plan",
+      requirementsHash: "req",
+      gateVerdictHash: "different-gate",
+      evidenceRootHash: "evidence",
+    },
+  });
+  eq(staleGate.ok, false);
+  ok(staleGate.reason.includes("gate verdict hash"));
+
   console.log("✓ Test 18: ReleaseAuthorization is invalidated by a new HEAD");
+}
+
+// ── Test 19: Structured PR body generation ─────────────────────────
+
+{
+  const { generatePullRequestBody } = await import("../dist/release/pr-body.js");
+  const now = new Date().toISOString();
+  const state = {
+    runId: "ig-pr-body",
+    goal: "Harden release flow",
+    goalCriterion: "All gates pass",
+    cycle: 2,
+    artifacts: {
+      research: [],
+      plans: [{ phase: "plan", cycle: 2, status: "completed", timestamp: now, content: "plan" }],
+      implementations: [{ phase: "implement", cycle: 2, status: "completed", timestamp: now, content: "impl" }],
+      validations: [{ phase: "validate", cycle: 2, status: "completed", timestamp: now, content: "valid" }],
+      evaluatorReports: [],
+    },
+    evaluator: {
+      lastVerdict: {
+        goal_met: true,
+        confidence: 0.99,
+        completion_blockers: [],
+        accepted_evidence: [],
+        rejected_evidence: [],
+        remaining_work: [],
+        next_cycle_directive: { focus: "validate", reason: "done" },
+        safety_notes: [],
+      },
+    },
+    releaseAuthorization: {
+      id: "rel-body",
+      runId: "ig-pr-body",
+      repositoryId: "repo",
+      baseSha: "base",
+      headSha: "head",
+      planHash: "plan-hash",
+      requirementsHash: "req-hash",
+      gateVerdictHash: "gate-hash",
+      evidenceRootHash: "evidence-hash",
+      allowedAction: "git.pr.open",
+      issuedAt: now,
+      expiresAt: now,
+    },
+  };
+  const body = generatePullRequestBody({
+    state,
+    changedFiles: ["src/git.ts", "src/release/pr-body.ts"],
+    diffStat: "2 files changed",
+    tests: [{ id: "npm run validate", status: "PASS", exitCode: 0, artifactUri: "verification-results.jsonl" }],
+  });
+  ok(body.includes("## Requirement To Evidence Matrix"));
+  ok(body.includes("src/release/pr-body.ts"));
+  ok(body.includes("ReleaseAuthorization: rel-body"));
+  ok(body.includes("npm run validate"));
+
+  console.log("✓ Test 19: Structured PR body generation includes evidence matrix and authorization");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
