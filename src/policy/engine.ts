@@ -120,8 +120,29 @@ export class PolicyEngine {
       return deny("policy.package.install", "Package installation must be represented in an approved plan before execution.");
     }
 
+    if (request.effect === "git.branch") {
+      rules.push("policy.git.branch.finalization");
+      if (!inputFlag(request.input, "allowGitFinalization")) return deny("policy.git.branch.finalization", "Git branch changes require finalization policy approval.");
+    }
+
+    if (request.effect === "git.stage") {
+      rules.push("policy.git.stage.finalization");
+      if (!inputFlag(request.input, "allowGitFinalization")) return deny("policy.git.stage.finalization", "Git staging requires finalization policy approval.");
+    }
+
+    if (request.effect === "git.commit") {
+      rules.push("policy.git.commit.finalization");
+      if (!inputFlag(request.input, "allowCommit")) return deny("policy.git.commit.finalization", "Git commit requires commit policy approval.");
+    }
+
+    if (request.effect === "git.push") {
+      rules.push("policy.git.push.finalization");
+      if (!inputFlag(request.input, "allowPush")) return deny("policy.git.push.finalization", "Git push requires push policy approval.");
+    }
+
     if (request.effect === "git.pr.open") {
-      return deny("policy.git.pr.release-auth", "PR creation requires a current ReleaseAuthorization.");
+      rules.push("policy.git.pr.release-auth");
+      if (!inputFlag(request.input, "releaseAuthorizationValid")) return deny("policy.git.pr.release-auth", "PR creation requires a current ReleaseAuthorization.");
     }
 
     if (request.effect === "cloud.mutate" || request.effect === "secret.read") {
@@ -162,6 +183,10 @@ export class PolicyEngine {
       return { result: "deny", ruleIds: [ruleId], reason };
     }
   }
+}
+
+function inputFlag(input: unknown, name: string): boolean {
+  return !!input && typeof input === "object" && (input as Record<string, unknown>)[name] === true;
 }
 
 export function commandResource(executable: string, argv: string[]): ResourceDescriptor {

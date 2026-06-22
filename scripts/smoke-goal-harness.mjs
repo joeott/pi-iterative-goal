@@ -601,6 +601,45 @@ import path from "node:path";
   });
   eq(prDenied.result, "deny");
 
+  const prAllowed = policy.decide({
+    id: "policy-3b",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "git.pr.open",
+    resource: { type: "git", value: "create_pr" },
+    input: { releaseAuthorizationValid: true },
+    purpose: "test",
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+  eq(prAllowed.result, "allow");
+
+  const commitDenied = policy.decide({
+    id: "policy-3c",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "git.commit",
+    resource: { type: "git", value: "commit" },
+    input: { allowCommit: false },
+    purpose: "test",
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+  eq(commitDenied.result, "deny");
+
+  const commitAllowed = policy.decide({
+    id: "policy-3d",
+    actor: { kind: "tool", id: "test" },
+    runId: "ig-policy",
+    effect: "git.commit",
+    resource: { type: "git", value: "commit" },
+    input: { allowCommit: true },
+    purpose: "test",
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+  eq(commitAllowed.result, "allow");
+
   const symlinkRepo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-symlink-"));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-policy-outside-"));
   fs.mkdirSync(path.join(symlinkRepo, "src"));

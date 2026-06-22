@@ -7,6 +7,7 @@ import type { FinalizationPolicy } from "./types.js";
 import { hashJson, validateReleaseAuthorization } from "./release/controller.js";
 import { generatePullRequestBody, readVerificationResults } from "./release/pr-body.js";
 import { runLocalReleaseGate } from "./review/gates/release-gate.js";
+import { gitResource, PolicyEngine, type Effect, type PolicyDecision } from "./policy/engine.js";
 
 const LOG_FILE = "/Users/joe/Projects/pi-iterative-goal/debug.log";
 
@@ -149,6 +150,31 @@ function missing(field: string): never {
   throw new Error(`Missing required field for goal_git: ${field}`);
 }
 
+function decideGitEffect(params: {
+  cwd: string;
+  runId: string;
+  effect: Effect;
+  action: string;
+  input: Record<string, unknown>;
+  purpose: string;
+}): PolicyDecision {
+  return new PolicyEngine({ repoRoot: params.cwd }).decide({
+    id: `goal_git:${params.action}:${Date.now()}`,
+    actor: { kind: "tool", id: "goal_git" },
+    runId: params.runId,
+    effect: params.effect,
+    resource: gitResource(params.action),
+    input: params.input,
+    purpose: params.purpose,
+    risk: "privileged",
+    dataClassification: "internal",
+  });
+}
+
+function assertAllowed(decision: PolicyDecision): void {
+  if (decision.result !== "allow") throw new Error(decision.reason);
+}
+
 export function registerGoalGitTool(
   pi: ExtensionAPI,
   stateManager: StateManagerAPI,
@@ -209,7 +235,14 @@ export function registerGoalGitTool(
             };
           }
           case "checkout_branch": {
-            if (!policy.allowGitFinalization) throw new Error("Git branch creation is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.branch",
+              action,
+              input: { allowGitFinalization: policy.allowGitFinalization },
+              purpose,
+            }));
             const branch = typeof params.branch === "string" ? params.branch : missing("branch");
             const result = await exec("git", ["checkout", "-b", branch]);
             return {
@@ -219,7 +252,14 @@ export function registerGoalGitTool(
             };
           }
           case "add": {
-            if (!policy.allowGitFinalization) throw new Error("git add is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.stage",
+              action,
+              input: { allowGitFinalization: policy.allowGitFinalization },
+              purpose,
+            }));
             const paths = Array.isArray(params.paths) && params.paths.length > 0 ? params.paths as string[] : missing("paths");
             const result = await exec("git", ["add", ...paths]);
             return {
@@ -229,7 +269,14 @@ export function registerGoalGitTool(
             };
           }
           case "commit": {
-            if (!policy.allowCommit) throw new Error("git commit is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.commit",
+              action,
+              input: { allowCommit: policy.allowCommit },
+              purpose,
+            }));
             const message = typeof params.message === "string" ? params.message : missing("message");
             const result = await exec("git", ["commit", "-m", message]);
             return {
@@ -239,7 +286,14 @@ export function registerGoalGitTool(
             };
           }
           case "push": {
-            if (!policy.allowPush) throw new Error("git push is disabled by finalization policy.");
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state?.runId ?? "unknown",
+              effect: "git.push",
+              action,
+              input: { allowPush: policy.allowPush },
+              purpose,
+            }));
             const remote = typeof params.remote === "string" ? params.remote : "origin";
             const branch = typeof params.branch === "string"
               ? params.branch
@@ -277,6 +331,14 @@ export function registerGoalGitTool(
             if (!releaseAuthCheck.ok) {
               throw new Error(releaseAuthCheck.reason);
             }
+            assertAllowed(decideGitEffect({
+              cwd,
+              runId: state.runId,
+              effect: "git.pr.open",
+              action,
+              input: { releaseAuthorizationValid: true, releaseAuthorizationId },
+              purpose,
+            }));
             const dryRun = params.dryRun === true;
             const title = typeof params.title === "string" ? params.title : missing("title");
             const changedFiles = (await gitOutput(pi, cwd, ["diff", "--name-only", `${state.releaseAuthorization.baseSha}..${state.releaseAuthorization.headSha}`]))
