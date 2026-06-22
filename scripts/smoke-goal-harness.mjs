@@ -886,6 +886,43 @@ import path from "node:path";
     (err) => ok(String(err.message).includes("networkAccess=none")),
   );
 
+  const { FileSystemProvider } = await import("../dist/capabilities/filesystem/provider.js");
+  const fsRepo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-fs-provider-"));
+  const fsPolicy = new PolicyEngine({ repoRoot: fsRepo });
+  const fsProvider = new FileSystemProvider(fsPolicy, fsRepo);
+  const fsManifest = await registry.register(fsProvider);
+  ok(fsManifest.capabilities.some((capability) => capability.effect === "fs.write"));
+
+  const writeAction = await fsProvider.invoke({
+    id: "fs-write-1",
+    actor: { kind: "tool", id: "filesystem-smoke" },
+    runId: "ig-policy",
+    effect: "fs.write",
+    resource: { type: "path", value: "allowed/out.txt" },
+    input: { path: "allowed/out.txt", content: "hello" },
+    purpose: "filesystem provider smoke",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [exactPathScope("allowed/out.txt")],
+  }, new AbortController().signal);
+  eq(writeAction.ok, true);
+  eq(fs.readFileSync(path.join(fsRepo, "allowed", "out.txt"), "utf8"), "hello");
+
+  const deniedFsAction = await fsProvider.invoke({
+    id: "fs-write-2",
+    actor: { kind: "tool", id: "filesystem-smoke" },
+    runId: "ig-policy",
+    effect: "fs.write",
+    resource: { type: "path", value: "denied/out.txt" },
+    input: { path: "denied/out.txt", content: "nope" },
+    purpose: "filesystem provider denied smoke",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [exactPathScope("allowed/out.txt")],
+  }, new AbortController().signal);
+  eq(deniedFsAction.ok, false);
+  eq(fs.existsSync(path.join(fsRepo, "denied", "out.txt")), false);
+
   console.log("✓ Test 15: Central policy, broker, and provider manifest contracts validate effects");
 }
 
