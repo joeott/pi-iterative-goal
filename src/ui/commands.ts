@@ -10,7 +10,7 @@ export function registerGovernanceCommands(
   pi.registerCommand("goal-authorize-release", {
     description: "Run the local pre-PR release authorization gate for the current HEAD",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      const state = stateManager.getState();
+      const state = stateManager.getState() ?? stateManager.restore(ctx);
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
 
       const verdict = state.evaluator.lastVerdict;
@@ -52,7 +52,7 @@ export function registerGovernanceCommands(
   pi.registerCommand("goal-audit", {
     description: "Show audit pointers for the active iterative-goal run",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      const state = stateManager.getState();
+      const state = stateManager.getState() ?? stateManager.restore(ctx);
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
       const replayed = stateManager.replayActiveState();
       const lines = [
@@ -71,7 +71,7 @@ export function registerGovernanceCommands(
   pi.registerCommand("goal-replay", {
     description: "Replay the active run event log and compare core state",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      const state = stateManager.getState();
+      const state = stateManager.getState() ?? stateManager.restore(ctx);
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
       const replayed = stateManager.replayActiveState();
       if (!replayed) {
@@ -93,7 +93,7 @@ export function registerGovernanceCommands(
   pi.registerCommand("goal-trace", {
     description: "Trace requirement or evidence text in run artifacts: /goal-trace <term>",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const state = stateManager.getState();
+      const state = stateManager.getState() ?? stateManager.restore(ctx);
       const term = args.trim();
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
       if (!term) { ctx.ui.notify("Usage: /goal-trace <requirement-id-or-term>", "warning"); return; }

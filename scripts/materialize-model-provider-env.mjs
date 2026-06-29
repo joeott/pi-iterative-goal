@@ -8,18 +8,59 @@ const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const MATERIALIZE_FLAG = "--operator-approved-local-secret-materialization";
 const AWS_FLAG = "--operator-approved-aws-secrets-manager-write";
 const DEFAULT_SECRET_NAME = "pi-iterative-goal/model-provider-tokens";
-const DEFAULT_AWS_PROFILE = "unify-old";
-const DEFAULT_EXPECTED_AWS_ACCOUNT = "371292405073";
+const DEFAULT_CONTROL_AWS_PROFILE = "unify-old";
+const DEFAULT_CONTROL_AWS_ACCOUNT = "371292405073";
+const DEFAULT_PROJECT_AWS_PROFILE = "api-admin";
+const DEFAULT_PROJECT_AWS_ACCOUNT = "138881449763";
+const PROVIDER_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GEMINI_API_KEY",
+  "MISTRAL_API_KEY",
+  "XAI_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "GROQ_API_KEY",
+  "PINECONE_API_KEY",
+  "LANGCHAIN_API_KEY",
+  "LANGSMITH_API_KEY",
+  "ZAI_API_KEY",
+  "Z_AI_API_KEY",
+  "ZAI_API_BASE_URL",
+  "Z_AI_API_BASE_URL",
+  "ZAI_DEFAULT_MODEL",
+  "ZAI_DEFAULT_VISION_MODEL",
+  "GLM_API_KEY",
+];
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run") || !args.has(MATERIALIZE_FLAG);
 const writeAws = args.has(AWS_FLAG);
 const secretName = argValue("--secret-name") ?? DEFAULT_SECRET_NAME;
 const region = argValue("--region") ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
-const awsProfile = argValue("--aws-profile") ?? process.env.AWS_PROFILE ?? DEFAULT_AWS_PROFILE;
-const expectedAwsAccount = argValue("--expected-aws-account") ?? DEFAULT_EXPECTED_AWS_ACCOUNT;
+const existingHarnessEnv = parseEnvFile(path.join(ROOT, ".env"));
+const awsScope = argValue("--aws-scope") ?? existingHarnessEnv.PI_AWS_SECRET_SCOPE ?? process.env.PI_AWS_SECRET_SCOPE ?? "control";
+const controlAwsProfile = argValue("--control-aws-profile")
+  ?? argValue("--aws-profile")
+  ?? existingHarnessEnv.PI_AWS_CONTROL_PROFILE
+  ?? process.env.PI_AWS_CONTROL_PROFILE
+  ?? DEFAULT_CONTROL_AWS_PROFILE;
+const expectedControlAwsAccount = argValue("--expected-control-aws-account")
+  ?? argValue("--expected-aws-account")
+  ?? existingHarnessEnv.PI_AWS_CONTROL_ACCOUNT_ID
+  ?? process.env.PI_AWS_CONTROL_ACCOUNT_ID
+  ?? DEFAULT_CONTROL_AWS_ACCOUNT;
+const projectAwsProfile = argValue("--project-aws-profile")
+  ?? existingHarnessEnv.PI_AWS_PROJECT_PROFILE
+  ?? process.env.PI_AWS_PROJECT_PROFILE
+  ?? DEFAULT_PROJECT_AWS_PROFILE;
+const expectedProjectAwsAccount = argValue("--expected-project-aws-account")
+  ?? existingHarnessEnv.PI_AWS_PROJECT_ACCOUNT_ID
+  ?? process.env.PI_AWS_PROJECT_ACCOUNT_ID
+  ?? DEFAULT_PROJECT_AWS_ACCOUNT;
 
 const sources = {
+  harnessEnv: path.join(ROOT, ".env"),
   piModels: "/Users/joe/.pi/agent/models.json",
   piAuth: "/Users/joe/.pi/agent/auth.json",
   projectsEnv: "/Users/joe/Projects/.env",
@@ -30,11 +71,13 @@ const sources = {
 const values = {};
 const sourceHits = [];
 
+loadEnvFile(sources.harnessEnv, PROVIDER_KEYS);
 loadPiModels();
 loadPiAuth();
 loadEnvFile(sources.projectsEnv, [
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
   "GEMINI_API_KEY",
   "MISTRAL_API_KEY",
   "XAI_API_KEY",
@@ -59,6 +102,11 @@ loadEnvFile(sources.zaiEnv, [
 
 if (!values.ZAI_DEFAULT_MODEL) values.ZAI_DEFAULT_MODEL = "glm-5.2";
 if (!values.ZAI_API_BASE_URL) values.ZAI_API_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+values.PI_AWS_SECRET_SCOPE = awsScope;
+values.PI_AWS_CONTROL_PROFILE = controlAwsProfile;
+values.PI_AWS_CONTROL_ACCOUNT_ID = expectedControlAwsAccount;
+values.PI_AWS_PROJECT_PROFILE = projectAwsProfile;
+values.PI_AWS_PROJECT_ACCOUNT_ID = expectedProjectAwsAccount;
 
 const orderedKeys = Object.keys(values).sort();
 console.log("materialize_model_provider_env");
@@ -68,6 +116,9 @@ console.log("  secrets_printed: false");
 console.log(`  sources_with_mapped_keys: ${sourceHits.length}`);
 for (const source of sourceHits) console.log(`    - ${source}`);
 console.log(`  keys: ${orderedKeys.join(", ") || "none"}`);
+console.log("  aws_accounts:");
+console.log(`    control: profile=${controlAwsProfile} expected_account=${expectedControlAwsAccount} role=payments/provider-billing`);
+console.log(`    project: profile=${projectAwsProfile} expected_account=${expectedProjectAwsAccount} role=project-runtime/sub-account`);
 
 if (!dryRun) {
   const envPath = path.join(ROOT, ".env");
@@ -82,28 +133,22 @@ if (writeAws) {
   if (dryRun) {
     console.log("  aws_secret_write: BLOCKED (local materialization approval flag also required)");
     process.exitCode = 2;
+  } else if (!["control", "project", "both"].includes(awsScope)) {
+    console.log("  aws_secret_write: BLOCKED");
+    console.log("  reason: --aws-scope must be control, project, or both");
+    process.exitCode = 2;
   } else {
-    const identity = getAwsIdentity(awsProfile);
-    console.log(`  aws_profile: ${awsProfile}`);
-    console.log(`  aws_expected_account: ${expectedAwsAccount}`);
-    console.log(`  aws_resolved_account: ${identity.account ?? "unavailable"}`);
-    if (!identity.ok) {
-      console.log("  aws_secret_write: FAIL");
-      console.log(`  reason: ${identity.reason}`);
-      process.exitCode = 2;
-    } else if (identity.account !== expectedAwsAccount) {
-      console.log("  aws_secret_write: BLOCKED");
-      console.log("  reason: resolved AWS account does not match expected project account");
-      process.exitCode = 2;
-    } else {
-      const result = putSecret(secretName, values, region, awsProfile);
-      console.log(`  aws_secret_name: ${secretName}`);
-      console.log(`  aws_region: ${region}`);
-      console.log(`  aws_secret_write: ${result.ok ? "PASS" : "FAIL"}`);
-      if (!result.ok) {
-        console.log(`  reason: ${result.reason}`);
-        process.exitCode = 2;
-      }
+    const targets = [];
+    if (awsScope === "control" || awsScope === "both") {
+      targets.push({ role: "control", profile: controlAwsProfile, expectedAccount: expectedControlAwsAccount });
+    }
+    if (awsScope === "project" || awsScope === "both") {
+      targets.push({ role: "project", profile: projectAwsProfile, expectedAccount: expectedProjectAwsAccount });
+    }
+    console.log(`  aws_scope: ${awsScope}`);
+    for (const target of targets) {
+      const result = persistAwsSecretTarget(target);
+      if (!result.ok) process.exitCode = 2;
     }
   }
 } else {
@@ -113,6 +158,11 @@ if (writeAws) {
 function argValue(name) {
   const idx = process.argv.indexOf(name);
   return idx >= 0 ? process.argv[idx + 1] : undefined;
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  return parseEnv(fs.readFileSync(filePath, "utf8"));
 }
 
 function setValue(key, value, source) {
@@ -231,4 +281,27 @@ function putSecret(name, envValues, awsRegion, profile) {
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
+}
+
+function persistAwsSecretTarget(target) {
+  const identity = getAwsIdentity(target.profile);
+  console.log(`  aws_${target.role}_profile: ${target.profile}`);
+  console.log(`  aws_${target.role}_expected_account: ${target.expectedAccount}`);
+  console.log(`  aws_${target.role}_resolved_account: ${identity.account ?? "unavailable"}`);
+  if (!identity.ok) {
+    console.log(`  aws_${target.role}_secret_write: FAIL`);
+    console.log(`  reason: ${identity.reason}`);
+    return { ok: false };
+  }
+  if (identity.account !== target.expectedAccount) {
+    console.log(`  aws_${target.role}_secret_write: BLOCKED`);
+    console.log(`  reason: resolved AWS account does not match expected ${target.role} account`);
+    return { ok: false };
+  }
+  const result = putSecret(secretName, values, region, target.profile);
+  console.log(`  aws_${target.role}_secret_name: ${secretName}`);
+  console.log(`  aws_${target.role}_region: ${region}`);
+  console.log(`  aws_${target.role}_secret_write: ${result.ok ? "PASS" : "FAIL"}`);
+  if (!result.ok) console.log(`  reason: ${result.reason}`);
+  return result;
 }

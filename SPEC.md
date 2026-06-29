@@ -100,10 +100,13 @@ Three-layer persistence:
 ## 4.1 Model Provider Runtime
 
 The harness supports a gitignored local `.env` for model-provider tokens and a
-mirrored AWS Secrets Manager bundle for project-account runtime use.
+mirrored AWS Secrets Manager bundle for AWS runtime use. The AWS account split is
+explicit: the control account owns payments/provider billing, while the project
+account is the workload sub-account.
 
 - Local materialization: `npm run env:models -- --operator-approved-local-secret-materialization`
-- AWS persistence: add `--operator-approved-aws-secrets-manager-write --aws-profile unify-old --expected-aws-account 371292405073`
+- AWS persistence, control/payment account: add `--operator-approved-aws-secrets-manager-write --aws-scope control --control-aws-profile unify-old --expected-control-aws-account 371292405073`
+- AWS persistence, both accounts: add `--operator-approved-aws-secrets-manager-write --aws-scope both --control-aws-profile unify-old --expected-control-aws-account 371292405073 --project-aws-profile api-admin --expected-project-aws-account 138881449763`
 - Default secret name: `pi-iterative-goal/model-provider-tokens`
 - Secret values are never printed; status output reports key names only.
 
@@ -125,7 +128,8 @@ npm run evidence:headless
 
 The runner builds the extension, runs the smoke suite, probes live Z.ai
 GLM 5.2, loads the extension through a fake Pi API, exercises representative
-command/tool flows in disposable git repositories, and writes local
+command/tool flows and representative coding workloads in disposable git
+repositories, and writes local
 Langfuse-equivalent trace artifacts:
 
 - `ai_docs/headless_evidence/latest-feature-coverage.md`

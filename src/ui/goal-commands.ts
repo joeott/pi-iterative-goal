@@ -74,7 +74,7 @@ export function registerGoalRuntimeCommands(
   pi.registerCommand("goal-status", {
     description: "Show status (--json for machine output)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const state = stateManager.getState();
+      const state = stateManager.getState() ?? stateManager.restore(ctx);
       if (!state) {
         ctx.ui.notify(args.includes("--json")
           ? JSON.stringify({ active: false }, null, 2) : "No active iterative goal. Start with /goal-start.", "info");
