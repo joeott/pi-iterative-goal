@@ -128,8 +128,8 @@ npm run evidence:headless
 
 The runner builds the extension, runs the smoke suite, probes live Z.ai
 GLM 5.2, loads the extension through a fake Pi API, exercises representative
-command/tool flows and representative coding workloads in disposable git
-repositories, and writes local
+command/tool flows, representative coding workloads, and vulnerability
+remediation workloads in disposable git repositories, and writes local
 Langfuse-equivalent trace artifacts:
 
 - `ai_docs/headless_evidence/latest-feature-coverage.md`
@@ -139,6 +139,11 @@ Langfuse-equivalent trace artifacts:
 The coverage report maps objective-level capabilities to concrete evidence and
 keeps explicit remaining gaps. Generated traces redact common secret patterns
 and the runner uses temp repositories for write tests.
+
+The vulnerability remediation workload proves the cyber-defense path by starting
+from failing tests for reflected XSS, path traversal, and implementation
+disclosure, applying a scoped fix through the harness policy layer, then rerunning
+the security tests and recording signed evidence.
 
 ## 5. Data Model
 

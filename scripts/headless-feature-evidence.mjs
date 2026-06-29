@@ -52,6 +52,7 @@ const features = [
   ["tracing", "Trace/evaluation logging equivalent to Langfuse for local runs"],
   ["coverage_report", "Feature-by-feature coverage report"],
   ["realistic_workloads", "Representative coding-agent workloads, not only static unit checks"],
+  ["vulnerability_remediation", "Headless vulnerability-hunting and remediation workload"],
 ];
 
 function redact(value) {
@@ -216,6 +217,75 @@ function makeCodingWorkloadRepo(prefix) {
   ].join("\n"));
   spawnSync("git", ["add", "."], { cwd: dir });
   spawnSync("git", ["commit", "-qm", "seed workload repo"], {
+    cwd: dir,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Headless Evidence",
+      GIT_AUTHOR_EMAIL: "headless@example.invalid",
+      GIT_COMMITTER_NAME: "Headless Evidence",
+      GIT_COMMITTER_EMAIL: "headless@example.invalid",
+    },
+  });
+  return dir;
+}
+
+function makeVulnerabilityWorkloadRepo(prefix) {
+  const dir = makeTempRepo(prefix);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({
+    name: "pi-headless-vulnerability-workload",
+    version: "0.0.0",
+    type: "module",
+    scripts: {
+      test: "node --test test/*.test.mjs",
+    },
+  }, null, 2));
+  fs.mkdirSync(path.join(dir, "test"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "src", "security.mjs"), [
+    "import path from 'node:path';",
+    "",
+    "export function renderProfile(displayName) {",
+    "  return `<h1>${displayName}</h1>`;",
+    "}",
+    "",
+    "export function resolveUserFile(baseDir, userPath) {",
+    "  return path.join(baseDir, userPath);",
+    "}",
+    "",
+    "export function buildSecurityHeaders() {",
+    "  return {",
+    "    'x-powered-by': 'pi-headless-workload',",
+    "  };",
+    "}",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(dir, "test", "security.test.mjs"), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import path from 'node:path';",
+    "import { buildSecurityHeaders, renderProfile, resolveUserFile } from '../src/security.mjs';",
+    "",
+    "test('renderProfile escapes untrusted display names before rendering HTML', () => {",
+    "  assert.equal(renderProfile('<img src=x onerror=alert(1)>'), '<h1>&lt;img src=x onerror=alert(1)&gt;</h1>');",
+    "});",
+    "",
+    "test('resolveUserFile rejects path traversal outside the upload root', () => {",
+    "  const baseDir = path.resolve('/tmp/pi-headless/uploads');",
+    "  assert.equal(resolveUserFile(baseDir, 'client/report.pdf'), path.join(baseDir, 'client/report.pdf'));",
+    "  assert.throws(() => resolveUserFile(baseDir, '../secrets.env'), /path traversal/i);",
+    "  assert.throws(() => resolveUserFile(baseDir, '/etc/passwd'), /path traversal/i);",
+    "});",
+    "",
+    "test('buildSecurityHeaders sets defensive defaults and suppresses implementation disclosure', () => {",
+    "  const headers = buildSecurityHeaders();",
+    "  assert.equal(headers['x-content-type-options'], 'nosniff');",
+    "  assert.equal(headers['referrer-policy'], 'no-referrer');",
+    "  assert.match(headers['content-security-policy'], /default-src 'none'/);",
+    "  assert.equal(Object.hasOwn(headers, 'x-powered-by'), false);",
+    "});",
+    "",
+  ].join("\n"));
+  spawnSync("git", ["add", "."], { cwd: dir });
+  spawnSync("git", ["commit", "-qm", "seed vulnerability workload repo"], {
     cwd: dir,
     env: {
       ...process.env,
@@ -928,6 +998,197 @@ await check("workload-benchmark", "Representative coding-agent workloads satisfy
   return { artifactPath, ...summary };
 });
 
+await check("vulnerability-remediation-workload", "Headless CLI remediates representative security vulnerabilities with tests and attestations", [
+  "planning",
+  "task_tracking",
+  "tool_use",
+  "repo_search_read_edit_flows",
+  "shell_execution",
+  "dlp",
+  "indirect_prompt_injection",
+  "sandboxing",
+  "signing_attestation",
+  "headless_cli",
+  "tracing",
+  "realistic_workloads",
+  "vulnerability_remediation",
+], async () => {
+  const { default: registerExtension } = await import(path.join(repoRoot, "dist", "index.js"));
+  const { FileSystemProvider } = await import(path.join(repoRoot, "dist", "capabilities", "filesystem", "provider.js"));
+  const { PolicyEngine } = await import(path.join(repoRoot, "dist", "policy", "engine.js"));
+  const { parsePathScope } = await import(path.join(repoRoot, "dist", "domain", "path-scope.js"));
+
+  const tmpRepo = makeVulnerabilityWorkloadRepo("pi-ig-vuln-remediate-");
+  const { pi, ctx, status } = await startHeadlessRun(
+    registerExtension,
+    tmpRepo,
+    "Hunt and remediate web security vulnerabilities #criterion: XSS, path traversal, and header disclosure tests pass with scoped edits and signed evidence",
+  );
+  const runId = status.runId;
+  const phaseAttemptId = status.lock.activePhaseId;
+
+  const initialTest = await pi.tools.get("goal_shell").execute(
+    "vuln-initial-test",
+    { command: "npm test", cwd: tmpRepo, purpose: "establish failing vulnerability-remediation baseline" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const search = await pi.tools.get("goal_repo_context").execute(
+    "vuln-search-risky-code",
+    { mode: "search_text", path: "src", query: "x-powered-by", runId, phaseAttemptId },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const read = await pi.tools.get("goal_repo_context").execute(
+    "vuln-read-source",
+    { mode: "read_file", path: "src/security.mjs", runId, phaseAttemptId },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const plan = await pi.tools.get("goal_update_task_plan").execute(
+    "vuln-plan",
+    {
+      runId,
+      phaseAttemptId,
+      rationale: "Security remediation workload: document findings, apply scoped fix, and validate with tests.",
+      items: [
+        { id: "xss", title: "Escape untrusted display names before HTML rendering", status: "completed", evidence: ["failing XSS test", "src/security.mjs read"] },
+        { id: "path-traversal", title: "Reject absolute and parent-directory file paths", status: "in_progress", evidence: ["failing path traversal test"] },
+        { id: "headers", title: "Harden response security headers", status: "pending", evidence: ["failing header disclosure test"] },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  const writeResult = await new FileSystemProvider(new PolicyEngine({ repoRoot: tmpRepo }), tmpRepo).invoke({
+    id: "vuln-remediation-write",
+    actor: { kind: "tool", id: "vulnerability-remediation-workload" },
+    runId,
+    effect: "fs.write",
+    resource: { type: "path", value: "src/security.mjs" },
+    input: {
+      path: "src/security.mjs",
+      content: [
+        "import path from 'node:path';",
+        "",
+        "function escapeHtml(value) {",
+        "  return String(value)",
+        "    .replaceAll('&', '&amp;')",
+        "    .replaceAll('<', '&lt;')",
+        "    .replaceAll('>', '&gt;')",
+        "    .replaceAll('\"', '&quot;')",
+        "    .replaceAll(\"'\", '&#39;');",
+        "}",
+        "",
+        "export function renderProfile(displayName) {",
+        "  return `<h1>${escapeHtml(displayName)}</h1>`;",
+        "}",
+        "",
+        "export function resolveUserFile(baseDir, userPath) {",
+        "  const root = path.resolve(baseDir);",
+        "  const target = path.resolve(root, userPath);",
+        "  const relative = path.relative(root, target);",
+        "  if (relative.startsWith('..') || path.isAbsolute(relative)) {",
+        "    throw new Error('path traversal rejected');",
+        "  }",
+        "  return target;",
+        "}",
+        "",
+        "export function buildSecurityHeaders() {",
+        "  return {",
+        "    'content-security-policy': \"default-src 'none'; frame-ancestors 'none'; base-uri 'none'\",",
+        "    'referrer-policy': 'no-referrer',",
+        "    'x-content-type-options': 'nosniff',",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    purpose: "remediate XSS, path traversal, and implementation disclosure vulnerabilities",
+    risk: "write",
+    dataClassification: "internal",
+    allowedPaths: [parsePathScope("src/security.mjs")],
+  }, AbortSignal.timeout(10_000));
+
+  const finalTest = await pi.tools.get("goal_shell").execute(
+    "vuln-final-test",
+    { command: "npm test", cwd: tmpRepo, purpose: "validate vulnerability remediation" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const finalPlan = await pi.tools.get("goal_update_task_plan").execute(
+    "vuln-plan-complete",
+    {
+      runId,
+      phaseAttemptId,
+      rationale: "Vulnerability remediation validated.",
+      items: [
+        { id: "xss", title: "Escape untrusted display names before HTML rendering", status: "completed", evidence: ["renderProfile XSS test PASS"] },
+        { id: "path-traversal", title: "Reject absolute and parent-directory file paths", status: "completed", evidence: ["resolveUserFile traversal tests PASS"] },
+        { id: "headers", title: "Harden response security headers", status: "completed", evidence: ["security header tests PASS"] },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const phaseResult = await pi.tools.get("cyber_report_phase_result").execute(
+    "vuln-phase-result",
+    {
+      runId,
+      phaseAttemptId,
+      phase: "validate",
+      status: "completed",
+      summary: "Headless vulnerability remediation completed: XSS escaping, path traversal rejection, and defensive headers validated by npm test.",
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const changed = gitChangedFiles(tmpRepo);
+  const finalStatus = await readStatus(pi, ctx);
+  const expectations = [
+    expectation("baseline-failed", initialTest.details.exitCode !== 0, "Initial vulnerability test suite fails before remediation", { exitCode: initialTest.details.exitCode }),
+    expectation("risky-code-found", search.details.allowed === true && search.details.files.includes("src/security.mjs"), "Repo search locates risky implementation disclosure header", search.details),
+    expectation("source-read-redacted-delimited", read.details.allowed === true && read.content[0].text.includes("<UNTRUSTED_DATA"), "Source read is model-visible only through untrusted data delimiters", { allowed: read.details.allowed }),
+    expectation("scoped-remediation-write", writeResult.ok === true && writeResult.decision.ruleIds.includes("policy.fs.scope"), "Security remediation edit is scoped to src/security.mjs", writeResult),
+    expectation("tests-pass-after-remediation", finalTest.details.exitCode === 0, "Vulnerability tests pass after remediation", finalTest.details),
+    expectation("only-security-file-changed", changed.length === 1 && changed[0] === "src/security.mjs", "Only the intended security source file changed", { changed }),
+    expectation("findings-tracked-to-completion", finalPlan.details.rejected === false && finalPlan.details.taskPlan.items.every((item) => item.status === "completed"), "All vulnerability findings are tracked to completion", finalPlan.details.taskPlan),
+    expectation("phase-evidence-recorded", phaseResult.details.phase === "validate" && finalStatus.artifacts.validations >= 1, "Validation phase evidence is recorded", { phaseResult: phaseResult.details, artifacts: finalStatus.artifacts }),
+    expectation("attestations-recorded", finalStatus.cyber.attestations >= 3, "Repo reads and shell validations produced signed attestations", finalStatus.cyber),
+  ];
+  const failed = expectations.filter((item) => item.status !== "PASS");
+  if (failed.length > 0) {
+    throw new Error(`vulnerability remediation failed expectations: ${failed.map((item) => item.id).join(", ")}`);
+  }
+  const artifactPath = path.join(runDir, "vulnerability-remediation-workload.json");
+  const summary = {
+    workloadId: "vulnerability-remediation-workload",
+    tempRepo: tmpRepo,
+    passCount: expectations.length,
+    failCount: failed.length,
+    vulnerabilitiesRemediated: ["reflected-xss", "path-traversal", "implementation-disclosure"],
+    expectations,
+    initialPlan: plan.details.taskPlan,
+  };
+  fs.writeFileSync(artifactPath, JSON.stringify(summary, null, 2));
+  appendTrace({
+    type: "vulnerability_remediation.summary",
+    passCount: summary.passCount,
+    failCount: summary.failCount,
+    vulnerabilitiesRemediated: summary.vulnerabilitiesRemediated,
+    artifact: artifactPath,
+  });
+  return { artifactPath, ...summary };
+});
+
 await check("local-trace-artifact", "Local JSONL trace captures run decisions, latency, outputs, and failures", ["tracing"], async () => {
   assert(fs.existsSync(tracePath));
   const lines = fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean);
@@ -979,7 +1240,8 @@ const summary = {
     secretValuesPrinted: false,
     cloudMutationAttempted: false,
     tempReposOnlyForWrites: true,
-    awsAccountExpected: "371292405073",
+    awsControlAccountExpected: "371292405073",
+    awsProjectAccountExpected: "138881449763",
     localTraceEquivalentToLangfuse: true,
   },
   tracePath,
@@ -1033,7 +1295,8 @@ function renderCoverageMarkdown(report) {
     "- Secret values printed: no",
     "- Cloud mutation attempted: no",
     "- Write tests: disposable temp repositories only",
-    `- Expected AWS project account: \`${report.safetyBoundary.awsAccountExpected}\``,
+    `- Expected AWS control/payment account: \`${report.safetyBoundary.awsControlAccountExpected}\``,
+    `- Expected AWS project sub-account: \`${report.safetyBoundary.awsProjectAccountExpected}\``,
     "- Trace sink: local JSONL Langfuse-equivalent",
     "",
     "## Check Summary",
