@@ -174,7 +174,10 @@ extracts only the safe read-only AWS validation commands, enforces an AWS
 read-only allowlist before execution, blocks secret-value reads and production
 mutations, wraps the handoff as model-visible untrusted review context, emits
 SEC-### findings in the handoff schema, tracks repeated/new/resolved findings
-and AWS-state drift across runs, and writes redacted artifacts under:
+and AWS-state drift across runs, records the two-account scope without
+collapsing the production and payments/control accounts, maps coverage across
+the prioritized attack lanes, signs the redacted run evidence manifest, and
+writes artifacts under:
 
 - `ai_docs/prod_security_review/latest-readonly-review.md`
 - `ai_docs/prod_security_review/latest-readonly-review.json`
@@ -185,6 +188,11 @@ and AWS-state drift across runs, and writes redacted artifacts under:
 `review:prod-security:readonly` runs one bounded iteration for headless
 validation. `review:prod-security:continuous` keeps repeating the same
 read-only review loop at the configured interval.
+
+Each run directory includes `evidence-manifest.json`, `evidence-manifest.sig`,
+and `evidence.public.pem`. The signature covers the redacted command outputs,
+model-visible handoff context, finding files, and iteration records for that
+run; secret values and production mutations remain blocked rather than signed.
 
 ## 5. Data Model
 

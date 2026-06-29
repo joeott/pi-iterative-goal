@@ -1949,12 +1949,40 @@ process.exit(2);
   ok(latest.modelVisibleContext.path.endsWith("handoff-model-context.md"));
   ok(fs.existsSync(latest.modelVisibleContext.path));
   ok(fs.readFileSync(latest.modelVisibleContext.path, "utf8").includes("<UNTRUSTED_DATA"));
+  eq(latest.architectureBasis.currentOcrRoute, "unify_nemotron");
+  ok(latest.architectureBasis.deprecatedCurrentRoutes.includes("paddleocr"));
+  ok(latest.safeCommandSource.allCommandsExtractedFromHandoff);
   ok(latest.iterations[0].commands.length >= 20);
   ok(latest.iterations[0].commands.every((command) => command.status === "PASS"));
   deepStrictEqual(latest.iterations[0].findings, []);
+  eq(latest.evidenceSigning.signed, true);
+  eq(latest.evidenceSigning.verified, true);
+  ok(fs.existsSync(latest.evidenceSigning.manifestPath));
+  ok(fs.existsSync(latest.evidenceSigning.signaturePath));
   ok(!JSON.stringify(latest).includes("get-secret-value"));
 
-  console.log("✓ Test 27: Production security review runner parses the handoff and enforces read-only mode");
+  const continuousTmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-prod-review-continuous-"));
+  const continuousResult = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "prod-security-review-readonly.mjs"),
+    "--handoff", handoffPath,
+    "--output-dir", continuousTmp,
+    "--continuous",
+    "--max-iterations", "2",
+    "--interval-ms", "1",
+    "--dry-run",
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  eq(continuousResult.status, 0, continuousResult.stderr || continuousResult.stdout);
+  const continuousLatest = JSON.parse(fs.readFileSync(path.join(continuousTmp, "latest-readonly-review.json"), "utf8"));
+  eq(continuousLatest.continuous, true);
+  eq(continuousLatest.iterations.length, 2);
+  ok(continuousLatest.iterations.every((iteration) => iteration.commands.every((command) => command.status === "PASS")));
+  eq(continuousLatest.evidenceSigning.signed, true);
+  eq(continuousLatest.evidenceSigning.verified, true);
+
+  console.log("✓ Test 27: Production security review runner parses the handoff, signs evidence, and supports bounded continuous read-only mode");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

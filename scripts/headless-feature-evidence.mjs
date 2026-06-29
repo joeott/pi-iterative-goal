@@ -643,6 +643,10 @@ await check("prod-security-review-readonly", "Third-party production security ha
   assert.equal(review.secretValuesRead, false);
   assert.equal(review.productionMutationsAttempted, false);
   assert.equal(review.iterations.length, 1);
+  assert.equal(review.safeCommandSource?.allCommandsExtractedFromHandoff, true);
+  assert.equal(review.architectureBasis?.currentOcrRoute, "unify_nemotron");
+  assert(review.architectureBasis?.deprecatedCurrentRoutes?.includes("paddleocr"));
+  assert.equal(review.accountScope?.accountsCollapsed, false);
   assert(review.modelVisibleContext?.path && fs.existsSync(review.modelVisibleContext.path));
   assert(fs.readFileSync(review.modelVisibleContext.path, "utf8").includes("<UNTRUSTED_DATA"));
   const commands = review.iterations[0].commands;
@@ -653,6 +657,13 @@ await check("prod-security-review-readonly", "Third-party production security ha
   assert(findings.every((finding) => /^SEC-\d{3}$/.test(finding.id)));
   assert(findings.every((finding) => Array.isArray(finding.reproduction_steps_read_only)));
   assert(findings.every((finding) => finding.reproduction_steps_read_only.every((step) => !/get-secret-value|put-secret-value|delete-|update-|create-|run-task/i.test(step))));
+  const requiredLanes = ["Aurora", "Pipeline Controller IAM/S3 supply chain", "Adapter ingress/egress", "CAS/evidence overwrite/delete", "Graph projection controls", "Cross-account secrets trust", "CI/deploy scanner", "Agent trace redaction"];
+  assert(requiredLanes.every((lane) => review.laneCoverage?.some((item) => item.lane === lane && item.status === "covered")));
+  assert.equal(review.evidenceSigning?.signed, true);
+  assert.equal(review.evidenceSigning?.verified, true);
+  assert(review.evidenceSigning?.artifactCount >= commands.length * 2);
+  assert(fs.existsSync(review.evidenceSigning.manifestPath));
+  assert(fs.existsSync(review.evidenceSigning.signaturePath));
   assert(!JSON.stringify(review).includes("get-secret-value"));
   return {
     artifactPath,
@@ -667,6 +678,9 @@ await check("prod-security-review-readonly", "Third-party production security ha
     resolvedFindings: review.findingSummary.resolved,
     driftChanged: review.drift.changed,
     continuousCommand: "npm run review:prod-security:continuous",
+    signedEvidenceManifest: review.evidenceSigning.manifestPath,
+    laneCoverage: review.laneCoverage.map((item) => ({ lane: item.lane, status: item.status, findings: item.findingIds })),
+    accountScope: review.accountScope.accounts.map((item) => ({ profile: item.profile, expectedAccount: item.expectedAccount, observedAccount: item.observedAccount })),
     secretValuesRead: review.secretValuesRead,
     productionMutationsAttempted: review.productionMutationsAttempted,
   };

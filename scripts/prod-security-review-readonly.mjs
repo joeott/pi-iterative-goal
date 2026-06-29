@@ -42,6 +42,7 @@ if (commands.length === 0) {
   throw new Error(`No safe read-only validation commands found in ${handoffPath}`);
 }
 const previousSummary = loadPreviousSummary();
+const signing = createEvidenceSigningState(runId);
 
 const startedAt = new Date().toISOString();
 const summary = {
@@ -66,6 +67,34 @@ const summary = {
     wrapped: true,
   },
   safeCommands: commands.length,
+  safeCommandSource: {
+    sourceSection: "Safe Read-Only Validation Commands",
+    allCommandsExtractedFromHandoff: true,
+    commandCount: commands.length,
+    allowedAwsOperations: Object.fromEntries([...READ_ONLY_AWS.entries()].map(([service, operations]) => [service, [...operations].sort()])),
+  },
+  architectureBasis: {
+    source: "cas_migration final gated architecture",
+    localCurrentStatePath: "/Users/joe/Projects/cas_migration/docs/current-state.md",
+    localRepoLockPath: "/Users/joe/Projects/cas_migration/repo-lock.yaml",
+    currentOcrRoute: "unify_nemotron",
+    deprecatedCurrentRoutes: ["paddleocr", "paddleparse", "cpu/sqs"],
+    currentStateSha256: sha256FileIfExists("/Users/joe/Projects/cas_migration/docs/current-state.md"),
+    repoLockSha256: sha256FileIfExists("/Users/joe/Projects/cas_migration/repo-lock.yaml"),
+  },
+  accountScope: null,
+  laneCoverage: [],
+  evidenceSigning: {
+    signed: false,
+    verified: false,
+    algorithm: signing.algorithm,
+    keyId: signing.keyId,
+    publicKeyPath: path.join(runDir, "evidence.public.pem"),
+    manifestPath: path.join(runDir, "evidence-manifest.json"),
+    signaturePath: path.join(runDir, "evidence-manifest.sig"),
+    artifactCount: 0,
+    manifestSha256: null,
+  },
   retiredIdentifierPolicy: "Retired OCR/SQS/Step Functions identifiers are treated only as resurrection risks unless read-only evidence shows they are active.",
   prioritizedLanes: [
     "Aurora encryption/deletion protection",
@@ -94,6 +123,8 @@ while (maxIterations === 0 || iteration < maxIterations) {
 }
 summary.finishedAt = new Date().toISOString();
 finalizeReviewState();
+writeArtifacts();
+signEvidenceArtifacts();
 writeArtifacts();
 
 const failed = summary.iterations.flatMap((item) => item.commands).filter((item) => item.status !== "PASS");
@@ -273,6 +304,9 @@ function finalizeReviewState() {
     currentFingerprint: latest?.awsStateFingerprint ?? null,
     changed: Boolean(previousFingerprint && latest?.awsStateFingerprint && previousFingerprint !== latest.awsStateFingerprint),
   };
+  const artifacts = latest ? loadCommandArtifacts(latest) : [];
+  summary.accountScope = dryRun ? expectedAccountScope() : buildAccountScope(artifacts);
+  summary.laneCoverage = dryRun ? [] : buildLaneCoverage(artifacts, findings);
 }
 
 function count(iteration, status) {
@@ -477,6 +511,105 @@ function loadCommandArtifacts(iteration) {
   });
 }
 
+function buildAccountScope(artifacts) {
+  const identities = artifacts
+    .filter((item) => item.service === "sts" && item.operation === "get-caller-identity")
+    .map((item) => {
+      const profile = item.command.match(/--profile\s+([^\s]+)/)?.[1] ?? "unknown";
+      return {
+        profile,
+        expectedAccount: profile === "unify-old" ? "371292405073" : profile === "api-admin" ? "138881449763" : null,
+        observedAccount: item.json?.Account ?? null,
+        observedArn: item.json?.Arn ?? null,
+      };
+    });
+  return {
+    accounts: identities,
+    expectedAccounts: expectedAccountScope().accounts,
+    accountsCollapsed: identities.some((item) => item.expectedAccount && item.observedAccount && item.expectedAccount !== item.observedAccount)
+      || new Set(identities.map((item) => item.observedAccount).filter(Boolean)).size < 2,
+  };
+}
+
+function expectedAccountScope() {
+  return {
+    accounts: [
+      { profile: "unify-old", account: "371292405073", role: "production/workload account" },
+      { profile: "api-admin", account: "138881449763", role: "payments/control account" },
+    ],
+  };
+}
+
+function buildLaneCoverage(artifacts, findings) {
+  const commandKeys = new Set(artifacts.map((item) => `${item.service}:${item.operation}:${item.command}`));
+  const findingLanes = new Set(findings.flatMap((finding) => String(finding.attack_lane).split(/[,\s]+/).filter(Boolean)));
+  const has = (service, operation, pattern = /.*/) => [...commandKeys].some((key) => key.startsWith(`${service}:${operation}:`) && pattern.test(key));
+  const coverage = [
+    {
+      lane: "Aurora",
+      focus: "Aurora encryption/deletion protection and DB backup exposure",
+      evidence: ["rds:describe-db-clusters", "rds:describe-db-instances", "rds:describe-db-cluster-snapshots"],
+      covered: has("rds", "describe-db-clusters") && has("rds", "describe-db-instances") && has("rds", "describe-db-cluster-snapshots"),
+      findingIds: findings.filter((finding) => String(finding.attack_lane).startsWith("RDS")).map((finding) => finding.id),
+    },
+    {
+      lane: "Pipeline Controller IAM/S3 supply chain",
+      focus: "PC role takeover, S3 controller payload, and source-merged/not-deployed hardening",
+      evidence: ["iam:get-role-policy PipelineController", "s3api:head-object pipeline-controller", "cloudformation:describe-stacks UnifyOcrCpuStack"],
+      covered: has("iam", "get-role-policy", /PipelineController/) && has("s3api", "head-object", /pipeline-controller/) && has("cloudformation", "describe-stacks", /UnifyOcrCpuStack/),
+      findingIds: findings.filter((finding) => /^PC-/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+    {
+      lane: "Adapter ingress/egress",
+      focus: "OCR adapter service posture and security-group ingress/egress",
+      evidence: ["ec2:describe-security-groups adapter", "ecs:describe-services adapter"],
+      covered: has("ec2", "describe-security-groups", /sg-02f7afa7fefba100f/) && has("ecs", "describe-services", /unify-ocr-adapter-production/),
+      findingIds: findings.filter((finding) => /^OCR-/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+    {
+      lane: "CAS/evidence overwrite/delete",
+      focus: "Evidence bucket immutability, retention, and role delete/write blast radius",
+      evidence: ["s3api bucket controls", "iam:get-role-policy PipelineController"],
+      covered: ["get-public-access-block", "get-bucket-versioning", "get-bucket-encryption", "get-bucket-policy-status", "get-bucket-lifecycle-configuration"].every((operation) => has("s3api", operation))
+        && has("iam", "get-role-policy", /PipelineController/),
+      findingIds: findings.filter((finding) => /^S3-/.test(String(finding.attack_lane)) || finding.id === "SEC-003").map((finding) => finding.id),
+    },
+    {
+      lane: "Graph projection controls",
+      focus: "Graph projection task/Lambda/event posture and CAS-only source-gate deployment proof",
+      evidence: ["ecs:list-tasks graph-projection-production", "cloudformation:list-stack-resources UnifyOcrCpuStack", "events:describe-rule completion callback"],
+      covered: has("ecs", "list-tasks", /graph-projection-production/) && has("cloudformation", "list-stack-resources", /UnifyOcrCpuStack/) && has("events", "describe-rule", /PipelineControllerSfnCompletion/),
+      findingIds: findings.filter((finding) => /^GRAPH-|^PC-3$/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+    {
+      lane: "Cross-account secrets trust",
+      focus: "Final Fact secrets discovery/read role in the payments/control account",
+      evidence: ["sts api-admin", "secretsmanager:list-secrets final-fact", "iam:get-role final-fact-secrets-reader", "iam:get-role-policy final-fact-secrets-reader"],
+      covered: has("sts", "get-caller-identity", /api-admin/) && has("secretsmanager", "list-secrets", /api-admin/) && has("iam", "get-role", /final-fact-secrets-reader/) && has("iam", "get-role-policy", /final-fact-secrets-reader/),
+      findingIds: findings.filter((finding) => /^XACCT-/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+    {
+      lane: "CI/deploy scanner",
+      focus: "Deploy scanner and source-merged/runtime-proven split from the handoff context",
+      evidence: ["handoff PR context", "model-visible DLP/IPI wrapped context"],
+      covered: summary.modelVisibleContext.wrapped === true && summary.modelVisibleContext.dlp.enabled === true,
+      findingIds: findings.filter((finding) => /^CI-/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+    {
+      lane: "Agent trace redaction",
+      focus: "No secret-value reads, DLP redaction, and trace-safe review artifacts",
+      evidence: ["model-visible DLP/IPI wrapped context", "review redaction", "secretValuesRead=false"],
+      covered: summary.secretValuesRead === false && summary.productionMutationsAttempted === false && summary.modelVisibleContext.dlp.enabled === true,
+      findingIds: findings.filter((finding) => /^AGENT-/.test(String(finding.attack_lane))).map((finding) => finding.id),
+    },
+  ];
+  return coverage.map((item) => ({
+    ...item,
+    status: item.covered ? "covered" : "gap",
+    findingLanesPresent: item.findingIds.length > 0 || [...findingLanes].some((lane) => item.lane.toLowerCase().includes(lane.toLowerCase())),
+  }));
+}
+
 function secFinding(fields) {
   return {
     id: fields.id,
@@ -639,6 +772,84 @@ function redact(value) {
     .replace(assignmentPattern, "$1[REDACTED_SECRET]");
 }
 
+function createEvidenceSigningState(id) {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  return {
+    algorithm: "ed25519",
+    publicKeyPem,
+    privateKeyPem,
+    keyId: sha256(`${id}:${publicKeyPem}`).slice(0, 16),
+  };
+}
+
+function signEvidenceArtifacts() {
+  const publicKeyPath = path.join(runDir, "evidence.public.pem");
+  const manifestPath = path.join(runDir, "evidence-manifest.json");
+  const signaturePath = path.join(runDir, "evidence-manifest.sig");
+  const excluded = new Set([
+    path.basename(publicKeyPath),
+    path.basename(manifestPath),
+    path.basename(signaturePath),
+    "review-summary.json",
+    "review-summary.md",
+  ]);
+  const artifacts = listFilesRecursive(runDir)
+    .filter((filePath) => !excluded.has(path.basename(filePath)))
+    .map((filePath) => {
+      const rel = path.relative(runDir, filePath);
+      const bytes = fs.readFileSync(filePath);
+      return {
+        path: rel,
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+      };
+    });
+  const manifest = {
+    runId,
+    createdAt: new Date().toISOString(),
+    algorithm: signing.algorithm,
+    keyId: signing.keyId,
+    handoffSha256,
+    readOnlyEnforced: summary.readOnlyEnforced,
+    secretValuesRead: summary.secretValuesRead,
+    productionMutationsAttempted: summary.productionMutationsAttempted,
+    artifactCount: artifacts.length,
+    artifacts,
+  };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2));
+  const privateKey = crypto.createPrivateKey(signing.privateKeyPem);
+  const signature = crypto.sign(null, manifestBytes, privateKey).toString("base64");
+  fs.writeFileSync(publicKeyPath, signing.publicKeyPem);
+  fs.writeFileSync(manifestPath, manifestBytes);
+  fs.writeFileSync(signaturePath, `${signature}\n`);
+  const publicKey = crypto.createPublicKey(signing.publicKeyPem);
+  const verified = crypto.verify(null, manifestBytes, publicKey, Buffer.from(signature, "base64"));
+  summary.evidenceSigning = {
+    signed: true,
+    verified,
+    algorithm: signing.algorithm,
+    keyId: signing.keyId,
+    publicKeyPath,
+    manifestPath,
+    signaturePath,
+    artifactCount: artifacts.length,
+    manifestSha256: sha256(manifestBytes),
+  };
+}
+
+function listFilesRecursive(dir) {
+  const found = [];
+  for (const name of fs.readdirSync(dir)) {
+    const filePath = path.join(dir, name);
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) found.push(...listFilesRecursive(filePath));
+    else if (stat.isFile()) found.push(filePath);
+  }
+  return found.sort();
+}
+
 function parseArgs(rawArgs) {
   const parsed = {};
   for (let i = 0; i < rawArgs.length; i += 1) {
@@ -657,6 +868,14 @@ function parseArgs(rawArgs) {
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function sha256FileIfExists(filePath) {
+  try {
+    return sha256(fs.readFileSync(filePath));
+  } catch {
+    return null;
+  }
 }
 
 function escapeAttr(value) {
