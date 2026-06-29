@@ -161,6 +161,27 @@ style-expectation scorecard, not a live Claude Code API benchmark. The
 coding workload against the vulnerability-remediation workload so iterative
 improvement is measured without invoking external Claude Code product calls.
 
+For the current third-party production security handoff, the harness also has a
+read-only review runner:
+
+```bash
+npm run review:prod-security:readonly
+npm run review:prod-security:continuous
+```
+
+The runner reads `/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md`,
+extracts only the safe read-only AWS validation commands, enforces an AWS
+read-only allowlist before execution, blocks secret-value reads and production
+mutations, and writes redacted artifacts under:
+
+- `ai_docs/prod_security_review/latest-readonly-review.md`
+- `ai_docs/prod_security_review/latest-readonly-review.json`
+- `ai_docs/prod_security_review/runs/<run-id>/`
+
+`review:prod-security:readonly` runs one bounded iteration for headless
+validation. `review:prod-security:continuous` keeps repeating the same
+read-only review loop at the configured interval.
+
 ## 5. Data Model
 
 ```typescript

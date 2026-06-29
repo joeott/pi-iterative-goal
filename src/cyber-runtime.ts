@@ -181,6 +181,66 @@ export function signBytes(bytes: string | Buffer, signing: CyberSigningState): s
   return crypto.sign(null, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes), privateKey).toString("base64");
 }
 
+export function verifyActionAttestation(params: {
+  attestation: ActionAttestation;
+  publicKeyPem: string;
+  artifactBytes?: string | Buffer;
+}): {
+  ok: boolean;
+  signatureValid: boolean;
+  statementDigestValid: boolean;
+  artifactDigestValid: boolean | null;
+  problems: string[];
+} {
+  const problems: string[] = [];
+  const statement = params.attestation.provenanceAttestation as {
+    subject?: Array<{ name?: string; digest?: { sha256?: string } }>;
+    predicate?: {
+      runId?: string;
+      cycle?: number;
+      phase?: string;
+      createdAt?: string;
+    };
+  };
+  const subject = statement.subject?.[0];
+  const statementDigest = subject?.digest?.sha256;
+  const statementDigestValid = statementDigest === params.attestation.sha256
+    && subject?.name === params.attestation.path
+    && statement.predicate?.runId === params.attestation.runId
+    && statement.predicate?.cycle === params.attestation.cycle
+    && statement.predicate?.phase === params.attestation.phase
+    && statement.predicate?.createdAt === params.attestation.createdAt;
+  if (!statementDigestValid) problems.push("attestation statement fields do not match envelope");
+
+  let signatureValid = false;
+  try {
+    const publicKey = crypto.createPublicKey(params.publicKeyPem);
+    signatureValid = crypto.verify(
+      null,
+      Buffer.from(JSON.stringify(params.attestation.provenanceAttestation)),
+      publicKey,
+      Buffer.from(params.attestation.cryptographicSignature, "base64"),
+    );
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) problems.push("attestation signature is invalid");
+
+  let artifactDigestValid: boolean | null = null;
+  if (params.artifactBytes !== undefined) {
+    artifactDigestValid = sha256(params.artifactBytes) === params.attestation.sha256;
+    if (!artifactDigestValid) problems.push("artifact bytes do not match attested sha256");
+  }
+
+  return {
+    ok: statementDigestValid && signatureValid && artifactDigestValid !== false,
+    signatureValid,
+    statementDigestValid,
+    artifactDigestValid,
+    problems,
+  };
+}
+
 export function attestAction(params: {
   runId: string;
   cycle: number;

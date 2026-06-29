@@ -55,6 +55,7 @@ const features = [
   ["vulnerability_remediation", "Headless vulnerability-hunting and remediation workload"],
   ["claude_code_parity_analysis", "Empirical scorecard against Claude Code-style agentic coding expectations"],
   ["self_capability_iteration", "Self-comparison between generic coding and cyber-remediation workloads"],
+  ["continuous_readonly_prod_review", "Continuous read-only third-party production security review loop"],
 ];
 
 const selfCapabilityComparisonEnabled = process.env.PI_ENABLE_SELF_CAPABILITY_COMPARISON !== "0";
@@ -90,6 +91,20 @@ function readHarnessEnv(keys) {
     values[key] = value;
   }
   return values;
+}
+
+function listFilesRecursive(dir) {
+  const found = [];
+  for (const name of fs.readdirSync(dir)) {
+    const filePath = path.join(dir, name);
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) {
+      found.push(...listFilesRecursive(filePath));
+    } else if (stat.isFile()) {
+      found.push(filePath);
+    }
+  }
+  return found.sort();
 }
 
 function appendTrace(event) {
@@ -598,6 +613,50 @@ await check("aws-secret-metadata", "Control-account Secrets Manager metadata ver
     lastChangedDate: metadata.LastChangedDate,
     currentVersionCount: Object.values(metadata.VersionIdsToStages).filter((stages) => stages.includes("AWSCURRENT")).length,
     secretValueRead: false,
+  };
+});
+
+await check("prod-security-review-readonly", "Third-party production security handoff runs as a bounded read-only review iteration", [
+  "aws_integration",
+  "approval_flows",
+  "sandboxing",
+  "continuous_readonly_prod_review",
+  "tracing",
+], async () => {
+  const outputDir = path.join(runDir, "prod-security-review");
+  const { artifactPath, result } = runCommand("prod-security-review-readonly", "node", [
+    "scripts/prod-security-review-readonly.mjs",
+    "--handoff",
+    "/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md",
+    "--output-dir",
+    outputDir,
+    "--max-iterations",
+    "1",
+    "--command-timeout-ms",
+    "45000",
+  ], { timeout: 240_000 }, ["aws_integration", "continuous_readonly_prod_review"]);
+  assert.match(result.stdout, /mode:\s+read-only/);
+  assert.match(result.stdout, /secrets_printed:\s+false/);
+  const latestPath = path.join(outputDir, "latest-readonly-review.json");
+  const review = JSON.parse(fs.readFileSync(latestPath, "utf8"));
+  assert.equal(review.readOnlyEnforced, true);
+  assert.equal(review.secretValuesRead, false);
+  assert.equal(review.productionMutationsAttempted, false);
+  assert.equal(review.iterations.length, 1);
+  const commands = review.iterations[0].commands;
+  assert(commands.length >= 20);
+  assert(commands.every((command) => command.status === "PASS"));
+  assert(!JSON.stringify(review).includes("get-secret-value"));
+  return {
+    artifactPath,
+    reviewSummaryPath: latestPath,
+    runId: review.runId,
+    handoffSha256: review.handoffSha256,
+    commands: commands.length,
+    failedOrBlocked: commands.filter((command) => command.status !== "PASS").length,
+    continuousCommand: "npm run review:prod-security:continuous",
+    secretValuesRead: review.secretValuesRead,
+    productionMutationsAttempted: review.productionMutationsAttempted,
   };
 });
 
@@ -1353,6 +1412,89 @@ await check("local-trace-artifact", "Local JSONL trace captures run decisions, l
   return { tracePath, eventCount: parsed.length };
 });
 
+await check("headless-evidence-attestation", "Headless evidence manifest is signed and signature verification rejects tampering", [
+  "signing_attestation",
+  "tracing",
+], async () => {
+  const { attestAction, createSigningState, verifyActionAttestation } = await import(path.join(repoRoot, "dist", "cyber-runtime.js"));
+  const manifestPath = path.join(runDir, "evidence-manifest.json");
+  const attestationPath = path.join(runDir, "evidence-manifest.attestation.json");
+  const files = listFilesRecursive(runDir)
+    .filter((filePath) => ![manifestPath, attestationPath].includes(filePath))
+    .map((filePath) => {
+      const bytes = fs.readFileSync(filePath);
+      return {
+        path: path.relative(repoRoot, filePath),
+        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      };
+    });
+  const manifest = {
+    runId,
+    traceId,
+    createdAt: new Date().toISOString(),
+    artifactCount: files.length,
+    files,
+  };
+  const manifestBytes = JSON.stringify(manifest, null, 2);
+  fs.writeFileSync(manifestPath, manifestBytes);
+  const signing = createSigningState(runId);
+  const attestation = attestAction({
+    runId,
+    cycle: 1,
+    phase: "headless-evidence",
+    artifactPath: path.relative(repoRoot, manifestPath),
+    action: {
+      id: "headless-evidence-manifest",
+      actor: { kind: "tool", id: "headless-feature-evidence" },
+      runId,
+      effect: "fs.read",
+      resource: { type: "path", value: path.relative(repoRoot, runDir) },
+      input: { artifactCount: files.length },
+      purpose: "sign headless evidence manifest",
+      risk: "read",
+      dataClassification: "internal",
+    },
+    outputBytes: manifestBytes,
+    dlpScanId: null,
+    trustClassification: "internal",
+    signing,
+  });
+  fs.writeFileSync(attestationPath, JSON.stringify({
+    publicKeyPem: signing.runPublicKey,
+    attestation,
+  }, null, 2));
+  const verification = verifyActionAttestation({
+    attestation,
+    publicKeyPem: signing.runPublicKey,
+    artifactBytes: manifestBytes,
+  });
+  assert.equal(verification.ok, true);
+  const tampered = verifyActionAttestation({
+    attestation,
+    publicKeyPem: signing.runPublicKey,
+    artifactBytes: `${manifestBytes}\n`,
+  });
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.artifactDigestValid, false);
+  appendTrace({
+    type: "evidence.attestation",
+    artifact: attestationPath,
+    manifest: manifestPath,
+    artifactCount: files.length,
+    keyId: signing.keyId,
+    verification,
+  });
+  return {
+    manifestPath,
+    attestationPath,
+    artifactCount: files.length,
+    keyId: signing.keyId,
+    verification,
+    tamperRejected: tampered.ok === false,
+  };
+});
+
 const derivedGaps = [
   {
     id: "coverage_report",
@@ -1434,9 +1576,9 @@ await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-styl
     },
     {
       expectation: "Defends cyber workloads with DLP, IPI delimiting, approvals, signed attestations, Secrets Manager handling, AWS boundaries, and CAS route policy",
-      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload"],
-      featureIds: ["approval_flows", "aws_integration", "dlp", "indirect_prompt_injection", "signing_attestation", "secrets_manager_handling", "cas_unify_policy"],
-      exceedsBaselineOn: ["secret redaction", "untrusted-input delimiting", "explicit approval tokens", "CAS route enforcement"],
+      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload", "prod-security-review-readonly", "headless-evidence-attestation"],
+      featureIds: ["approval_flows", "aws_integration", "dlp", "indirect_prompt_injection", "signing_attestation", "secrets_manager_handling", "cas_unify_policy", "continuous_readonly_prod_review"],
+      exceedsBaselineOn: ["secret redaction", "untrusted-input delimiting", "explicit approval tokens", "CAS route enforcement", "continuous read-only production review"],
     },
     {
       expectation: "Exports empirical traces and feature coverage with remaining gaps documented",

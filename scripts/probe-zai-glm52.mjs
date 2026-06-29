@@ -3,18 +3,31 @@ import { probeZaiGlm52 } from "../dist/zai.js";
 
 const cwd = process.cwd();
 const envFiles = [];
+let timeoutMs = 60_000;
+let retries = 2;
 for (let i = 2; i < process.argv.length; i += 1) {
   if (process.argv[i] === "--env-file" && process.argv[i + 1]) {
     envFiles.push(process.argv[i + 1]);
     i += 1;
+  } else if (process.argv[i] === "--timeout-ms" && process.argv[i + 1]) {
+    timeoutMs = Number(process.argv[i + 1]);
+    i += 1;
+  } else if (process.argv[i] === "--retries" && process.argv[i + 1]) {
+    retries = Number(process.argv[i + 1]);
+    i += 1;
   }
 }
 
-const result = await probeZaiGlm52({
-  cwd,
-  explicitEnvFiles: envFiles,
-  timeoutMs: 20_000,
-});
+let result = null;
+for (let attempt = 1; attempt <= Math.max(1, retries + 1); attempt += 1) {
+  result = await probeZaiGlm52({
+    cwd,
+    explicitEnvFiles: envFiles,
+    timeoutMs,
+  });
+  if (result.ok) break;
+  if (attempt <= retries) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+}
 
 console.log("probe_zai_glm52");
 console.log(`  ok: ${String(result.ok)}`);

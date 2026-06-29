@@ -21,6 +21,8 @@
     "watch": "tsc -w",
     "env:models": "node scripts/materialize-model-provider-env.mjs",
     "probe:zai": "npm run build && node scripts/probe-zai-glm52.mjs --env-file .env",
+    "review:prod-security:readonly": "node scripts/prod-security-review-readonly.mjs --handoff /Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md --max-iterations 1",
+    "review:prod-security:continuous": "node scripts/prod-security-review-readonly.mjs --handoff /Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md --continuous",
     "evidence:headless": "node scripts/headless-feature-evidence.mjs",
     "evidence:headless:self-compare": "PI_ENABLE_SELF_CAPABILITY_COMPARISON=1 node scripts/headless-feature-evidence.mjs"
   },

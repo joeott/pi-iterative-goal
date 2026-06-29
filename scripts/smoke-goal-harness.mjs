@@ -1345,12 +1345,14 @@ import path from "node:path";
     DEFAULT_UNIFY_CAS_PROFILE,
     assessCasUnifyCommand,
     assertEvaluatorCyberPrereqs,
+    attestAction,
     createSigningState,
     defaultDlpState,
     defaultSanitizationState,
     dlpScrubText,
     processModelVisibleText,
     signBytes,
+    verifyActionAttestation,
   } = await import("../dist/cyber-runtime.js");
   const { PolicyEngine, commandResource } = await import("../dist/policy/engine.js");
 
@@ -1396,25 +1398,60 @@ import path from "node:path";
   const signing = createSigningState("ig-cyber");
   const signature = signBytes("signed evidence", signing);
   ok(signature.length > 20);
+  const action = {
+    id: "cyber-attestation-smoke",
+    actor: { kind: "tool", id: "smoke" },
+    runId: "ig-cyber",
+    effect: "process.exec",
+    resource: commandResource("npm", ["test"]),
+    input: {},
+    purpose: "verify attestation signatures",
+    risk: "read",
+    dataClassification: "internal",
+  };
+  const attestation = attestAction({
+    runId: "ig-cyber",
+    cycle: 1,
+    phase: "validate",
+    artifactPath: "artifact.txt",
+    action,
+    outputBytes: "signed evidence",
+    dlpScanId: processed.dlpSummary.scanId,
+    trustClassification: "untrusted_data_plane",
+    signing,
+  });
+  const verification = verifyActionAttestation({
+    attestation,
+    publicKeyPem: signing.runPublicKey,
+    artifactBytes: "signed evidence",
+  });
+  eq(verification.ok, true);
+  eq(verification.signatureValid, true);
+  eq(verification.statementDigestValid, true);
+  eq(verification.artifactDigestValid, true);
+
+  const tamperedSignature = verifyActionAttestation({
+    attestation: { ...attestation, provenanceAttestation: { ...attestation.provenanceAttestation, predicateType: "tampered" } },
+    publicKeyPem: signing.runPublicKey,
+    artifactBytes: "signed evidence",
+  });
+  eq(tamperedSignature.ok, false);
+  eq(tamperedSignature.signatureValid, false);
+
+  const tamperedArtifact = verifyActionAttestation({
+    attestation,
+    publicKeyPem: signing.runPublicKey,
+    artifactBytes: "changed evidence",
+  });
+  eq(tamperedArtifact.ok, false);
+  eq(tamperedArtifact.artifactDigestValid, false);
+
   const blockers = assertEvaluatorCyberPrereqs({
     hasAllFourCurrentCycle: true,
     signing,
     dlp: scrubbed.state,
     sanitizer: processed.sanitizer,
-    attestations: [{
-      artifactId: "art",
-      runId: "ig-cyber",
-      cycle: 1,
-      phase: "validate",
-      path: "artifact.txt",
-      type: "text",
-      createdAt: new Date().toISOString(),
-      sha256: "a".repeat(64),
-      cryptographicSignature: signature,
-      provenanceAttestation: {},
-      dlpScanId: processed.dlpSummary.scanId,
-      trustClassification: "untrusted_data_plane",
-    }],
+    attestations: [attestation],
   });
   deepStrictEqual(blockers, []);
   const missingSignerBlockers = assertEvaluatorCyberPrereqs({
@@ -1427,7 +1464,7 @@ import path from "node:path";
   ok(missingSignerBlockers.some((blocker) => blocker.includes("signer")));
   ok(missingSignerBlockers.some((blocker) => blocker.includes("attestations")));
 
-  console.log("✓ Test 21: Cyber runtime redaction, IPI wrapping, signing, and CAS route policy work");
+  console.log("✓ Test 21: Cyber runtime redaction, IPI wrapping, signing, attestation verification, and CAS route policy work");
 }
 
 // ── Test 22: Durable task plan tool, replay, prompts, evaluator gate ──
@@ -1882,6 +1919,38 @@ process.exit(2);
   ok(!commands.some((args) => args.some((part) => part.includes("openrouter-secret-value") || part.includes("zai-secret-value"))));
 
   console.log("✓ Test 26: Provider env materializer gates Secrets Manager writes to the approved control account without printing secrets");
+}
+
+// ── Test 27: Production security review runner stays read-only ──────
+
+{
+  const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+  const handoffPath = "/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md";
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-prod-review-"));
+  const result = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "prod-security-review-readonly.mjs"),
+    "--handoff", handoffPath,
+    "--output-dir", tmp,
+    "--max-iterations", "1",
+    "--dry-run",
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  eq(result.status, 0, result.stderr || result.stdout);
+  ok(result.stdout.includes("mode: dry-run"));
+  ok(result.stdout.includes("failed_or_blocked: 0"));
+  ok(result.stdout.includes("secrets_printed: false"));
+
+  const latest = JSON.parse(fs.readFileSync(path.join(tmp, "latest-readonly-review.json"), "utf8"));
+  eq(latest.readOnlyEnforced, true);
+  eq(latest.secretValuesRead, false);
+  eq(latest.productionMutationsAttempted, false);
+  ok(latest.iterations[0].commands.length >= 20);
+  ok(latest.iterations[0].commands.every((command) => command.status === "PASS"));
+  ok(!JSON.stringify(latest).includes("get-secret-value"));
+
+  console.log("✓ Test 27: Production security review runner parses the handoff and enforces read-only mode");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
