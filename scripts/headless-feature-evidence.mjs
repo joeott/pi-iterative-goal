@@ -643,9 +643,16 @@ await check("prod-security-review-readonly", "Third-party production security ha
   assert.equal(review.secretValuesRead, false);
   assert.equal(review.productionMutationsAttempted, false);
   assert.equal(review.iterations.length, 1);
+  assert(review.modelVisibleContext?.path && fs.existsSync(review.modelVisibleContext.path));
+  assert(fs.readFileSync(review.modelVisibleContext.path, "utf8").includes("<UNTRUSTED_DATA"));
   const commands = review.iterations[0].commands;
   assert(commands.length >= 20);
   assert(commands.every((command) => command.status === "PASS"));
+  const findings = review.iterations[0].findings;
+  assert(findings.length >= 5);
+  assert(findings.every((finding) => /^SEC-\d{3}$/.test(finding.id)));
+  assert(findings.every((finding) => Array.isArray(finding.reproduction_steps_read_only)));
+  assert(findings.every((finding) => finding.reproduction_steps_read_only.every((step) => !/get-secret-value|put-secret-value|delete-|update-|create-|run-task/i.test(step))));
   assert(!JSON.stringify(review).includes("get-secret-value"));
   return {
     artifactPath,
@@ -654,6 +661,11 @@ await check("prod-security-review-readonly", "Third-party production security ha
     handoffSha256: review.handoffSha256,
     commands: commands.length,
     failedOrBlocked: commands.filter((command) => command.status !== "PASS").length,
+    findings: findings.length,
+    newFindings: review.findingSummary.new,
+    repeatedFindings: review.findingSummary.repeated,
+    resolvedFindings: review.findingSummary.resolved,
+    driftChanged: review.drift.changed,
     continuousCommand: "npm run review:prod-security:continuous",
     secretValuesRead: review.secretValuesRead,
     productionMutationsAttempted: review.productionMutationsAttempted,

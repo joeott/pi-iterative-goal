@@ -1946,8 +1946,12 @@ process.exit(2);
   eq(latest.readOnlyEnforced, true);
   eq(latest.secretValuesRead, false);
   eq(latest.productionMutationsAttempted, false);
+  ok(latest.modelVisibleContext.path.endsWith("handoff-model-context.md"));
+  ok(fs.existsSync(latest.modelVisibleContext.path));
+  ok(fs.readFileSync(latest.modelVisibleContext.path, "utf8").includes("<UNTRUSTED_DATA"));
   ok(latest.iterations[0].commands.length >= 20);
   ok(latest.iterations[0].commands.every((command) => command.status === "PASS"));
+  deepStrictEqual(latest.iterations[0].findings, []);
   ok(!JSON.stringify(latest).includes("get-secret-value"));
 
   console.log("✓ Test 27: Production security review runner parses the handoff and enforces read-only mode");

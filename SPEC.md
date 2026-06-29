@@ -172,10 +172,14 @@ npm run review:prod-security:continuous
 The runner reads `/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md`,
 extracts only the safe read-only AWS validation commands, enforces an AWS
 read-only allowlist before execution, blocks secret-value reads and production
-mutations, and writes redacted artifacts under:
+mutations, wraps the handoff as model-visible untrusted review context, emits
+SEC-### findings in the handoff schema, tracks repeated/new/resolved findings
+and AWS-state drift across runs, and writes redacted artifacts under:
 
 - `ai_docs/prod_security_review/latest-readonly-review.md`
 - `ai_docs/prod_security_review/latest-readonly-review.json`
+- `ai_docs/prod_security_review/latest-findings.json`
+- `ai_docs/prod_security_review/latest-findings.jsonl`
 - `ai_docs/prod_security_review/runs/<run-id>/`
 
 `review:prod-security:readonly` runs one bounded iteration for headless
