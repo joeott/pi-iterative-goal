@@ -20,7 +20,8 @@
     "validate": "npm run test",
     "watch": "tsc -w",
     "env:models": "node scripts/materialize-model-provider-env.mjs",
-    "probe:zai": "npm run build && node scripts/probe-zai-glm52.mjs --env-file .env"
+    "probe:zai": "npm run build && node scripts/probe-zai-glm52.mjs --env-file .env",
+    "evidence:headless": "node scripts/headless-feature-evidence.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",

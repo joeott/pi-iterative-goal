@@ -35,7 +35,7 @@ export function registerGoalRuntimeCommands(
       const cm = trimmed.match(/#criterion:\s*(.+)/);
       if (cm) { criterion = cm[1].trim(); goal = trimmed.replace(cm[0], "").trim(); }
 
-      const existing = stateManager.getState();
+      const existing = stateManager.getState() ?? stateManager.restore(ctx);
       if (existing && existing.status === "running") {
         const ok = await ctx.ui.confirm("Replace active goal?",
           `An iterative goal is already running: "${existing.goal}"\n\nStart a new one? Old queued phases will be cancelled.`);

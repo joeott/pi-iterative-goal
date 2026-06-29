@@ -115,6 +115,27 @@ Z.ai GLM 5.2 is registered dynamically as:
 - API: OpenAI-compatible chat completions
 - Headless probe: `npm run probe:zai`
 
+## 4.2 Headless Evidence and Tracing
+
+The harness includes a reproducible headless evidence runner:
+
+```bash
+npm run evidence:headless
+```
+
+The runner builds the extension, runs the smoke suite, probes live Z.ai
+GLM 5.2, loads the extension through a fake Pi API, exercises representative
+command/tool flows in disposable git repositories, and writes local
+Langfuse-equivalent trace artifacts:
+
+- `ai_docs/headless_evidence/latest-feature-coverage.md`
+- `ai_docs/headless_evidence/latest-feature-coverage.json`
+- `ai_docs/headless_evidence/runs/<run-id>/trace.jsonl`
+
+The coverage report maps objective-level capabilities to concrete evidence and
+keeps explicit remaining gaps. Generated traces redact common secret patterns
+and the runner uses temp repositories for write tests.
+
 ## 5. Data Model
 
 ```typescript
