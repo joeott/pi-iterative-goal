@@ -1,0 +1,10 @@
+{
+  "id": "build",
+  "status": "PASS",
+  "summary": "TypeScript build completes for current source",
+  "details": {
+    "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/build.txt"
+  },
+  "checkedAt": "2026-06-29T10:41:52.521Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/build.json"
+}

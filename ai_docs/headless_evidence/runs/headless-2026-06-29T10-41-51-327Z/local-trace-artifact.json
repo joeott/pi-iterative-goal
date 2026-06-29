@@ -1,0 +1,11 @@
+{
+  "id": "local-trace-artifact",
+  "status": "PASS",
+  "summary": "Local JSONL trace captures run decisions, latency, outputs, and failures",
+  "details": {
+    "tracePath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/trace.jsonl",
+    "eventCount": 111
+  },
+  "checkedAt": "2026-06-29T10:42:03.115Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/local-trace-artifact.json"
+}

@@ -1,0 +1,630 @@
+{
+  "runId": "headless-2026-06-29T10-41-51-327Z",
+  "traceId": "35005f56-1965-4dda-b83e-686648f5410f",
+  "startedAt": "2026-06-29T10:41:51.328Z",
+  "finishedAt": "2026-06-29T10:42:03.115Z",
+  "repoRoot": "/Users/joe/Projects/pi-iterative-goal",
+  "commit": "70f66209cc8b4ee092af50269b257538322f5f35",
+  "safetyBoundary": {
+    "secretValuesPrinted": false,
+    "cloudMutationAttempted": false,
+    "tempReposOnlyForWrites": true,
+    "awsAccountExpected": "371292405073",
+    "localTraceEquivalentToLangfuse": true
+  },
+  "tracePath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/trace.jsonl",
+  "results": [
+    {
+      "id": "build",
+      "status": "PASS",
+      "summary": "TypeScript build completes for current source",
+      "details": {
+        "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/build.txt"
+      },
+      "checkedAt": "2026-06-29T10:41:52.521Z",
+      "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/build.json"
+    },
+    {
+      "id": "smoke-tests",
+      "status": "PASS",
+      "summary": "Static and adapter smoke tests pass",
+      "details": {
+        "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.txt"
+      },
+      "checkedAt": "2026-06-29T10:41:55.362Z",
+      "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+    },
+    {
+      "id": "zai-live-probe",
+      "status": "PASS",
+      "summary": "Live Z.ai GLM-5.2 endpoint responds headlessly",
+      "details": {
+        "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/zai-live-probe.txt",
+        "stdoutTail": "> tsc\n\nprobe_zai_glm52\n  ok: true\n  status: 200\n  model: glm-5.2\n  base_url: https://api.z.ai/api/coding/paas/v4\n  latency_ms: 5815\n  env_files_loaded: 1\n    - /Users/joe/Projects/pi-iterative-goal/.env: ZAI_API_BASE_URL, ZAI_API_KEY, ZAI_DEFAULT_MODEL, ZAI_DEFAULT_VISION_MODEL\n  response_text: OK\n"
+      },
+      "checkedAt": "2026-06-29T10:42:02.670Z",
+      "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/zai-live-probe.json"
+    },
+    {
+      "id": "extension-headless-flow",
+      "status": "PASS",
+      "summary": "Extension tools and commands run in a disposable headless Pi harness",
+      "details": {
+        "tempRepo": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-nEGMC4",
+        "registeredTools": [
+          "cyber_checkpoint",
+          "cyber_record_blocker",
+          "cyber_report_phase_result",
+          "cyber_request_approval",
+          "goal_aws_cli",
+          "goal_checkpoint",
+          "goal_git",
+          "goal_record_blocker",
+          "goal_repo_context",
+          "goal_report_phase_result",
+          "goal_request_capability_repair",
+          "goal_shell",
+          "goal_subagent",
+          "goal_update_task_plan"
+        ],
+        "registeredCommands": [
+          "goal-approve",
+          "goal-audit",
+          "goal-authorize-release",
+          "goal-dashboard",
+          "goal-deny",
+          "goal-finalize",
+          "goal-pause",
+          "goal-repair-capabilities",
+          "goal-replay",
+          "goal-reset",
+          "goal-resume",
+          "goal-start",
+          "goal-status",
+          "goal-trace"
+        ],
+        "sentPrompts": 2,
+        "status": {
+          "runId": "ig-1782729722832-roduh3",
+          "phase": "research",
+          "activePhaseId": "ig-1782729722832-roduh3/c1/research/a1",
+          "projectInstructionFiles": [
+            {
+              "path": "AGENTS.md",
+              "filename": "AGENTS.md",
+              "sha256": "397c19a22b600eab0642b5ad1e20bd1cacd24248c634933280bf4130984e8bcb",
+              "bytes": 88,
+              "truncated": false,
+              "precedence": 1
+            }
+          ],
+          "awsProfile": "unify-old"
+        },
+        "shell": {
+          "exitCode": 0,
+          "killed": false,
+          "truncated": false,
+          "allowed": true,
+          "command": "git status --short --branch",
+          "cwd": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-nEGMC4",
+          "purpose": "headless evidence shell check"
+        },
+        "repoRead": {
+          "mode": "read_file",
+          "repoRoot": "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-nEGMC4",
+          "path": "src/app.ts",
+          "files": [
+            "src/app.ts"
+          ],
+          "bytes": 40,
+          "truncated": false,
+          "dlpScanId": "dlp-1782729722955-e3541ad4",
+          "allowed": true
+        },
+        "repoSearch": {
+          "mode": "search_text",
+          "repoRoot": "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-nEGMC4",
+          "path": "src",
+          "query": "hello harness",
+          "files": [
+            "src/app.ts"
+          ],
+          "bytes": 52,
+          "truncated": false,
+          "dlpScanId": "dlp-1782729722996-42d8d4ec",
+          "allowed": true
+        },
+        "filesystemWrite": {
+          "requestId": "headless-fs-write",
+          "decision": {
+            "result": "allow",
+            "ruleIds": [
+              "policy.fs.scope"
+            ],
+            "reason": "Allowed by policy.",
+            "lease": {
+              "id": "headless-fs-write:lease",
+              "runId": "ig-1782729722832-roduh3",
+              "effect": "fs.write",
+              "resource": {
+                "type": "path",
+                "value": "src/headless-generated.txt"
+              },
+              "maxUses": 1,
+              "expiresAt": "2026-06-29T10:47:03.014Z"
+            }
+          },
+          "ok": true,
+          "output": {
+            "path": "src/headless-generated.txt",
+            "bytesWritten": 19
+          },
+          "startedAt": "2026-06-29T10:42:03.014Z",
+          "finishedAt": "2026-06-29T10:42:03.015Z"
+        },
+        "subagentBlocked": {
+          "backendKind": "none",
+          "backendDetail": "writer-subagents-require-allowed-paths",
+          "fallback": true,
+          "result": "policy-blocked"
+        },
+        "approvalTokenPrefix": "APPROVAL_ig-1782729722832-roduh3",
+        "aws": {
+          "allowed": true,
+          "family": "read-only",
+          "isMutation": false,
+          "profile": "unify-old",
+          "region": "us-east-1",
+          "purpose": "verify headless AWS account boundary",
+          "exitCode": 0,
+          "killed": false,
+          "truncated": false,
+          "policyDecision": {
+            "result": "allow",
+            "ruleIds": [
+              "policy.process.no-shell-strings"
+            ],
+            "reason": "Allowed by policy.",
+            "lease": {
+              "id": "goal_aws_cli:1782729723096:lease",
+              "runId": "ig-1782729722832-roduh3",
+              "effect": "process.exec",
+              "resource": {
+                "type": "command",
+                "value": "aws sts get-caller-identity --profile unify-old --region us-east-1"
+              },
+              "maxUses": 1,
+              "expiresAt": "2026-06-29T10:47:03.096Z"
+            }
+          }
+        },
+        "casPolicy": {
+          "result": "deny",
+          "ruleIds": [
+            "policy.cas_unify.route"
+          ],
+          "reason": "Deprecated Paddle/CPU/SQS OCR route is blocked for current operations; use Unify Nemotron resolver/CAS route."
+        },
+        "canonicalCasRoute": "Unify self-hosted Nemotron OCR execution; consumers resolve occurrence_id -> ocr_manifest -> cas:blake3:."
+      },
+      "checkedAt": "2026-06-29T10:42:03.114Z",
+      "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+    },
+    {
+      "id": "local-trace-artifact",
+      "status": "PASS",
+      "summary": "Local JSONL trace captures run decisions, latency, outputs, and failures",
+      "details": {
+        "tracePath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/trace.jsonl",
+        "eventCount": 111
+      },
+      "checkedAt": "2026-06-29T10:42:03.115Z",
+      "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/local-trace-artifact.json"
+    }
+  ],
+  "features": [
+    {
+      "id": "repo_instruction_loading",
+      "requirement": "Repo instruction loading from AGENTS.md/CLAUDE.md",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "planning",
+      "requirement": "Phase prompt planning and plan artifact handling",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "task_tracking",
+      "requirement": "Durable task tracking across phases and replay",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "tool_use",
+      "requirement": "Registered command/tool inventory and tool invocation",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "repo_search_read_edit_flows",
+      "requirement": "Repo search/read plus policy-brokered edit flows",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "shell_execution",
+      "requirement": "Guarded shell execution",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "subagent_worktree_isolation",
+      "requirement": "Subagent fallback and writer isolation policy",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "evaluator_gating",
+      "requirement": "External evaluator-only completion gate",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "approval_flows",
+      "requirement": "Explicit cyber approval request/resolve flow",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "model_fallback",
+      "requirement": "Allowed model fallback and direct Z.ai provider path",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "zai-live-probe",
+          "status": "PASS",
+          "summary": "Live Z.ai GLM-5.2 endpoint responds headlessly",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/zai-live-probe.json"
+        }
+      ]
+    },
+    {
+      "id": "resumability",
+      "requirement": "Session/disk replay and status restore",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "compaction_recovery",
+      "requirement": "Append-entry and latest state recovery surfaces",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "git_finalization",
+      "requirement": "Guarded git finalization and release authorization",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "aws_integration",
+      "requirement": "AWS profile/account/region policy and Secrets Manager metadata handling",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "dlp",
+      "requirement": "DLP secret scanning and redaction",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "indirect_prompt_injection",
+      "requirement": "Indirect prompt-injection delimiting",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "sandboxing",
+      "requirement": "Sandbox/capability policy fail-closed behavior",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        }
+      ]
+    },
+    {
+      "id": "signing_attestation",
+      "requirement": "Signed evidence attestations",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "secrets_manager_handling",
+      "requirement": "Provider-token materialization and AWS Secrets Manager persistence controls",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "cas_unify_policy",
+      "requirement": "CAS/Unify Nemotron route enforcement and deprecated OCR route blocking",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "smoke-tests",
+          "status": "PASS",
+          "summary": "Static and adapter smoke tests pass",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/smoke-tests.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "headless_cli",
+      "requirement": "Reproducible headless CLI validation",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "build",
+          "status": "PASS",
+          "summary": "TypeScript build completes for current source",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/build.json"
+        },
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        }
+      ]
+    },
+    {
+      "id": "glm52_live",
+      "requirement": "Live Z.ai GLM-5.2 responsiveness",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "zai-live-probe",
+          "status": "PASS",
+          "summary": "Live Z.ai GLM-5.2 endpoint responds headlessly",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/zai-live-probe.json"
+        }
+      ]
+    },
+    {
+      "id": "tracing",
+      "requirement": "Trace/evaluation logging equivalent to Langfuse for local runs",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "extension-headless-flow",
+          "status": "PASS",
+          "summary": "Extension tools and commands run in a disposable headless Pi harness",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/extension-headless-flow.json"
+        },
+        {
+          "evidenceId": "local-trace-artifact",
+          "status": "PASS",
+          "summary": "Local JSONL trace captures run decisions, latency, outputs, and failures",
+          "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T10-41-51-327Z/local-trace-artifact.json"
+        },
+        {
+          "evidenceId": "derived-tracing",
+          "status": "PASS",
+          "summary": "This run emits local JSONL traces as the current Langfuse-equivalent trace sink; remote Langfuse export remains optional future integration.",
+          "artifact": null
+        }
+      ]
+    },
+    {
+      "id": "coverage_report",
+      "requirement": "Feature-by-feature coverage report",
+      "status": "PASS",
+      "evidence": [
+        {
+          "evidenceId": "derived-coverage_report",
+          "status": "PASS",
+          "summary": "This script writes feature-coverage.json, feature-coverage.md, and latest-feature-coverage mirrors for every run.",
+          "artifact": null
+        }
+      ]
+    },
+    {
+      "id": "realistic_workloads",
+      "requirement": "Representative coding-agent workloads, not only static unit checks",
+      "status": "WARN",
+      "evidence": [
+        {
+          "evidenceId": "derived-realistic_workloads",
+          "status": "WARN",
+          "summary": "Current evidence covers representative harness flows and live GLM-5.2 responsiveness, but not a sustained autonomous coding workload benchmark against Claude Code-style expectations.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "passedChecks": 5,
+  "failedChecks": 0,
+  "passedFeatures": 24,
+  "warnedFeatures": 1,
+  "failedFeatures": 0,
+  "gapFeatures": 0
+}
