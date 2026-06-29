@@ -1,0 +1,9 @@
+{
+    "Name": "UnifyOcrCpuStack-PipelineControllerSfnCompletionRul-JocNEyYNqftn",
+    "Arn": "arn:aws:events:us-east-1:371292405073:rule/UnifyOcrCpuStack-PipelineControllerSfnCompletionRul-JocNEyYNqftn",
+    "EventPattern": "{\"detail-type\":[\"Step Functions Execution Status Change\"],\"source\":[\"aws.states\"],\"detail\":{\"stateMachineArn\":[{\"prefix\":\"arn:aws:states:us-east-1:371292405073:stateMachine:\"},{\"prefix\":\"arn:aws:states:us-east-1:371292405073:stateMachine:\"},{\"prefix\":\"arn:aws:states:us-east-1:371292405073:stateMachine:\"}],\"status\":[\"SUCCEEDED\",\"FAILED\",\"TIMED_OUT\",\"ABORTED\"]}}",
+    "State": "ENABLED",
+    "Description": "Routes SFN completion events to pipeline controller callback",
+    "EventBusName": "default",
+    "CreatedBy": "371292405073"
+}

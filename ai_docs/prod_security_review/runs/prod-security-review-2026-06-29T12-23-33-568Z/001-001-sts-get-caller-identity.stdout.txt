@@ -1,0 +1,4 @@
+{
+    "Account": "371292405073",
+    "Arn": "arn:aws:iam::371292405073:user/admin"
+}

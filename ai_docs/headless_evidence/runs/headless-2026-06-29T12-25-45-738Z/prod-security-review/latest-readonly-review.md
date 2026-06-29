@@ -1,13 +1,13 @@
 # Production Security Review Read-Only Run
 
-- Run ID: `prod-security-review-2026-06-29T12-23-33-568Z`
+- Run ID: `prod-security-review-2026-06-29T12-26-05-658Z`
 - Handoff: `/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md`
 - Handoff SHA-256: `bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc`
 - Mode: `read-only`
 - Read-only enforced: `true`
 - Secret values read: `false`
 - Production mutations attempted: `false`
-- Model-visible handoff context: `/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/handoff-model-context.md`
+- Model-visible handoff context: `/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/handoff-model-context.md`
 - Findings: `6` open, `6` new, `0` repeated
 - Drift detected: `false`
 - Iterations: `1`

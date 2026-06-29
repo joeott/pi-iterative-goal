@@ -1,0 +1,1874 @@
+{
+    "StackResourceSummaries": [
+        {
+            "LogicalResourceId": "Adr029CitationChainHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15A55F2007",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029CitationChainHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr02-ujJxvW4VelWU",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:33.934000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029CitationChainHourlyValidationC4A7A1B3",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029CitationChainHourlyValidatio-lZsqJva5zMJo",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.410000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DailySummaryDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C158B1B146D",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DailySummaryDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029V-pfNwRjtWOsBg",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:35.059000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DailySummaryDailyValidationB45A8770",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DailySummaryDailyValidationB-tKQXUNtjFURS",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:32.637000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DocumentIdentityHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C155189D93D",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DocumentIdentityHourlyValidationAllowEventRuleUnifyOcrCpuStackAd-c3aiYCHFQvN7",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:33.757000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DocumentIdentityHourlyValidationC6BCFAA1",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DocumentIdentityHourlyValida-hFoQeslgzU8x",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.365000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DropboxCensusDailyValidation83893C8D",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DropboxCensusDailyValidation-4DyqvbBqq2Ts",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.269000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DropboxCensusDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C159A743FFC",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DropboxCensusDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029-xhW89D00df0l",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:33.555000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DropboxSyncHourlyValidation934664A6",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DropboxSyncHourlyValidation9-m3mqGcq6EyJr",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.499000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029DropboxSyncHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15FCFF18C9",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029DropboxSyncHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029V-nCmrKeMdVyiu",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:34.393000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029OcrPageHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15D37CB6C9",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029OcrPageHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029Valid-kIWnfmO4vLi9",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:33.719000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029OcrPageHourlyValidationFB59E6E9",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029OcrPageHourlyValidationFB59E-ytyx9IfXzZDp",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.271000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectEntityMergeDailyValidation8B135563",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectEntityMergeDailyValid-YRSZI9mExEkn",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.427000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectEntityMergeDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15DF0EFA3C",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectEntityMergeDailyValidationAllowEventRuleUnifyOcrCpuStackA-YgUVbLMZbxkP",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:34.068000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectInferenceDailyValidationA6653C47",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectInferenceDailyValidat-7eay2FeOZ8N7",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.401000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectInferenceDailyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15AA32D552",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectInferenceDailyValidationAllowEventRuleUnifyOcrCpuStackAdr-ZdF2qy2wcsi3",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:34.089000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectMachineValidationRule916DBF48",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectMachineValidationRule-AsVUyoW6Rnvm",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:53.104000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ProjectMachineValidationRuleAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15B909BD30",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ProjectMachineValidationRuleAllowEventRuleUnifyOcrCpuStackAdr029-okNqG0v87Qum",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:55.608000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationDLQ277419A8",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-Adr029ValidationDLQ-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-06T04:48:28.205000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationQueueAA55E74C",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-Adr029ValidationQueue-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-06T04:49:00.790000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationRunnerFunction20FF1149",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ValidationRunner-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:10.845000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationRunnerFunctionLogRetention0C951F0A",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-Adr029ValidationRunner-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-06T04:49:31.585000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationRunnerFunctionSqsEventSourceUnifyOcrCpuStackAdr029ValidationQueue824E2B9ED2DD09D5",
+            "PhysicalResourceId": "304f5569-5c78-4259-9e05-0f059bf32eb3",
+            "ResourceType": "AWS::Lambda::EventSourceMapping",
+            "LastUpdatedTimestamp": "2026-03-06T04:49:42.986000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationRunnerRole4A2E503C",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029ValidationRunnerRole4A2E503C-WLEXbP3namTV",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-06T04:48:27.410000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029ValidationRunnerRoleDefaultPolicy9897170A",
+            "PhysicalResourceId": "Unify-Adr02-ol5SUH59isyH",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:01.090000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029WebhookHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029ValidationRunnerFunctionC8461C15DEFF88E5",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029WebhookHourlyValidationAllowEventRuleUnifyOcrCpuStackAdr029Valid-QumveqlVhKIF",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:33.880000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Adr029WebhookHourlyValidationB56E7858",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Adr029WebhookHourlyValidationB56E7-MDHZteSfFcBI",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-06T04:50:31.367000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "BudgetLockParam9E32C9B7",
+            "PhysicalResourceId": "/unify/bedrock/budget-lock",
+            "ResourceType": "AWS::SSM::Parameter",
+            "LastUpdatedTimestamp": "2026-03-24T01:47:42.920000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "CDKMetadata",
+            "PhysicalResourceId": "8f689290-0bb4-11f1-9a38-0e1e4ff2209d",
+            "ResourceType": "AWS::CDK::Metadata",
+            "LastUpdatedTimestamp": "2026-06-28T22:19:32.834000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ChunkManifestGeneratorFunction3E91C9BF",
+            "PhysicalResourceId": "UnifyOcrCpuStack-ChunkManifestGeneratorFunction3E9-Y7RUlZRC1xlf",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:24.698000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ChunkManifestGeneratorFunctionLogRetention5097535E",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-ChunkManifestGeneratorFunction3E9-Y7RUlZRC1xlf",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:55.686000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ChunksSealedOverEmptyMetricFilter10BBA3CB",
+            "PhysicalResourceId": "UnifyOcrPipeline-ChunksSealedOverEmpty-production",
+            "ResourceType": "AWS::Logs::MetricFilter",
+            "LastUpdatedTimestamp": "2026-05-22T17:46:41.313000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "CitationVerifierFunctionDCA72F02",
+            "PhysicalResourceId": "UnifyOcrCpuStack-CitationVerifierFunction-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:17:43.101000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "CitationVerifierFunctionLogRetentionDA5BEC24",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-CitationVerifierFunction-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-06T04:48:12.001000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ContactInferenceFunctionFF4A4CD9",
+            "PhysicalResourceId": "UnifyOcrCpuStack-ContactInferenceFunctionFF4A4CD9-xWCRLIYrSi0e",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:41.122000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ContactInferenceFunctionLogRetention3A9F7491",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-ContactInferenceFunctionFF4A4CD9-xWCRLIYrSi0e",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-24T01:48:47.112000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DataSyncExecutionRole6A4458FC",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DataSyncExecutionRole6A4458FC-CLU0d5Tdnw9w",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-21T20:49:34.526000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DataSyncExecutionRoleDefaultPolicy3EB9CEF7",
+            "PhysicalResourceId": "Unify-DataS-Mp2S2U51PhrT",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-21T20:49:52.275000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DeterministicChunkingErrorAlarm43E49808",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DeterministicChunkingErrors-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:53.939000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DeterministicChunkingFunction969D6F82",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DeterministicChunkingFunction969D-cAkUMM0ZCrqh",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-06-28T22:19:40.732000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DeterministicChunkingFunctionLogRetention7187C15E",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DeterministicChunkingFunction969D-cAkUMM0ZCrqh",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:48.271000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxBatchSyncFunction82F86B4A",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxBatchSyncFunction-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-14T04:51:03.334000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxBatchSyncFunctionLogRetention7265ACA7",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxBatchSyncFunction-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-16T23:12:52.739000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxBatchSyncRoleDD683A08",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxBatchSyncRoleDD683A08-YavSD6cDfBbi",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-14T04:50:53.096000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxBatchSyncRoleDefaultPolicy018EC985",
+            "PhysicalResourceId": "Unify-Dropb-ubxdH2ts94B7",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-03-16T23:12:37.487000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxCensusFunctionE3467791",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxCensusFunctionE3467791-8BAdsEBxdP9y",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-14T04:51:03.594000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxCensusFunctionLogRetention5ABAC57F",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxCensusFunctionE3467791-8BAdsEBxdP9y",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T00:58:41.210000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxCensusRole6E0AF270",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxCensusRole6E0AF270-xKvfSBBsR3Qj",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-14T04:50:53.579000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxCensusSchedule4B493EF7",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxCensusSchedule4B493EF7-FMEkL5xdmcVB",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-05T00:59:39.247000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxCensusScheduleAllowEventRuleUnifyOcrCpuStackDropboxCensusFunction639299EF9FCA16D5",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxCensusScheduleAllowEventRuleUnifyOcrCpuStackDropboxCensusFuncti-0LQimGiEp2wG",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-05T00:59:41.459000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloadDLQ32399EDD",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxDownloadDLQ-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-03T22:26:26.172000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloadDLQDepthAlarm7B92DCC5",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxDownloadDLQDepth-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-03-03T22:26:29.916000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloadQueueC59372C4",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxDownloadQueue-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-03T22:26:58.651000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloadQueueDepthAlarmB8F37F56",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxDownloadQueueDepth-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-03-03T22:27:02.773000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloaderFunction197CBFD2",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxDownloaderFunction-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-14T04:51:03.431000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloaderFunctionLogRetention355FB7DD",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxDownloaderFunction-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-03T22:27:32.659000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloaderFunctionSqsEventSourceUnifyOcrCpuStackDropboxDownloadQueue410799B8E0F6803D",
+            "PhysicalResourceId": "295d87fb-4ade-4851-b576-14ef2f6422c0",
+            "ResourceType": "AWS::Lambda::EventSourceMapping",
+            "LastUpdatedTimestamp": "2026-03-17T02:06:06.962000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloaderRole725F2CA6",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxDownloaderRole725F2CA6-rMHlxZGKuNNZ",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-14T04:50:52.883000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxDownloaderRoleDefaultPolicyF2E14296",
+            "PhysicalResourceId": "Unify-Dropb-y4cxJGYPv4NU",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-03-16T23:55:06.761000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxReconciliationFunction415B0CB8",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxReconciliationFunction415B-Rp7JDdzYUrwK",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-05-22T21:48:41.155000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxReconciliationFunctionLogRetention43583D49",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxReconciliationFunction415B-Rp7JDdzYUrwK",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:47.131000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxReconciliationRoleF8B83644",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxReconciliationRoleF8B83644-9aUXZkLbqrcY",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-14T04:50:53.199000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxReconciliationSchedule9D04DC7A",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxReconciliationSchedule9D04D-oR0RRXsGgFIq",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-02-17T03:57:37.474000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxReconciliationScheduleAllowEventRuleUnifyOcrCpuStackDropboxReconciliationFunction9CC9CC1A815ECEC3",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxReconciliationScheduleAllowEventRuleUnifyOcrCpuStackDropboxReco-ADqnY0cI8LIZ",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-02-17T03:57:39.641000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDailyScheduleAllowEventRuleUnifyOcrCpuStackDropboxSyncFunction04483259FCD12820",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncDailyScheduleAllowEventRuleUnifyOcrCpuStackDropboxSyncFunct-1doupuXuzhkM",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-02-17T03:58:03.485000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDailyScheduleFA47DDC3",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncDailyScheduleFA47DDC3-CVOehjXCqOfl",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-02-17T03:58:00.874000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDashboardB907892F",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSync-production",
+            "ResourceType": "AWS::CloudWatch::Dashboard",
+            "LastUpdatedTimestamp": "2026-06-25T20:05:59.348000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherErrorAlarm2DE4EF8B",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DispatcherErrors-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-02-17T03:57:56.384000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherFunction76615DEC",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncDispatcherFunction7661-xXgStZX3GcaV",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-06-25T20:06:24.671000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherFunctionLogRetention1DDD4FD4",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxSyncDispatcherFunction7661-xXgStZX3GcaV",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:47.227000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherFunctionSqsEventSourceUnifyOcrCpuStackDropboxSyncEventQueue0D256ED5B030BE3D",
+            "PhysicalResourceId": "e986ae52-f992-4926-b638-a7643d662ae9",
+            "ResourceType": "AWS::Lambda::EventSourceMapping",
+            "LastUpdatedTimestamp": "2026-02-17T03:58:06.847000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherRole772C7975",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncDispatcherRole772C7975-pvpm17XAecP8",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-06-25T20:06:13.982000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncDispatcherRoleDefaultPolicy88CB0D8E",
+            "PhysicalResourceId": "Unify-Dropb-HDaQetsa1T5t",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-02-17T03:57:49.189000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncErrorRateAlarm9E1C0BBE",
+            "PhysicalResourceId": "production-DropboxSyncCpu-HighErrorRate",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:14.601000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncEventDLQ99BB27B0",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxSyncEventDLQ99BB27B0-F40dWKWmqPft",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:43.419000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncEventQueue97A92A18",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxSyncEventQueue97A92A18-EvXlBFNMgBwG",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:45.599000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncEventQueuePolicyF7D7A7D4",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncEventQueuePolicyF7D7A7D4-ClF2e8eCFdTv",
+            "ResourceType": "AWS::SQS::QueuePolicy",
+            "LastUpdatedTimestamp": "2026-02-17T03:57:50.158000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncExecutionRole11146619",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncExecutionRole11146619-ardlSC02c0Ir",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:29.497000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncExecutionRoleDefaultPolicy9BC2CEC8",
+            "PhysicalResourceId": "Unify-Dropb-yEH00m6WgaMp",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-14T04:50:52.531000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncFunction842665A8",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncFunction-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-14T04:51:02.098000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncFunctionLogRetention8F09FE38",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-DropboxSyncFunction-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:47.147000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncQueueBacklogAlarmF951AB4D",
+            "PhysicalResourceId": "production-DropboxSyncCpu-QueueBacklog",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:19.019000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "DropboxSyncQueueDepthAlarm1526B2E4",
+            "PhysicalResourceId": "UnifyOcrCpuStack-DropboxSyncQueueDepth-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:18.769000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Ec2SchedulerRoleAC0B786C",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Ec2SchedulerRoleAC0B786C-CJfYovFHnC8l",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-06-24T05:07:48.427000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Ec2SchedulerRoleDefaultPolicyB3820785",
+            "PhysicalResourceId": "Unify-Ec2Sc-PZA4nGcadmjF",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-06-24T05:08:05.609000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Ec2StartSchedule",
+            "PhysicalResourceId": "pipeline-ec2-start-morning",
+            "ResourceType": "AWS::Scheduler::Schedule",
+            "LastUpdatedTimestamp": "2026-06-24T05:07:52.828000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Ec2StopSchedule",
+            "PhysicalResourceId": "pipeline-ec2-stop-nightly",
+            "ResourceType": "AWS::Scheduler::Schedule",
+            "LastUpdatedTimestamp": "2026-06-24T05:07:51.601000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityExtractFunction36C2C306",
+            "PhysicalResourceId": "UnifyOcrCpuStack-EntityExtractFunction36C2C306-GNRn0cyZLiB9",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:40.883000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityExtractFunctionLogRetention78EC1A31",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-EntityExtractFunction36C2C306-GNRn0cyZLiB9",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-25T22:10:28.342000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityMapGeneratorFunction7625746B",
+            "PhysicalResourceId": "UnifyOcrCpuStack-EntityMapGeneratorFunction7625746-vfaJnNalvXSA",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:01.016000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityMapGeneratorFunctionLogRetention2F084C61",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-EntityMapGeneratorFunction7625746-vfaJnNalvXSA",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-15T02:15:21.273000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityMergeFunction42AABD11",
+            "PhysicalResourceId": "UnifyOcrCpuStack-EntityMergeFunction42AABD11-MuKzcyN3zzzq",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:35.590000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "EntityMergeFunctionLogRetention822B8E8B",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-EntityMergeFunction42AABD11-MuKzcyN3zzzq",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-24T01:48:51.953000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "FactExtractFunction793616C0",
+            "PhysicalResourceId": "UnifyOcrCpuStack-FactExtractFunction793616C0-lLaDWKbTId9N",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:17:49.299000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "FactExtractFunctionLogRetentionE13959ED",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-FactExtractFunction793616C0-lLaDWKbTId9N",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T22:42:00.914000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionCluster02BB4181",
+            "PhysicalResourceId": "graph-projection-production",
+            "ResourceType": "AWS::ECS::Cluster",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:31.440000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionCluster5287D0FD",
+            "PhysicalResourceId": "graph-projection-production",
+            "ResourceType": "AWS::ECS::ClusterCapacityProviderAssociations",
+            "LastUpdatedTimestamp": "2026-04-22T18:15:06.292000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionFunction087CA7C7",
+            "PhysicalResourceId": "UnifyOcrCpuStack-GraphProjectionFunction087CA7C7-asYT9z6Dslot",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-06-28T22:19:40.570000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionFunctionLogRetention48B204F8",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-GraphProjectionFunction087CA7C7-asYT9z6Dslot",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-08T19:24:58.634000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionTaskDef968EE968",
+            "PhysicalResourceId": "arn:aws:ecs:us-east-1:371292405073:task-definition/graph-projection-production:136",
+            "ResourceType": "AWS::ECS::TaskDefinition",
+            "LastUpdatedTimestamp": "2026-06-29T11:46:22.581000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionTaskDefExecutionRoleB268ECFB",
+            "PhysicalResourceId": "UnifyOcrCpuStack-GraphProjectionTaskDefExecutionRol-XBNRMLePbdsd",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:45.025000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionTaskDefExecutionRoleDefaultPolicy8DAE9F9A",
+            "PhysicalResourceId": "Unify-Graph-sJF4HqdzrsG0",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-03-14T23:57:02.170000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionTaskDefgraphprojectionLogGroupCA1C8B72",
+            "PhysicalResourceId": "UnifyOcrCpuStack-GraphProjectionTaskDefgraphprojectionLogGroupCA1C8B72-hvpR7jOUwwlq",
+            "ResourceType": "AWS::Logs::LogGroup",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:36.501000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "GraphProjectionTaskRole9FE27EFB",
+            "PhysicalResourceId": "UnifyOcrCpuStack-GraphProjectionTaskRole9FE27EFB-4T0fvbWXZgsV",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-06-28T22:19:48.765000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "HotIngestFunctionD81F2032",
+            "PhysicalResourceId": "UnifyOcrCpuStack-HotIngestFunctionD81F2032-40hjm918gc5b",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-06-25T20:06:22.702000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "HotIngestFunctionLogRetentionD920723E",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-HotIngestFunctionD81F2032-40hjm918gc5b",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T22:42:49.180000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "HotIngestRole21B26139",
+            "PhysicalResourceId": "UnifyOcrCpuStack-HotIngestRole21B26139-MFIdBlu1Bp4t",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:44.403000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "HotIngestRoleDefaultPolicy1BBC0C61",
+            "PhysicalResourceId": "Unify-HotIn-GtaJAF0qfPhn",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-06-25T20:06:12.498000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerInstance07635CC0",
+            "PhysicalResourceId": "i-034a301b434472864",
+            "ResourceType": "AWS::EC2::Instance",
+            "LastUpdatedTimestamp": "2026-06-23T20:06:08.364000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerInstanceInstanceProfile3794B50C",
+            "PhysicalResourceId": "UnifyOcrCpuStack-InferenceServerInferenceServerInstanceInstanceProfile3794B50C-tpBCaCSarCGR",
+            "ResourceType": "AWS::IAM::InstanceProfile",
+            "LastUpdatedTimestamp": "2026-04-05T00:44:27.152000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerRoleCB97BDE9",
+            "PhysicalResourceId": "UnifyOcrCpuStack-InferenceServerInferenceServerRole-HDalybtAShaQ",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-05T00:42:14.740000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerRoleDefaultPolicy292F33BB",
+            "PhysicalResourceId": "Unify-Infer-b5gcVtYy2PGK",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-13T18:41:17.534000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerSG87F7A652",
+            "PhysicalResourceId": "sg-02633ad13768cb1fc",
+            "ResourceType": "AWS::EC2::SecurityGroup",
+            "LastUpdatedTimestamp": "2026-04-05T00:42:07.482000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerSGfromUnifyOcrCpuStackLambdaSecurityGroupForInference0738D6B2800011D97ABC",
+            "PhysicalResourceId": "sgr-07f1d37303742d6e1",
+            "ResourceType": "AWS::EC2::SecurityGroupIngress",
+            "LastUpdatedTimestamp": "2026-04-05T00:42:11.771000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceServerInferenceServerSGtoUnifyOcrCpuStackRdsSecurityGroupEC278F715432C933A0BD",
+            "PhysicalResourceId": "sgr-019b500fa3cfff9f0",
+            "ResourceType": "AWS::EC2::SecurityGroupEgress",
+            "LastUpdatedTimestamp": "2026-04-05T00:42:10.496000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceSweeperFunction05B0F111",
+            "PhysicalResourceId": "UnifyOcrCpuStack-InferenceSweeperFunction05B0F111-4CcnkJNCBxhk",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-29T18:57:58.443000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "InferenceSweeperFunctionLogRetention1E48B01E",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-InferenceSweeperFunction05B0F111-4CcnkJNCBxhk",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T22:42:02.288000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "LambdaExecutionRoleD5C26073",
+            "PhysicalResourceId": "UnifyOcrCpuStack-LambdaExecutionRoleD5C26073-HtXgWkIlVNQj",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-14T00:30:43.876000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "LambdaExecutionRoleDefaultPolicy6D69732F",
+            "PhysicalResourceId": "Unify-Lambd-BAjeHvFn8gNx",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-21T20:49:33.646000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aFD4BFC8A",
+            "PhysicalResourceId": "UnifyOcrCpuStack-LogRetentionaae0aa3c5b4d4f87b02d8-0mTp5pb30PT5",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:43.235000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole9741ECFB",
+            "PhysicalResourceId": "UnifyOcrCpuStack-LogRetentionaae0aa3c5b4d4f87b02d85-pDgTKW0sf8eu",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:17.225000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicyADDA7DEB",
+            "PhysicalResourceId": "Unify-LogRe-F3g1mrPFRf52",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:34.318000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Neo4jDriverLayer61EBBCDC",
+            "PhysicalResourceId": "arn:aws:lambda:us-east-1:371292405073:layer:Neo4jDriverLayer61EBBCDC:18",
+            "ResourceType": "AWS::Lambda::LayerVersion",
+            "LastUpdatedTimestamp": "2026-02-17T03:56:18.594000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Neo4jIngestFunctionFB9DB410",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Neo4jIngestFunctionFB9DB410-P5Wb2dqfy6et",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-01T23:32:35.556000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Neo4jIngestFunctionLogRetention97BF140C",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-Neo4jIngestFunctionFB9DB410-P5Wb2dqfy6et",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:47.278000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Neo4jLambdaRole1CE616CC",
+            "PhysicalResourceId": "UnifyOcrCpuStack-Neo4jLambdaRole1CE616CC-UcrLtbUfehMQ",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-13T14:31:31.455000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "Neo4jLambdaRoleDefaultPolicy2D6EFAEF",
+            "PhysicalResourceId": "Unify-Neo4j-gvAHnMwQF9fw",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-03-15T02:15:29.329000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrCodeBuildCpuBuild694D1FFE",
+            "PhysicalResourceId": "unify-ocr-worker-cpu-production",
+            "ResourceType": "AWS::CodeBuild::Project",
+            "LastUpdatedTimestamp": "2026-04-03T07:17:08.157000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrCodeBuildCpuBuildRole61DCE519",
+            "PhysicalResourceId": "UnifyOcrCpuStack-OcrCodeBuildCpuBuildRole61DCE519-yEAobkA122Qo",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-02-18T15:51:35.318000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrCodeBuildCpuBuildRoleDefaultPolicy46568A6A",
+            "PhysicalResourceId": "Unify-OcrCo-yfzPafXH2gV3",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-06-24T05:07:47.565000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrPipelineDashboardC5C2A760",
+            "PhysicalResourceId": "UnifyOcrPipeline-production",
+            "ResourceType": "AWS::CloudWatch::Dashboard",
+            "LastUpdatedTimestamp": "2026-06-24T05:07:44.247000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrPipelineNoThroughputAlarmD0AADADB",
+            "PhysicalResourceId": "UnifyOcrPipeline-NoThroughput-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-05-22T18:15:43.574000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrPipelineSealedOverEmptyAlarmDAFF7C1D",
+            "PhysicalResourceId": "UnifyOcrPipeline-SealedOverEmpty-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-05-22T17:46:29.343000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrQualityGateFunctionB44EE71F",
+            "PhysicalResourceId": "UnifyOcrCpuStack-OcrQualityGateFunctionB44EE71F-claJY2HbPfEu",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-03-06T04:49:28.869000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrQualityGateFunctionLogRetentionA5BBB2CC",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-OcrQualityGateFunctionB44EE71F-claJY2HbPfEu",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T22:41:26.019000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "OcrServerReachableAlarm41C7ED60",
+            "PhysicalResourceId": "UnifyOcrPipeline-OCRServerReachable-production",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-06-13T04:20:23.575000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PineconeIngestFunction00D01810",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PineconeIngestFunction00D01810-3LVfaS5rFjAY",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-06-01T15:41:32.108000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PineconeIngestFunctionLogRetention3992E29D",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-PineconeIngestFunction00D01810-3LVfaS5rFjAY",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:47.233000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerControllerStateTable7B24B664",
+            "PhysicalResourceId": "unify-pipeline-controller-state",
+            "ResourceType": "AWS::DynamoDB::Table",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:14.928000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerDaemonHeartbeatAlarm6B31D46D",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerDaemonHeartbeatAlarm6B31D46D-fbAiaxJtVLDH",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-06-13T04:20:22.674000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineClosureSlosDashboardEC1A97DE",
+            "PhysicalResourceId": "PipelineClosureSLOs-production",
+            "ResourceType": "AWS::CloudWatch::Dashboard",
+            "LastUpdatedTimestamp": "2026-06-11T05:16:41.728000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerDashboardF1782E51",
+            "PhysicalResourceId": "PipelineController-production",
+            "ResourceType": "AWS::CloudWatch::Dashboard",
+            "LastUpdatedTimestamp": "2026-06-11T05:16:40.602000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerInstance1EB9B32Aa2b4dfa0c0e15c95",
+            "PhysicalResourceId": "i-04e23da48cd8505bb",
+            "ResourceType": "AWS::EC2::Instance",
+            "LastUpdatedTimestamp": "2026-06-29T11:46:34.229000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerInstanceInstanceProfile27644C31",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerPipelineControllerInstanceInstanceProfile27644C31-UsfPwPKewLvY",
+            "ResourceType": "AWS::IAM::InstanceProfile",
+            "LastUpdatedTimestamp": "2026-04-01T01:50:28.875000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerRoleAEA96DAE",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerPipelineControll-eTBCkPXF2Rhe",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-29T18:58:05.551000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerRoleDefaultPolicyA0058FF1",
+            "PhysicalResourceId": "Unify-Pipel-VlPS4dakUEM3",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-29T18:58:23.743000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerSG99359DAC",
+            "PhysicalResourceId": "sg-0481376bdc6ec6803",
+            "ResourceType": "AWS::EC2::SecurityGroup",
+            "LastUpdatedTimestamp": "2026-06-26T00:40:03.382000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerPipelineControllerSGtoUnifyOcrCpuStackRdsSecurityGroupEC278F7154320E71DEC3",
+            "PhysicalResourceId": "sgr-08fe20e48072dff1c",
+            "ResourceType": "AWS::EC2::SecurityGroupEgress",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:12.112000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerRedisUnreachableAlarmE330AAF3",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerRedisUnreachableAlarmE330AAF3-zPGWGzNZ4Ed6",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-06-13T04:20:23.002000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackDlq617F9C5D",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-PipelineControllerSfnCompletionCallbackDlq617F9C5D-eOCappEjYNz1",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-04-03T00:01:56.244000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackDlqPolicy589B482B",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerSfnCompletionCallbackDlqPolicy58-TkFHMYsArR9s",
+            "ResourceType": "AWS::SQS::QueuePolicy",
+            "LastUpdatedTimestamp": "2026-04-03T00:03:01.597000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackFunction9DCB35BE",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerSfnCompletionCa-lPLrZPskMyDk",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-01T23:32:35.653000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackFunctionLogRetention18EA5A8D",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-PipelineControllerSfnCompletionCa-lPLrZPskMyDk",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:48.162000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackFunctionServiceRole4CC65CC5",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerSfnCompletionCal-Mk6VxsBR14YJ",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:16.700000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionCallbackFunctionServiceRoleDefaultPolicyF8B4507C",
+            "PhysicalResourceId": "Unify-Pipel-wxS5l9kGHnca",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:34.436000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionRuleAllowEventRuleUnifyOcrCpuStackPipelineControllerSfnCompletionCallbackFunctionA4692BF1161B3AE1",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerSfnCompletionRuleAllowEventRuleUnifyOcrCpuStackPipel-aKzbbpOTSngi",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-04-01T01:49:48.950000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnCompletionRuleC2DD5667",
+            "PhysicalResourceId": "UnifyOcrCpuStack-PipelineControllerSfnCompletionRul-JocNEyYNqftn",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-06-25T20:05:58.322000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "PipelineControllerSfnConcurrencyTable92938416",
+            "PhysicalResourceId": "unify-sfn-concurrency",
+            "ResourceType": "AWS::DynamoDB::Table",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:13.484000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectMachineProjectMachineLogGroup775CB67D",
+            "PhysicalResourceId": "/aws/stepfunctions/ProjectMachine-Production",
+            "ResourceType": "AWS::Logs::LogGroup",
+            "LastUpdatedTimestamp": "2026-03-05T22:41:23.319000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectMachineProjectMachineStateMachine388F7B0D",
+            "PhysicalResourceId": "arn:aws:states:us-east-1:371292405073:stateMachine:ProjectMachineProjectMachineStateMachine388F7B0D-19NKFInKyk4e",
+            "ResourceType": "AWS::StepFunctions::StateMachine",
+            "LastUpdatedTimestamp": "2026-06-29T11:46:54.730000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectMachineProjectMachineStateMachineRoleCBBD4987",
+            "PhysicalResourceId": "UnifyOcrCpuStack-ProjectMachineProjectMachineStateM-DZHKWyXsr6jh",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-14T23:56:45+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectMachineProjectMachineStateMachineRoleDefaultPolicy75C6FCAA",
+            "PhysicalResourceId": "Unify-Proje-FpyuisIfHCmm",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-06-29T11:46:40.328000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectRunStateFunctionFB49DE4A",
+            "PhysicalResourceId": "UnifyOcrCpuStack-ProjectRunState-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:00.678000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ProjectRunStateFunctionLogRetentionCC113A61",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-ProjectRunState-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-06T04:49:32.841000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "RdsSecurityGroupForSyncS3ToRdsfromUnifyOcrCpuStackSyncS3ToRdsSgAAC0A366543209050E92",
+            "PhysicalResourceId": "sgr-054cc9719564df801",
+            "ResourceType": "AWS::EC2::SecurityGroupIngress",
+            "LastUpdatedTimestamp": "2026-03-17T03:04:06.190000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "RdsSecurityGroupfromUnifyOcrCpuStackInferenceServerInferenceServerSG05B005375432D2602592",
+            "PhysicalResourceId": "sgr-0643b3ce05cc39a3e",
+            "ResourceType": "AWS::EC2::SecurityGroupIngress",
+            "LastUpdatedTimestamp": "2026-04-05T00:42:10.406000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "RdsSecurityGroupfromUnifyOcrCpuStackPipelineControllerPipelineControllerSG75DFFBED54327EDAC9BA",
+            "PhysicalResourceId": "sgr-042a582cfb0e4085d",
+            "ResourceType": "AWS::EC2::SecurityGroupIngress",
+            "LastUpdatedTimestamp": "2026-04-01T01:48:12.160000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ReconciliationHealthProbeAE44F205",
+            "PhysicalResourceId": "ReconciliationHealthProbe-production",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:01.647000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ReconciliationHealthProbeLogRetention28B53825",
+            "PhysicalResourceId": "/aws/lambda/ReconciliationHealthProbe-production",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-02-27T19:29:49.224000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ReconciliationProbeRole37D6872F",
+            "PhysicalResourceId": "UnifyOcrCpuStack-ReconciliationProbeRole37D6872F-LkEQDCdv8gKP",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-02-22T06:02:41.317000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "ReconciliationProbeRoleDefaultPolicyEA3A4E6C",
+            "PhysicalResourceId": "Unify-Recon-UBLL8v8xD5MR",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-13T23:17:52.189000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "S3ObjectCreatedRule81363060",
+            "PhysicalResourceId": "UnifyOcrCpuStack-S3ObjectCreatedRule81363060-g1xdUfu728iT",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-14T01:14:01.891000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "SelfHostedModelRoleC28AA9A3",
+            "PhysicalResourceId": "UnifyOcrCpuStack-SelfHostedModelRoleC28AA9A3-6CFbKSbpPi0T",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-04-13T23:17:52.174000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "SelfHostedModelRoleDefaultPolicyDA58F434",
+            "PhysicalResourceId": "Unify-SelfH-sgUEJYt8vvZJ",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-13T23:18:09.196000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "SyncS3ToRdsSg024D5253",
+            "PhysicalResourceId": "sg-00ba54c9dff564681",
+            "ResourceType": "AWS::EC2::SecurityGroup",
+            "LastUpdatedTimestamp": "2026-03-17T03:04:03.179000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestDLQ463934EC",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-VectorIngestDLQ-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-04T20:47:47.788000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestDLQAlarm2892B99B",
+            "PhysicalResourceId": "UnifyOcrCpuStack-VectorIngestDLQAlarm2892B99B-tImBbx2AyNoq",
+            "ResourceType": "AWS::CloudWatch::Alarm",
+            "LastUpdatedTimestamp": "2026-03-04T20:47:51.608000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestFunction6E57B439",
+            "PhysicalResourceId": "UnifyOcrCpuStack-VectorIngestFunction6E57B439-mtR1F3hgBwcs",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-05-26T17:01:33.984000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestFunctionLogRetention3A905CA7",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-VectorIngestFunction6E57B439-mtR1F3hgBwcs",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-04T20:48:50.851000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestFunctionSqsEventSourceUnifyOcrCpuStackVectorIngestQueueB2CA92A51DD73CD4",
+            "PhysicalResourceId": "01ac0ba8-218f-4360-afd8-3ddcf0e3ff36",
+            "ResourceType": "AWS::Lambda::EventSourceMapping",
+            "LastUpdatedTimestamp": "2026-03-04T20:49:01.155000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "VectorIngestQueue6F7BE15B",
+            "PhysicalResourceId": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-VectorIngestQueue-production",
+            "ResourceType": "AWS::SQS::Queue",
+            "LastUpdatedTimestamp": "2026-03-04T20:48:20.373000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerFunctionB4ECC703",
+            "PhysicalResourceId": "UnifyOcrCpuStack-WaveTriggerFunctionB4ECC703-vbyUBwWDzxfB",
+            "ResourceType": "AWS::Lambda::Function",
+            "LastUpdatedTimestamp": "2026-04-13T23:19:40.644000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerFunctionLogRetention0640DCA1",
+            "PhysicalResourceId": "/aws/lambda/UnifyOcrCpuStack-WaveTriggerFunctionB4ECC703-vbyUBwWDzxfB",
+            "ResourceType": "Custom::LogRetention",
+            "LastUpdatedTimestamp": "2026-03-05T22:42:49.203000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerRole582EC2C1",
+            "PhysicalResourceId": "UnifyOcrCpuStack-WaveTriggerRole582EC2C1-UR8ctZmzbRkT",
+            "ResourceType": "AWS::IAM::Role",
+            "LastUpdatedTimestamp": "2026-03-24T01:48:01.650000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerRoleDefaultPolicy625D98CB",
+            "PhysicalResourceId": "Unify-WaveT-8I1H2dZmxBmC",
+            "ResourceType": "AWS::IAM::Policy",
+            "LastUpdatedTimestamp": "2026-04-13T23:19:31.051000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerSchedule481D8DBD",
+            "PhysicalResourceId": "UnifyOcrCpuStack-WaveTriggerSchedule481D8DBD-q3TMKikFMv8U",
+            "ResourceType": "AWS::Events::Rule",
+            "LastUpdatedTimestamp": "2026-03-24T01:49:57.759000+00:00",
+            "ResourceStatus": "UPDATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        },
+        {
+            "LogicalResourceId": "WaveTriggerScheduleAllowEventRuleUnifyOcrCpuStackWaveTriggerFunctionDA25F1A94ABA223A",
+            "PhysicalResourceId": "UnifyOcrCpuStack-WaveTriggerScheduleAllowEventRuleUnifyOcrCpuStackWaveTriggerFunctionDA-K0wAWNWZIk4F",
+            "ResourceType": "AWS::Lambda::Permission",
+            "LastUpdatedTimestamp": "2026-03-05T22:43:51.244000+00:00",
+            "ResourceStatus": "CREATE_COMPLETE",
+            "DriftInformation": {
+                "StackResourceDriftStatus": "NOT_CHECKED"
+            }
+        }
+    ]
+}

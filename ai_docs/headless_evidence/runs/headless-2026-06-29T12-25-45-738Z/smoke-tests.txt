@@ -1,0 +1,48 @@
+startedAt=2026-06-29T12:25:46.912Z
+finishedAt=2026-06-29T12:25:50.062Z
+command=npm run test
+cwd=/Users/joe/Projects/pi-iterative-goal
+status=0
+signal=
+
+STDOUT:
+
+> pi-iterative-goal@0.1.0 test
+> npm run build && node scripts/smoke-goal-harness.mjs
+
+
+> pi-iterative-goal@0.1.0 build
+> tsc
+
+✓ Test 1: Module imports cleanly, PhaseEventKind includes stale_phase_output_ignored
+✓ Test 2: v1 state migrated to v2 without crash
+✓ Test 3: Stale-write guard rejects mismatched runId, phaseAttemptId, and non-running states
+✓ Test 4: Typed path scopes reject fuzzy allowlist matches
+✓ Test 5: Validation script executes argv checks, records exit codes, and fails closed
+✓ Test 6: Harness meta includes runId + phaseAttemptId nonce
+✓ Test 7: /goal-status --json structure includes lock + evaluator state
+✓ Test 8: Resume prompt carries nonce + tool contract
+✓ Test 9: agent_end synthesis handles plain-string and structured assistant output
+✓ Test 10: goal-status latestArtifact shape is parseable
+✓ Test 11: AWS CLI config, safety classification, and broker policy evidence behave as expected
+✓ Test 12: Resume prompt exposes AWS tool guidance when enabled
+✓ Test 13: Git finalization config and prompt guidance behave as expected
+✓ Test 14: Model allowlist restricts stale/unapproved models
+✓ Test 15: Central policy, broker, and provider manifest contracts validate effects
+✓ Test 16: Isolated writer worktree captures patch without touching main worktree
+✓ Test 17: Event replay reconstructs new run state and rejects hash-chain tampering
+✓ Test 18: New-run replay corruption does not silently reconstruct from stale cache
+✓ Test 19: ReleaseAuthorization is invalidated by a new HEAD
+✓ Test 20: Structured PR body generation includes evidence matrix and authorization
+✓ Test 21: Cyber runtime redaction, IPI wrapping, signing, attestation verification, and CAS route policy work
+✓ Test 22: Durable task plan persists, renders, and blocks evaluator completion while active
+✓ Test 23: Project instruction discovery persists, replays, and renders into prompts
+✓ Test 24: Repo context tool reads, searches, redacts, wraps, and attests evidence
+✓ Test 25: Z.ai GLM 5.2 provider metadata and probe behavior are valid
+✓ Test 26: Provider env materializer gates Secrets Manager writes to the approved control account without printing secrets
+✓ Test 27: Production security review runner parses the handoff and enforces read-only mode
+
+All tests passed. ✓
+
+
+STDERR:

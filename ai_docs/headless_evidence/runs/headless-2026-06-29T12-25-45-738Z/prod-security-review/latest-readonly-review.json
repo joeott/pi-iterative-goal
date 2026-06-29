@@ -1,7 +1,7 @@
 {
-  "runId": "prod-security-review-2026-06-29T12-23-33-568Z",
-  "startedAt": "2026-06-29T12:23:33.570Z",
-  "finishedAt": "2026-06-29T12:25:16.152Z",
+  "runId": "prod-security-review-2026-06-29T12-26-05-658Z",
+  "startedAt": "2026-06-29T12:26:05.660Z",
+  "finishedAt": "2026-06-29T12:27:42.241Z",
   "handoffPath": "/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md",
   "handoffSha256": "bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc",
   "mode": "read-only",
@@ -13,7 +13,7 @@
   "secretValuesRead": false,
   "productionMutationsAttempted": false,
   "modelVisibleContext": {
-    "path": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/handoff-model-context.md",
+    "path": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/handoff-model-context.md",
     "sourceSha256": "bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc",
     "dlp": {
       "enabled": true,
@@ -37,8 +37,8 @@
   "iterations": [
     {
       "index": 1,
-      "startedAt": "2026-06-29T12:23:33.570Z",
-      "finishedAt": "2026-06-29T12:25:16.148Z",
+      "startedAt": "2026-06-29T12:26:05.660Z",
+      "finishedAt": "2026-06-29T12:27:42.237Z",
       "commands": [
         {
           "command": "aws sts get-caller-identity --profile unify-old --query '{Account:Account,Arn:Arn}' --output json",
@@ -46,8 +46,8 @@
           "reason": "read-only-command-succeeded",
           "service": "sts",
           "operation": "get-caller-identity",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-001-sts-get-caller-identity.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-001-sts-get-caller-identity.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-001-sts-get-caller-identity.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-001-sts-get-caller-identity.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -57,8 +57,8 @@
           "reason": "read-only-command-succeeded",
           "service": "sts",
           "operation": "get-caller-identity",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-002-sts-get-caller-identity.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-002-sts-get-caller-identity.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-002-sts-get-caller-identity.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-002-sts-get-caller-identity.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -68,8 +68,8 @@
           "reason": "read-only-command-succeeded",
           "service": "cloudformation",
           "operation": "describe-stacks",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-003-cloudformation-describe-stacks.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-003-cloudformation-describe-stacks.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-003-cloudformation-describe-stacks.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-003-cloudformation-describe-stacks.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -79,8 +79,8 @@
           "reason": "read-only-command-succeeded",
           "service": "cloudformation",
           "operation": "list-stack-resources",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-004-cloudformation-list-stack-resources.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-004-cloudformation-list-stack-resources.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-004-cloudformation-list-stack-resources.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-004-cloudformation-list-stack-resources.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -90,8 +90,8 @@
           "reason": "read-only-command-succeeded",
           "service": "cloudformation",
           "operation": "describe-stacks",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-005-cloudformation-describe-stacks.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-005-cloudformation-describe-stacks.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-005-cloudformation-describe-stacks.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-005-cloudformation-describe-stacks.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -101,8 +101,8 @@
           "reason": "read-only-command-succeeded",
           "service": "cloudformation",
           "operation": "describe-stacks",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-006-cloudformation-describe-stacks.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-006-cloudformation-describe-stacks.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-006-cloudformation-describe-stacks.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-006-cloudformation-describe-stacks.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -112,8 +112,8 @@
           "reason": "read-only-command-succeeded",
           "service": "ec2",
           "operation": "describe-instances",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-007-ec2-describe-instances.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-007-ec2-describe-instances.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-007-ec2-describe-instances.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-007-ec2-describe-instances.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -123,8 +123,8 @@
           "reason": "read-only-command-succeeded",
           "service": "iam",
           "operation": "get-role-policy",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-008-iam-get-role-policy.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-008-iam-get-role-policy.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-008-iam-get-role-policy.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-008-iam-get-role-policy.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -134,8 +134,8 @@
           "reason": "read-only-command-succeeded",
           "service": "ec2",
           "operation": "describe-security-groups",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-009-ec2-describe-security-groups.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-009-ec2-describe-security-groups.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-009-ec2-describe-security-groups.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-009-ec2-describe-security-groups.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -145,8 +145,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "get-public-access-block",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-010-s3api-get-public-access-block.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-010-s3api-get-public-access-block.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-010-s3api-get-public-access-block.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-010-s3api-get-public-access-block.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -156,8 +156,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "get-bucket-versioning",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-011-s3api-get-bucket-versioning.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-011-s3api-get-bucket-versioning.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-011-s3api-get-bucket-versioning.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-011-s3api-get-bucket-versioning.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -167,8 +167,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "get-bucket-encryption",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-012-s3api-get-bucket-encryption.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-012-s3api-get-bucket-encryption.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-012-s3api-get-bucket-encryption.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-012-s3api-get-bucket-encryption.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -178,8 +178,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "get-bucket-policy-status",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-013-s3api-get-bucket-policy-status.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-013-s3api-get-bucket-policy-status.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-013-s3api-get-bucket-policy-status.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-013-s3api-get-bucket-policy-status.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -189,8 +189,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "get-bucket-lifecycle-configuration",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-014-s3api-get-bucket-lifecycle-configuration.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-014-s3api-get-bucket-lifecycle-configuration.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-014-s3api-get-bucket-lifecycle-configuration.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-014-s3api-get-bucket-lifecycle-configuration.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -200,8 +200,8 @@
           "reason": "read-only-command-succeeded",
           "service": "s3api",
           "operation": "head-object",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-015-s3api-head-object.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-015-s3api-head-object.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-015-s3api-head-object.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-015-s3api-head-object.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -211,8 +211,8 @@
           "reason": "read-only-command-succeeded",
           "service": "rds",
           "operation": "describe-db-clusters",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-016-rds-describe-db-clusters.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-016-rds-describe-db-clusters.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-016-rds-describe-db-clusters.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-016-rds-describe-db-clusters.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -222,8 +222,8 @@
           "reason": "read-only-command-succeeded",
           "service": "rds",
           "operation": "describe-db-instances",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-017-rds-describe-db-instances.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-017-rds-describe-db-instances.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-017-rds-describe-db-instances.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-017-rds-describe-db-instances.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -233,8 +233,8 @@
           "reason": "read-only-command-succeeded",
           "service": "rds",
           "operation": "describe-db-cluster-snapshots",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-018-rds-describe-db-cluster-snapshots.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-018-rds-describe-db-cluster-snapshots.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-018-rds-describe-db-cluster-snapshots.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-018-rds-describe-db-cluster-snapshots.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -244,8 +244,8 @@
           "reason": "read-only-command-succeeded",
           "service": "ecs",
           "operation": "describe-services",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-019-ecs-describe-services.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-019-ecs-describe-services.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-019-ecs-describe-services.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-019-ecs-describe-services.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -255,8 +255,8 @@
           "reason": "read-only-command-succeeded",
           "service": "ecs",
           "operation": "describe-services",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-020-ecs-describe-services.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-020-ecs-describe-services.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-020-ecs-describe-services.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-020-ecs-describe-services.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -266,8 +266,8 @@
           "reason": "read-only-command-succeeded",
           "service": "ecs",
           "operation": "list-tasks",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-021-ecs-list-tasks.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-021-ecs-list-tasks.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-021-ecs-list-tasks.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-021-ecs-list-tasks.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -277,8 +277,8 @@
           "reason": "read-only-command-succeeded",
           "service": "events",
           "operation": "describe-rule",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-022-events-describe-rule.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-022-events-describe-rule.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-022-events-describe-rule.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-022-events-describe-rule.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -288,8 +288,8 @@
           "reason": "read-only-command-succeeded",
           "service": "events",
           "operation": "describe-rule",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-023-events-describe-rule.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-023-events-describe-rule.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-023-events-describe-rule.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-023-events-describe-rule.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -299,8 +299,8 @@
           "reason": "read-only-command-succeeded",
           "service": "secretsmanager",
           "operation": "list-secrets",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-024-secretsmanager-list-secrets.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-024-secretsmanager-list-secrets.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-024-secretsmanager-list-secrets.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-024-secretsmanager-list-secrets.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -310,8 +310,8 @@
           "reason": "read-only-command-succeeded",
           "service": "iam",
           "operation": "get-role",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-025-iam-get-role.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-025-iam-get-role.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-025-iam-get-role.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-025-iam-get-role.stderr.txt",
           "exitCode": 0,
           "signal": null
         },
@@ -321,8 +321,8 @@
           "reason": "read-only-command-succeeded",
           "service": "iam",
           "operation": "get-role-policy",
-          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-026-iam-get-role-policy.stdout.txt",
-          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-23-33-568Z/001-026-iam-get-role-policy.stderr.txt",
+          "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-026-iam-get-role-policy.stdout.txt",
+          "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-25-45-738Z/prod-security-review/runs/prod-security-review-2026-06-29T12-26-05-658Z/001-026-iam-get-role-policy.stderr.txt",
           "exitCode": 0,
           "signal": null
         }
@@ -461,7 +461,7 @@
         "medium": 1,
         "low": 0
       },
-      "awsStateFingerprint": "d21ccefbf185ac961c75bf5d137897736235d321373dc2cc98b157b0c19d7180"
+      "awsStateFingerprint": "c8bde4322717314c7c08c56b30e430a0f062c1f7bbd8cff629b32d92f29fb4b5"
     }
   ],
   "findingSummary": {
@@ -610,7 +610,7 @@
   },
   "drift": {
     "previousFingerprint": null,
-    "currentFingerprint": "d21ccefbf185ac961c75bf5d137897736235d321373dc2cc98b157b0c19d7180",
+    "currentFingerprint": "c8bde4322717314c7c08c56b30e430a0f062c1f7bbd8cff629b32d92f29fb4b5",
     "changed": false
   }
 }

@@ -1,0 +1,31 @@
+{
+    "TransitionDefaultMinimumObjectSize": "all_storage_classes_128K",
+    "Rules": [
+        {
+            "ID": "ExpireNonCurrentVersions-And-IncompleteUploads",
+            "Filter": {
+                "Prefix": ""
+            },
+            "Status": "Enabled",
+            "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 7
+            },
+            "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+            }
+        },
+        {
+            "ID": "TransitionToIntelligentTiering-90Days",
+            "Filter": {
+                "Prefix": ""
+            },
+            "Status": "Enabled",
+            "Transitions": [
+                {
+                    "Days": 90,
+                    "StorageClass": "INTELLIGENT_TIERING"
+                }
+            ]
+        }
+    ]
+}
