@@ -1,0 +1,10 @@
+{
+  "id": "smoke-tests",
+  "status": "PASS",
+  "summary": "Static and adapter smoke tests pass",
+  "details": {
+    "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T11-14-14-799Z/smoke-tests.txt"
+  },
+  "checkedAt": "2026-06-29T11:14:18.548Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T11-14-14-799Z/smoke-tests.json"
+}
