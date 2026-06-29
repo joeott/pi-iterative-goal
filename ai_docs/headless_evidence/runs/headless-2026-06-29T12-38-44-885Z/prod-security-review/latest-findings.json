@@ -18,7 +18,7 @@
     "owner": "unify platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   },
   {
     "id": "SEC-002",
@@ -39,7 +39,7 @@
     "owner": "unify platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   },
   {
     "id": "SEC-003",
@@ -60,7 +60,7 @@
     "owner": "unify platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   },
   {
     "id": "SEC-004",
@@ -81,7 +81,7 @@
     "owner": "unify platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   },
   {
     "id": "SEC-005",
@@ -102,7 +102,7 @@
     "owner": "unify platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   },
   {
     "id": "SEC-006",
@@ -123,6 +123,6 @@
     "owner": "final_fact platform",
     "requires_production_access": false,
     "requires_operator_approval": false,
-    "lifecycle": "repeated"
+    "lifecycle": "new"
   }
 ]

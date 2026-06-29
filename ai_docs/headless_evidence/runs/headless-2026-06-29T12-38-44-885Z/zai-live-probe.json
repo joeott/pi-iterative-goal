@@ -1,0 +1,11 @@
+{
+  "id": "zai-live-probe",
+  "status": "PASS",
+  "summary": "Live Z.ai GLM-5.2 endpoint responds headlessly",
+  "details": {
+    "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/zai-live-probe.txt",
+    "stdoutTail": "> tsc\n\nprobe_zai_glm52\n  ok: true\n  status: 200\n  model: glm-5.2\n  base_url: https://api.z.ai/api/coding/paas/v4\n  latency_ms: 5311\n  env_files_loaded: 1\n    - /Users/joe/Projects/pi-iterative-goal/.env: ZAI_API_BASE_URL, ZAI_API_KEY, ZAI_DEFAULT_MODEL, ZAI_DEFAULT_VISION_MODEL\n  response_text: OK.\n"
+  },
+  "checkedAt": "2026-06-29T12:38:55.486Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/zai-live-probe.json"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "headless-evidence-attestation",
+  "status": "PASS",
+  "summary": "Headless evidence manifest is signed and signature verification rejects tampering",
+  "details": {
+    "manifestPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/evidence-manifest.json",
+    "attestationPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/evidence-manifest.attestation.json",
+    "artifactCount": 83,
+    "keyId": "0d56416264719273",
+    "verification": {
+      "ok": true,
+      "signatureValid": true,
+      "statementDigestValid": true,
+      "artifactDigestValid": true,
+      "problems": []
+    },
+    "tamperRejected": true
+  },
+  "checkedAt": "2026-06-29T12:40:35.470Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/headless-evidence-attestation.json"
+}

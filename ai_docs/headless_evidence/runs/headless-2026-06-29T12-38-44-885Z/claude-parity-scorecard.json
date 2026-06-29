@@ -1,0 +1,382 @@
+{
+  "id": "claude-parity-scorecard",
+  "status": "PASS",
+  "summary": "Empirical outcomes meet Claude Code-style agentic coding expectations",
+  "details": {
+    "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/claude-parity-scorecard.json",
+    "comparisonMode": "claude-code-style-plus-self-capability-comparison",
+    "note": "This compares Pi harness empirical outcomes to explicit Claude Code-style expectations and includes a self-capability comparison between generic coding and cyber-remediation workloads. It does not invoke live Claude Code product calls.",
+    "score": 1,
+    "parityThreshold": 1,
+    "verdict": "meets_or_exceeds_claude_code_style_expectations",
+    "failedExpectations": [],
+    "scorecard": [
+      {
+        "expectation": "Loads repo instructions and keeps durable task planning state",
+        "evidenceIds": [
+          "smoke-tests",
+          "workload-benchmark",
+          "vulnerability-remediation-workload"
+        ],
+        "featureIds": [
+          "repo_instruction_loading",
+          "planning",
+          "task_tracking"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "smoke-tests",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "repo_instruction_loading",
+            "status": "PASS"
+          },
+          {
+            "id": "planning",
+            "status": "PASS"
+          },
+          {
+            "id": "task_tracking",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Uses tools for repository search, scoped edits, and shell validation",
+        "evidenceIds": [
+          "extension-headless-flow",
+          "workload-benchmark",
+          "vulnerability-remediation-workload"
+        ],
+        "featureIds": [
+          "tool_use",
+          "repo_search_read_edit_flows",
+          "shell_execution",
+          "sandboxing"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "extension-headless-flow",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "tool_use",
+            "status": "PASS"
+          },
+          {
+            "id": "repo_search_read_edit_flows",
+            "status": "PASS"
+          },
+          {
+            "id": "shell_execution",
+            "status": "PASS"
+          },
+          {
+            "id": "sandboxing",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Preserves agent workflow integrity across fallback, evaluator gates, git finalization, and restart/replay",
+        "evidenceIds": [
+          "smoke-tests",
+          "workload-benchmark"
+        ],
+        "featureIds": [
+          "subagent_worktree_isolation",
+          "evaluator_gating",
+          "model_fallback",
+          "resumability",
+          "compaction_recovery",
+          "git_finalization"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "smoke-tests",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "subagent_worktree_isolation",
+            "status": "PASS"
+          },
+          {
+            "id": "evaluator_gating",
+            "status": "PASS"
+          },
+          {
+            "id": "model_fallback",
+            "status": "PASS"
+          },
+          {
+            "id": "resumability",
+            "status": "PASS"
+          },
+          {
+            "id": "compaction_recovery",
+            "status": "PASS"
+          },
+          {
+            "id": "git_finalization",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Runs first-class headless CLI workloads with live GLM 5.2",
+        "evidenceIds": [
+          "zai-live-probe",
+          "workload-benchmark",
+          "vulnerability-remediation-workload"
+        ],
+        "featureIds": [
+          "headless_cli",
+          "glm52_live",
+          "realistic_workloads"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "zai-live-probe",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "headless_cli",
+            "status": "PASS"
+          },
+          {
+            "id": "glm52_live",
+            "status": "PASS"
+          },
+          {
+            "id": "realistic_workloads",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Defends cyber workloads with DLP, IPI delimiting, approvals, signed attestations, Secrets Manager handling, AWS boundaries, and CAS route policy",
+        "evidenceIds": [
+          "extension-headless-flow",
+          "workload-benchmark",
+          "vulnerability-remediation-workload",
+          "prod-security-review-readonly",
+          "headless-evidence-attestation"
+        ],
+        "featureIds": [
+          "approval_flows",
+          "aws_integration",
+          "dlp",
+          "indirect_prompt_injection",
+          "signing_attestation",
+          "secrets_manager_handling",
+          "cas_unify_policy",
+          "continuous_readonly_prod_review"
+        ],
+        "exceedsBaselineOn": [
+          "secret redaction",
+          "untrusted-input delimiting",
+          "explicit approval tokens",
+          "CAS route enforcement",
+          "continuous read-only production review"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "extension-headless-flow",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          },
+          {
+            "id": "prod-security-review-readonly",
+            "status": "PASS"
+          },
+          {
+            "id": "headless-evidence-attestation",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "approval_flows",
+            "status": "PASS"
+          },
+          {
+            "id": "aws_integration",
+            "status": "PASS"
+          },
+          {
+            "id": "dlp",
+            "status": "PASS"
+          },
+          {
+            "id": "indirect_prompt_injection",
+            "status": "PASS"
+          },
+          {
+            "id": "signing_attestation",
+            "status": "PASS"
+          },
+          {
+            "id": "secrets_manager_handling",
+            "status": "PASS"
+          },
+          {
+            "id": "cas_unify_policy",
+            "status": "PASS"
+          },
+          {
+            "id": "continuous_readonly_prod_review",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Exports empirical traces and feature coverage with remaining gaps documented",
+        "evidenceIds": [
+          "local-trace-artifact"
+        ],
+        "featureIds": [
+          "tracing",
+          "coverage_report"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "local-trace-artifact",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "tracing",
+            "status": "PASS"
+          },
+          {
+            "id": "coverage_report",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Remediates representative vulnerabilities, not only generic coding bugs",
+        "evidenceIds": [
+          "vulnerability-remediation-workload"
+        ],
+        "featureIds": [
+          "vulnerability_remediation"
+        ],
+        "exceedsBaselineOn": [
+          "security test baseline",
+          "scoped fix",
+          "attested validation"
+        ],
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "vulnerability_remediation",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "expectation": "Compares Pi harness generic coding evidence against stricter cyber-remediation evidence without external product calls",
+        "evidenceIds": [
+          "self-capability-comparator",
+          "workload-benchmark",
+          "vulnerability-remediation-workload"
+        ],
+        "featureIds": [
+          "self_capability_iteration",
+          "vulnerability_remediation",
+          "realistic_workloads"
+        ],
+        "comparisonType": "self-capability",
+        "status": "PASS",
+        "checkResults": [
+          {
+            "id": "self-capability-comparator",
+            "status": "PASS"
+          },
+          {
+            "id": "workload-benchmark",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability-remediation-workload",
+            "status": "PASS"
+          }
+        ],
+        "featureResults": [
+          {
+            "id": "self_capability_iteration",
+            "status": "PASS"
+          },
+          {
+            "id": "vulnerability_remediation",
+            "status": "PASS"
+          },
+          {
+            "id": "realistic_workloads",
+            "status": "PASS"
+          }
+        ]
+      }
+    ]
+  },
+  "checkedAt": "2026-06-29T12:40:35.470Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/claude-parity-scorecard.json"
+}

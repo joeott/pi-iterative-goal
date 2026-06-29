@@ -1,15 +1,15 @@
 # Production Security Review Read-Only Run
 
-- Run ID: `prod-security-review-2026-06-29T12-36-54-832Z`
+- Run ID: `prod-security-review-2026-06-29T12-39-00-281Z`
 - Handoff: `/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md`
 - Handoff SHA-256: `bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc`
 - Mode: `read-only`
 - Read-only enforced: `true`
 - Secret values read: `false`
 - Production mutations attempted: `false`
-- Model-visible handoff context: `/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-36-54-832Z/handoff-model-context.md`
-- Findings: `6` open, `0` new, `6` repeated
-- Drift detected: `true`
+- Model-visible handoff context: `/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-38-44-885Z/prod-security-review/runs/prod-security-review-2026-06-29T12-39-00-281Z/handoff-model-context.md`
+- Findings: `6` open, `6` new, `0` repeated
+- Drift detected: `false`
 - Iterations: `1`
 
 | Iteration | PASS | FAIL | BLOCKED |
@@ -18,12 +18,12 @@
 
 ## Findings
 
-- `SEC-001` critical repeated: Aurora production cluster lacks encryption or deletion protection
-- `SEC-002` high repeated: Aurora automated snapshots are unencrypted
-- `SEC-003` critical repeated: Pipeline Controller role can delete evidence or launch broad compute
-- `SEC-004` high repeated: OCR adapter security group allows broad invocation or egress
-- `SEC-005` medium repeated: Evidence bucket noncurrent version retention is too short for tamper recovery
-- `SEC-006` high repeated: Cross-account Final Fact secrets role has broad secret discovery/read blast radius
+- `SEC-001` critical new: Aurora production cluster lacks encryption or deletion protection
+- `SEC-002` high new: Aurora automated snapshots are unencrypted
+- `SEC-003` critical new: Pipeline Controller role can delete evidence or launch broad compute
+- `SEC-004` high new: OCR adapter security group allows broad invocation or egress
+- `SEC-005` medium new: Evidence bucket noncurrent version retention is too short for tamper recovery
+- `SEC-006` high new: Cross-account Final Fact secrets role has broad secret discovery/read blast radius
 
 ## Commands
 

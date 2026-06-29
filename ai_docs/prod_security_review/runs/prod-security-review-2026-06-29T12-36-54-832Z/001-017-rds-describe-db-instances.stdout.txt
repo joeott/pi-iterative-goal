@@ -1,0 +1,101 @@
+{
+    "DBInstances": [
+        {
+            "DBInstanceIdentifier": "ott-conformance-aurora-instance-1",
+            "DBInstanceClass": "db.serverless",
+            "Engine": "aurora-postgresql",
+            "DBInstanceStatus": "available",
+            "MasterUsername": "directus",
+            "DBName": "case_management",
+            "Endpoint": {
+                "Address": "ott-conformance-aurora-instance-1.cuviucyodbeg.us-east-1.rds.amazonaws.com",
+                "Port": 5432,
+                "HostedZoneId": "Z2R2ITUGPM61AM"
+            },
+            "AllocatedStorage": 1,
+            "InstanceCreateTime": "2025-12-05T22:05:58.742000+00:00",
+            "PreferredBackupWindow": "05:07-05:37",
+            "BackupRetentionPeriod": 30,
+            "DBSecurityGroups": [],
+            "VpcSecurityGroups": [
+                {
+                    "VpcSecurityGroupId": "sg-0babe07d880530404",
+                    "Status": "active"
+                }
+            ],
+            "DBParameterGroups": [
+                {
+                    "DBParameterGroupName": "default.aurora-postgresql16",
+                    "ParameterApplyStatus": "in-sync"
+                }
+            ],
+            "AvailabilityZone": "us-east-1b",
+            "DBSubnetGroup": {
+                "DBSubnetGroupName": "ott-conformance-subnet-group",
+                "DBSubnetGroupDescription": "Subnet group for OTT conformance Aurora cluster",
+                "VpcId": "vpc-53107829",
+                "SubnetGroupStatus": "Complete",
+                "Subnets": [
+                    {
+                        "SubnetIdentifier": "subnet-064ca6900be0c498b",
+                        "SubnetAvailabilityZone": {
+                            "Name": "us-east-1a"
+                        },
+                        "SubnetOutpost": {},
+                        "SubnetStatus": "Active"
+                    },
+                    {
+                        "SubnetIdentifier": "subnet-5c471b3b",
+                        "SubnetAvailabilityZone": {
+                            "Name": "us-east-1b"
+                        },
+                        "SubnetOutpost": {},
+                        "SubnetStatus": "Active"
+                    }
+                ]
+            },
+            "PreferredMaintenanceWindow": "wed:08:51-wed:09:21",
+            "UpgradeRolloutOrder": "second",
+            "PendingModifiedValues": {},
+            "MultiAZ": false,
+            "EngineVersion": "16.11",
+            "AutoMinorVersionUpgrade": true,
+            "ReadReplicaDBInstanceIdentifiers": [],
+            "LicenseModel": "postgresql-license",
+            "StorageThroughput": 0,
+            "OptionGroupMemberships": [
+                {
+                    "OptionGroupName": "default:aurora-postgresql-16",
+                    "Status": "in-sync"
+                }
+            ],
+            "PubliclyAccessible": false,
+            "StorageType": "aurora",
+            "DbInstancePort": 0,
+            "DBClusterIdentifier": "ott-conformance-aurora",
+            "StorageEncrypted": false,
+            "DbiResourceId": "db-Z2SEB2TXV5JKJJT2HQ3RVRLLUA",
+            "CACertificateIdentifier": "rds-ca-rsa2048-g1",
+            "DomainMemberships": [],
+            "CopyTagsToSnapshot": false,
+            "MonitoringInterval": 0,
+            "PromotionTier": 1,
+            "DBInstanceArn": "arn:aws:rds:us-east-1:371292405073:db:ott-conformance-aurora-instance-1",
+            "IAMDatabaseAuthenticationEnabled": true,
+            "DatabaseInsightsMode": "standard",
+            "PerformanceInsightsEnabled": false,
+            "DeletionProtection": false,
+            "AssociatedRoles": [],
+            "TagList": [],
+            "CustomerOwnedIpEnabled": false,
+            "NetworkType": "IPV4",
+            "BackupTarget": "region",
+            "CertificateDetails": {
+                "CAIdentifier": "rds-ca-rsa2048-g1",
+                "ValidTill": "2027-06-10T08:51:04+00:00"
+            },
+            "DedicatedLogVolume": false,
+            "EngineLifecycleSupport": "open-source-rds-extended-support"
+        }
+    ]
+}

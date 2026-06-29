@@ -1,0 +1,241 @@
+{
+    "services": [
+        {
+            "serviceArn": "arn:aws:ecs:us-east-1:371292405073:service/unify-ocr-adapter-production/nemotron-ocr-adapter-production",
+            "serviceName": "nemotron-ocr-adapter-production",
+            "clusterArn": "arn:aws:ecs:us-east-1:371292405073:cluster/unify-ocr-adapter-production",
+            "loadBalancers": [],
+            "serviceRegistries": [
+                {
+                    "registryArn": "arn:aws:servicediscovery:us-east-1:371292405073:service/srv-dslkf3z5gejdvl45"
+                }
+            ],
+            "status": "ACTIVE",
+            "desiredCount": 1,
+            "runningCount": 1,
+            "pendingCount": 0,
+            "launchType": "FARGATE",
+            "platformVersion": "LATEST",
+            "platformFamily": "Linux",
+            "taskDefinition": "arn:aws:ecs:us-east-1:371292405073:task-definition/unify-ocr-adapter-production:4",
+            "deploymentConfiguration": {
+                "deploymentCircuitBreaker": {
+                    "enable": true,
+                    "rollback": false
+                },
+                "maximumPercent": 200,
+                "minimumHealthyPercent": 0,
+                "strategy": "ROLLING",
+                "bakeTimeInMinutes": 0
+            },
+            "deployments": [
+                {
+                    "id": "ecs-svc/6718391619253835569",
+                    "status": "PRIMARY",
+                    "taskDefinition": "arn:aws:ecs:us-east-1:371292405073:task-definition/unify-ocr-adapter-production:4",
+                    "desiredCount": 1,
+                    "pendingCount": 0,
+                    "runningCount": 1,
+                    "failedTasks": 0,
+                    "createdAt": "2026-06-26T03:46:31.458000+02:00",
+                    "updatedAt": "2026-06-26T03:50:06.847000+02:00",
+                    "launchType": "FARGATE",
+                    "platformVersion": "1.4.0",
+                    "platformFamily": "Linux",
+                    "networkConfiguration": {
+                        "awsvpcConfiguration": {
+                            "subnets": [
+                                "subnet-064ca6900be0c498b",
+                                "subnet-01f356c4f298c6532"
+                            ],
+                            "securityGroups": [
+                                "sg-02f7afa7fefba100f"
+                            ],
+                            "assignPublicIp": "DISABLED"
+                        }
+                    },
+                    "rolloutState": "COMPLETED",
+                    "rolloutStateReason": "ECS deployment ecs-svc/6718391619253835569 completed."
+                }
+            ],
+            "roleArn": "arn:aws:iam::371292405073:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+            "events": [
+                {
+                    "id": "603fdd4b-fae2-48d6-895b-6e2570a5f816",
+                    "createdAt": "2026-06-29T09:52:47.503000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "01762899-e16d-4ce9-a36e-7e11739e82d9",
+                    "createdAt": "2026-06-29T03:52:17.591000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "b9d1983d-be11-4591-8a22-ca02173e9ed3",
+                    "createdAt": "2026-06-28T21:52:04.805000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "fffcaaba-f757-4cc2-9d05-0bf5d5029c92",
+                    "createdAt": "2026-06-28T15:51:55.866000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "d4218e92-10f2-4d50-9b2e-258090614166",
+                    "createdAt": "2026-06-28T09:51:39.964000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "08c69887-9949-48ad-b05d-849c4e39553a",
+                    "createdAt": "2026-06-28T03:51:28.232000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "1458b9bc-1a93-4490-a3f0-59940bcf1932",
+                    "createdAt": "2026-06-27T21:51:21.419000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "39b1c050-c035-4489-b4b6-f3952d572b94",
+                    "createdAt": "2026-06-27T15:50:54.800000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "2ddec810-22f9-4dcd-8e10-33c3e5c2a743",
+                    "createdAt": "2026-06-27T09:50:50.375000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "0b4c0478-8552-4fe0-881f-72f3c76e7062",
+                    "createdAt": "2026-06-27T03:50:49.810000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "604f2038-ff67-430e-91f4-e7da45fa2e01",
+                    "createdAt": "2026-06-26T21:50:27.413000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "d8a611be-5911-421a-9215-02720f6e9591",
+                    "createdAt": "2026-06-26T15:50:23.113000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "6f003c1a-ee4f-4f0f-86da-23e29cc17e54",
+                    "createdAt": "2026-06-26T09:50:19.957000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "68c8f2b4-5923-4626-8e3a-0563ed00babd",
+                    "createdAt": "2026-06-26T03:50:06.856000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "0d02375a-a993-461a-97ff-04e7c4963a7c",
+                    "createdAt": "2026-06-26T03:50:06.855000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) (deployment ecs-svc/6718391619253835569) deployment completed."
+                },
+                {
+                    "id": "0bfcb3ff-7e2d-45d1-97f2-a7e1055ecedb",
+                    "createdAt": "2026-06-26T03:46:44.816000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has started 1 tasks: (task 5309621d9c6242e9ad950a1950d7ef09)."
+                },
+                {
+                    "id": "994133e3-1211-40b3-9667-35e25441366d",
+                    "createdAt": "2026-06-26T03:46:44.108000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has stopped 1 running tasks: (task 5bd72bca6f794c2891f08238e51eefc2)."
+                },
+                {
+                    "id": "3be2ed68-bc50-4ccc-9896-2edf1a63642a",
+                    "createdAt": "2026-06-26T00:43:38.135000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "0c988150-9657-46bc-b32f-9d3ec2782392",
+                    "createdAt": "2026-06-26T00:41:32.374000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has started 1 tasks: (task 5bd72bca6f794c2891f08238e51eefc2)."
+                },
+                {
+                    "id": "8c8a3920-8479-436f-857a-48702b001a9a",
+                    "createdAt": "2026-06-26T00:39:30.206000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "cf3f70e3-0229-4459-8d51-c46a978c2152",
+                    "createdAt": "2026-06-26T00:39:30.205000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) (deployment ecs-svc/5796157649450125768) deployment completed."
+                },
+                {
+                    "id": "40f89d1c-f4a2-433f-9ab8-a552f2d24303",
+                    "createdAt": "2026-06-26T00:37:40.057000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has stopped 1 running tasks: (task 7f23e4688c0041bea5f250fdc42aa424)."
+                },
+                {
+                    "id": "90fec103-4482-4085-b712-8ce052260359",
+                    "createdAt": "2026-06-25T23:28:01.660000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "a5912825-b7e9-406d-92c2-69133a414d4f",
+                    "createdAt": "2026-06-25T23:25:52.784000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has started 1 tasks: (task 7f23e4688c0041bea5f250fdc42aa424)."
+                },
+                {
+                    "id": "e6424b1f-3dbf-47dc-8db8-4bb6d8f7ab1f",
+                    "createdAt": "2026-06-25T23:24:29.273000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "8c745329-6d7e-4739-8875-7916c5593eda",
+                    "createdAt": "2026-06-25T23:24:29.272000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) (deployment ecs-svc/8037336715133057371) deployment completed."
+                },
+                {
+                    "id": "edc7bed9-b1b8-40f5-a155-b0006806cbb8",
+                    "createdAt": "2026-06-25T23:03:07.153000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) has reached a steady state."
+                },
+                {
+                    "id": "d5c3b3d2-f893-4306-b78d-da28d116efce",
+                    "createdAt": "2026-06-25T23:03:07.152000+02:00",
+                    "message": "(service nemotron-ocr-adapter-production) (deployment ecs-svc/2347694192969908324) deployment completed."
+                }
+            ],
+            "createdAt": "2026-06-25T23:02:56.350000+02:00",
+            "currentServiceRevisions": [
+                {
+                    "arn": "arn:aws:ecs:us-east-1:371292405073:service-revision/unify-ocr-adapter-production/nemotron-ocr-adapter-production/6718391619253835569",
+                    "requestedTaskCount": 1,
+                    "runningTaskCount": 1,
+                    "pendingTaskCount": 0
+                }
+            ],
+            "placementConstraints": [],
+            "placementStrategy": [],
+            "networkConfiguration": {
+                "awsvpcConfiguration": {
+                    "subnets": [
+                        "subnet-064ca6900be0c498b",
+                        "subnet-01f356c4f298c6532"
+                    ],
+                    "securityGroups": [
+                        "sg-02f7afa7fefba100f"
+                    ],
+                    "assignPublicIp": "DISABLED"
+                }
+            },
+            "healthCheckGracePeriodSeconds": 0,
+            "schedulingStrategy": "REPLICA",
+            "deploymentController": {
+                "type": "ECS"
+            },
+            "createdBy": "arn:aws:iam::371292405073:role/cdk-hnb659fds-cfn-exec-role-371292405073-us-east-1",
+            "enableECSManagedTags": false,
+            "propagateTags": "NONE",
+            "enableExecuteCommand": true,
+            "availabilityZoneRebalancing": "ENABLED",
+            "resourceManagementType": "CUSTOMER"
+        }
+    ],
+    "failures": []
+}
