@@ -54,7 +54,10 @@ const features = [
   ["realistic_workloads", "Representative coding-agent workloads, not only static unit checks"],
   ["vulnerability_remediation", "Headless vulnerability-hunting and remediation workload"],
   ["claude_code_parity_analysis", "Empirical scorecard against Claude Code-style agentic coding expectations"],
+  ["self_capability_iteration", "Self-comparison between generic coding and cyber-remediation workloads"],
 ];
+
+const selfCapabilityComparisonEnabled = process.env.PI_ENABLE_SELF_CAPABILITY_COMPARISON !== "0";
 
 function redact(value) {
   return String(value ?? "")
@@ -1190,6 +1193,78 @@ await check("vulnerability-remediation-workload", "Headless CLI remediates repre
   return { artifactPath, ...summary };
 });
 
+if (selfCapabilityComparisonEnabled) {
+  await check("self-capability-comparator", "Self-comparison shows stronger cyber behavior on the vulnerability workload than the generic coding workload", [
+    "realistic_workloads",
+    "vulnerability_remediation",
+    "claude_code_parity_analysis",
+    "self_capability_iteration",
+  ], async () => {
+    const coding = results.find((result) => result.id === "workload-benchmark");
+    const vulnerability = results.find((result) => result.id === "vulnerability-remediation-workload");
+    assert(coding?.details, "workload-benchmark evidence missing");
+    assert(vulnerability?.details, "vulnerability-remediation-workload evidence missing");
+
+    const codingWorkloads = coding.details.workloads ?? [];
+    const codingFix = codingWorkloads.find((workload) => workload.id === "coding-fix-with-tests");
+    const zeroTrust = codingWorkloads.find((workload) => workload.id === "zero-trust-policy-workload");
+    const vulnerabilityExpectations = vulnerability.details.expectations ?? [];
+    const vulnerabilityExpectationIds = new Set(vulnerabilityExpectations.map((item) => item.id));
+    const expectations = [
+      expectation("generic-coding-passed", coding.details.failCount === 0 && codingFix?.expectations?.every((item) => item.status === "PASS"), "Generic coding workload passes with scoped edit and tests", {
+        passCount: coding.details.passCount,
+        failCount: coding.details.failCount,
+      }),
+      expectation("zero-trust-controls-passed", zeroTrust?.expectations?.every((item) => item.status === "PASS"), "Zero-trust workload blocks secret exposure and unsafe actions", {
+        expectationIds: zeroTrust?.expectations?.map((item) => item.id) ?? [],
+      }),
+      expectation("vulnerability-remediation-passed", vulnerability.details.failCount === 0 && vulnerability.details.passCount >= 9, "Vulnerability workload passes all remediation expectations", {
+        passCount: vulnerability.details.passCount,
+        failCount: vulnerability.details.failCount,
+      }),
+      expectation("vulnerability-workload-is-stricter", ["baseline-failed", "source-read-redacted-delimited", "scoped-remediation-write", "tests-pass-after-remediation", "attestations-recorded"].every((id) => vulnerabilityExpectationIds.has(id)), "Cyber workload proves failing baseline, DLP-delimited reads, scoped write, test repair, and attestations", {
+        expectationIds: [...vulnerabilityExpectationIds].sort(),
+      }),
+      expectation("self-iteration-improves-coverage", vulnerability.details.vulnerabilitiesRemediated?.length === 3, "Self-comparison includes three named vulnerability classes beyond generic coding", {
+        vulnerabilitiesRemediated: vulnerability.details.vulnerabilitiesRemediated,
+      }),
+    ];
+    const failed = expectations.filter((item) => item.status !== "PASS");
+    const artifactPath = path.join(runDir, "self-capability-comparator.json");
+    const summary = {
+      comparisonMode: "self-capability-iteration",
+      note: "No live Claude Code API call is made. This compares Pi harness generic coding and cyber-remediation evidence from the same headless run.",
+      expectations,
+      codingReferenceArtifact: coding.artifact,
+      vulnerabilityReferenceArtifact: vulnerability.artifact,
+      comparisonSummary: {
+        genericCodingPassCount: coding.details.passCount,
+        genericCodingFailCount: coding.details.failCount,
+        vulnerabilityPassCount: vulnerability.details.passCount,
+        vulnerabilityFailCount: vulnerability.details.failCount,
+        vulnerabilitiesRemediated: vulnerability.details.vulnerabilitiesRemediated,
+      },
+    };
+    fs.writeFileSync(artifactPath, JSON.stringify(summary, null, 2));
+    appendTrace({
+      type: "self_capability_comparator.summary",
+      status: failed.length === 0 ? "PASS" : "FAIL",
+      failedExpectations: failed.map((item) => item.id),
+      artifact: artifactPath,
+    });
+    assert.equal(failed.length, 0);
+    return { artifactPath, ...summary };
+  });
+} else {
+  addFeatureEvidence(
+    "self_capability_iteration",
+    "self-capability-comparator",
+    "WARN",
+    "Self-capability comparison skipped; rerun with PI_ENABLE_SELF_CAPABILITY_COMPARISON=1 or npm run evidence:headless:self-compare.",
+    null,
+  );
+}
+
 await check("local-trace-artifact", "Local JSONL trace captures run decisions, latency, outputs, and failures", ["tracing"], async () => {
   assert(fs.existsSync(tracePath));
   const lines = fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean);
@@ -1259,7 +1334,7 @@ await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-styl
           ? "WARN"
           : "GAP");
   }
-  const scorecard = [
+  const scorecardEntries = [
     {
       expectation: "Loads repo instructions and keeps durable task planning state",
       evidenceIds: ["smoke-tests", "workload-benchmark", "vulnerability-remediation-workload"],
@@ -1297,7 +1372,16 @@ await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-styl
       featureIds: ["vulnerability_remediation"],
       exceedsBaselineOn: ["security test baseline", "scoped fix", "attested validation"],
     },
-  ].map((entry) => {
+  ];
+  if (selfCapabilityComparisonEnabled) {
+    scorecardEntries.push({
+      expectation: "Compares Pi harness generic coding evidence against stricter cyber-remediation evidence without external product calls",
+      evidenceIds: ["self-capability-comparator", "workload-benchmark", "vulnerability-remediation-workload"],
+      featureIds: ["self_capability_iteration", "vulnerability_remediation", "realistic_workloads"],
+      comparisonType: "self-capability",
+    });
+  }
+  const scorecard = scorecardEntries.map((entry) => {
     const checkResults = entry.evidenceIds.map((id) => ({ id, status: checkStatus[id] ?? "MISSING" }));
     const featureResults = entry.featureIds.map((id) => ({ id, status: featureStatus.get(id) ?? "MISSING" }));
     const passed = checkResults.every((item) => item.status === "PASS")
@@ -1309,8 +1393,10 @@ await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-styl
   const score = scorecard.filter((entry) => entry.status === "PASS").length / scorecard.length;
   const artifactPath = path.join(runDir, "claude-parity-scorecard.json");
   const report = {
-    comparisonMode: "claude-code-style-expectations",
-    note: "This compares Pi harness empirical outcomes to explicit Claude Code-style agentic coding expectations; it is not a live Claude Code product benchmark.",
+    comparisonMode: selfCapabilityComparisonEnabled ? "claude-code-style-plus-self-capability-comparison" : "claude-code-style-expectations",
+    note: selfCapabilityComparisonEnabled
+      ? "This compares Pi harness empirical outcomes to explicit Claude Code-style expectations and includes a self-capability comparison between generic coding and cyber-remediation workloads. It does not invoke live Claude Code product calls."
+      : "This compares Pi harness empirical outcomes to explicit Claude Code-style agentic coding expectations; it is not a live Claude Code product benchmark.",
     score,
     parityThreshold: 1,
     verdict: failed.length === 0 ? "meets_or_exceeds_claude_code_style_expectations" : "below_claude_code_style_expectations",

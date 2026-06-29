@@ -126,6 +126,13 @@ The harness includes a reproducible headless evidence runner:
 npm run evidence:headless
 ```
 
+For an explicit self-capability comparison across the generic coding and
+vulnerability-remediation workloads:
+
+```bash
+npm run evidence:headless:self-compare
+```
+
 The runner builds the extension, runs the smoke suite, probes live Z.ai
 GLM 5.2, loads the extension through a fake Pi API, exercises representative
 command/tool flows, representative coding workloads, and vulnerability
@@ -149,7 +156,10 @@ The runner also emits `claude-parity-scorecard.json`, which compares empirical
 Pi harness outcomes against explicit Claude Code-style expectations for repo
 context, planning, tool use, validation, replay, model fallback, git finalization,
 headless execution, traceability, and zero-trust security controls. This is a
-style-expectation scorecard, not a live Claude Code product benchmark.
+style-expectation scorecard, not a live Claude Code API benchmark. The
+`self-capability-comparator.json` artifact compares the harness's own generic
+coding workload against the vulnerability-remediation workload so iterative
+improvement is measured without invoking external Claude Code product calls.
 
 ## 5. Data Model
 
