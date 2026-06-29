@@ -1,0 +1,27 @@
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "final-fact-secrets-reader",
+        "RoleId": "AROASAVP2X4RZPREH57PR",
+        "Arn": "arn:aws:iam::138881449763:role/final-fact-secrets-reader",
+        "CreateDate": "2026-06-14T23:03:56+00:00",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "AWS": "arn:aws:iam::371292405073:role/unify-vpc-workbench-role"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        },
+        "Description": "Cross-account read of final-fact/* secrets for unify-vpc-workbench (371292405073). Created for final_fact setup-workstation.sh.",
+        "MaxSessionDuration": 3600,
+        "RoleLastUsed": {
+            "LastUsedDate": "2026-06-21T19:09:42+00:00",
+            "Region": "us-east-1"
+        }
+    }
+}

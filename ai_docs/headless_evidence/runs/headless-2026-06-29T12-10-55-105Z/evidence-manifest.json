@@ -1,0 +1,383 @@
+{
+  "runId": "headless-2026-06-29T12-10-55-105Z",
+  "traceId": "50cf472e-ecaf-4913-866d-2f63917ec22a",
+  "createdAt": "2026-06-29T12:12:46.052Z",
+  "artifactCount": 75,
+  "files": [
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/aws-secret-metadata-describe.txt",
+      "sha256": "cb74225c955a52fce188b0895667c5b75d6cae3482b964fec40e022f3a44ca29",
+      "bytes": 865
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/aws-secret-metadata-sts.txt",
+      "sha256": "eb52dc409f6cc3b444f9bf102bc7394ebb728c93c07522324ebfaea3e8380f22",
+      "bytes": 343
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/aws-secret-metadata.json",
+      "sha256": "5773943d435b6f4385a7540606399e915f53b6e0d5782d73c86c083b730f5d75",
+      "bytes": 809
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/build.json",
+      "sha256": "8c2ee2028545660510d7f3851b9161596edf35d1d8d908dba354561232531604",
+      "bytes": 430
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/build.txt",
+      "sha256": "79733e5475cf06edb0682fd002934968c3663f3c512e51be7e772a5355dde551",
+      "bytes": 211
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/extension-headless-flow.json",
+      "sha256": "006186f5ba483dc2d11dd125de7db896d32e36878e51cffbe42f9a50e6630a1d",
+      "bytes": 5014
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/local-trace-artifact.json",
+      "sha256": "031645a5e893f5664bc9dba09a9784bca7b8d3b336b06aa3faf0b86f7e63bcff",
+      "bytes": 509
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review-readonly.json",
+      "sha256": "9e6d14d6a941af9a38dc62c9e0091416c2d68015a5d12d7f368c077c9120c26e",
+      "bytes": 1060
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review-readonly.txt",
+      "sha256": "7b2ffa0f9106bd62e574ee3796128d6a5c9fc6192d8a4bba9d15cd884c632513",
+      "bytes": 1045
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/latest-readonly-review.json",
+      "sha256": "9e0b2d0bc06ee4f9c265db874277ecc88a898e7f2793e328e954196f62559105",
+      "bytes": 23406
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/latest-readonly-review.md",
+      "sha256": "d536ac6b59f53fe3b0a706dec44d26259a6ac350d4bef7702b9dfabfb3fe53e0",
+      "bytes": 4859
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-001-sts-get-caller-identity.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-001-sts-get-caller-identity.stdout.txt",
+      "sha256": "699b091709803e7a518d83cc5aa55cee575fe2c82230dde41d8db76cd5b4d82c",
+      "bytes": 85
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-002-sts-get-caller-identity.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-002-sts-get-caller-identity.stdout.txt",
+      "sha256": "8faf8a1c53e8f8256e730db513b2ec7cfcb0fa83df6365ff0d154e7cce6ac101",
+      "bytes": 89
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-003-cloudformation-describe-stacks.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-003-cloudformation-describe-stacks.stdout.txt",
+      "sha256": "6cda4684f9b1bc24f5bf5d8a2aab74242608c174b0cb19c3b6eae885ccccca6e",
+      "bytes": 14062
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-004-cloudformation-list-stack-resources.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-004-cloudformation-list-stack-resources.stdout.txt",
+      "sha256": "c610caaae85f10a4c313a8fccb1953bda810a89db71bc9ca339e83733f35bb16",
+      "bytes": 89685
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-005-cloudformation-describe-stacks.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-005-cloudformation-describe-stacks.stdout.txt",
+      "sha256": "d343b762eb631fa41548bc954d58bdd898aed87824eed2635aaa0cbe6a697f28",
+      "bytes": 4182
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-006-cloudformation-describe-stacks.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-006-cloudformation-describe-stacks.stdout.txt",
+      "sha256": "a5a5105f4d1b15f337a3ea6d9275bd011ad5003a12f093099b6692dbf090ce34",
+      "bytes": 7214
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-007-ec2-describe-instances.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-007-ec2-describe-instances.stdout.txt",
+      "sha256": "dda1d89fa606b448ba6aa6bcb58fcd0f4cbe0dca42621f77fbeaea47461e1bc5",
+      "bytes": 9214
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-008-iam-get-role-policy.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-008-iam-get-role-policy.stdout.txt",
+      "sha256": "ba912ad82ecd1241e24539549dc9d5eae1d4310b32300813676e51ee2022809b",
+      "bytes": 7812
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-009-ec2-describe-security-groups.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-009-ec2-describe-security-groups.stdout.txt",
+      "sha256": "516f7b6c50e2d195f73d0409e081f97ed7a665c8e8e2afe22ca618c2a87020e1",
+      "bytes": 13348
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-010-s3api-get-public-access-block.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-010-s3api-get-public-access-block.stdout.txt",
+      "sha256": "31f1f0a092cfdc6587c931923da09fc537545478aca3c5dcc2c060b73a91e4d9",
+      "bytes": 190
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-011-s3api-get-bucket-versioning.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-011-s3api-get-bucket-versioning.stdout.txt",
+      "sha256": "e0d7fcfe6b2ca7b3376e1af42cfbf309d2ee91d4cd664565f9b73c4816079f22",
+      "bytes": 28
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-012-s3api-get-bucket-encryption.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-012-s3api-get-bucket-encryption.stdout.txt",
+      "sha256": "9dcbf5a9219555f282511d108aea0d88f078e8824b9fdd397160394bd3c2a213",
+      "bytes": 429
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-013-s3api-get-bucket-policy-status.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-013-s3api-get-bucket-policy-status.stdout.txt",
+      "sha256": "3c0663146f93074efcc73e0bb39387ba49f250faa3af9190baa6f59088eb62f8",
+      "bytes": 58
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-014-s3api-get-bucket-lifecycle-configuration.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-014-s3api-get-bucket-lifecycle-configuration.stdout.txt",
+      "sha256": "ba1f823046ee71b872466a1eed53c5d272379d18fbb10b51e478bf6e2ddc8bbf",
+      "bytes": 833
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-015-s3api-head-object.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-015-s3api-head-object.stdout.txt",
+      "sha256": "59c3e576b6aa4ab7187edc7a628050d0e87c74bf080e8cea20a960e7796a668b",
+      "bytes": 308
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-016-rds-describe-db-clusters.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-016-rds-describe-db-clusters.stdout.txt",
+      "sha256": "e82962501e04861d85a09bef4da5431c80b35f5f40eabb8654460dd336b02e13",
+      "bytes": 4685
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-017-rds-describe-db-instances.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-017-rds-describe-db-instances.stdout.txt",
+      "sha256": "a418dc2e440ba503ec6f82520475fe91e751e35e39cabc1c046e16188e59f5fb",
+      "bytes": 4104
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-018-rds-describe-db-cluster-snapshots.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-018-rds-describe-db-cluster-snapshots.stdout.txt",
+      "sha256": "f0ee59f2eba3262bad895a713c2166a014fca8410bb9c0d05c6807eb81794871",
+      "bytes": 39871
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-019-ecs-describe-services.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-019-ecs-describe-services.stdout.txt",
+      "sha256": "6a8470ee03339cc6e8676a41e92df69b711436a0b17450b29784237ca1ef5927",
+      "bytes": 12358
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-020-ecs-describe-services.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-020-ecs-describe-services.stdout.txt",
+      "sha256": "4fe5af9f671a3229dd4be117bbd12b8151ef4cffceb38be94ea1be088f093c16",
+      "bytes": 35891
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-021-ecs-list-tasks.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-021-ecs-list-tasks.stdout.txt",
+      "sha256": "1039f40b057a0d2cb60d60b4718d6e55419cdd4639e45432f1f0bf518159d3c3",
+      "bytes": 23
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-022-events-describe-rule.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-022-events-describe-rule.stdout.txt",
+      "sha256": "5da3a588f49bef170c40db6007941245f58d4a915bbf66012ab6d784e8f803f5",
+      "bytes": 641
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-023-events-describe-rule.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-023-events-describe-rule.stdout.txt",
+      "sha256": "e05cee34c518409cf905fda72abd09c9a5b7fb49ef233b1ca38cb94454bb0c13",
+      "bytes": 796
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-024-secretsmanager-list-secrets.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-024-secretsmanager-list-secrets.stdout.txt",
+      "sha256": "710f4850c02b626075017dee5eb7a49b34f871f66f92790deca9e05840e50eb2",
+      "bytes": 2777
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-025-iam-get-role.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-025-iam-get-role.stdout.txt",
+      "sha256": "789a54de5db026d0783bf9677e4438179daaf3d200d396de8b2e5248904a3e5f",
+      "bytes": 976
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-026-iam-get-role-policy.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/001-026-iam-get-role-policy.stdout.txt",
+      "sha256": "0bc9bf01da9860b6557b3923fc2a24d7dfddf97997b58e0c039bd550910d134f",
+      "bytes": 738
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/iteration-001.json",
+      "sha256": "71f1ccb86f6c67f9d3543be20ad3fbbb39182ec21fafe094ee42b803821550ce",
+      "bytes": 21659
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/review-summary.json",
+      "sha256": "9e0b2d0bc06ee4f9c265db874277ecc88a898e7f2793e328e954196f62559105",
+      "bytes": 23406
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/prod-security-review/runs/prod-security-review-2026-06-29T12-11-21-035Z/review-summary.md",
+      "sha256": "d536ac6b59f53fe3b0a706dec44d26259a6ac350d4bef7702b9dfabfb3fe53e0",
+      "bytes": 4859
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/self-capability-comparator.json",
+      "sha256": "005677e7957ffc8d157647adf1a6173c597d436bf3a4192eab59fd28c0db1f0f",
+      "bytes": 3411
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/smoke-tests.json",
+      "sha256": "6b7dc0e1b91eab5194dff16d48749fcdb7bef944c688a8511f69c3cc4b6e1a5f",
+      "bytes": 438
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/smoke-tests.txt",
+      "sha256": "4120cf15c580005de3289ae076f8119f77b358def5d708ef7ae8c4ccb424ebf3",
+      "bytes": 2506
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/trace.jsonl",
+      "sha256": "97d4c40a984383d64b594b3368de5c7a35ed8b23a6785e0e7be5f5c70e658578",
+      "bytes": 130183
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/vulnerability-remediation-workload.json",
+      "sha256": "b726226b94de6a1a230e57d23389c49c8e90382a4545c9289a8381d728a6c63c",
+      "bytes": 12750
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/workload-benchmark-debug.json",
+      "sha256": "33dfb23e55c604cc4775f90f895537c9bea2b4871be5252fc9331d9c3c879027",
+      "bytes": 14186
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/workload-benchmark.json",
+      "sha256": "28e684ae0364fd18d2efe6681657d8432e19c5b9f62dd173fca5ef6501244eae",
+      "bytes": 15676
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/zai-live-probe.json",
+      "sha256": "72ae40495eeeeaf469e951bce9ca573f6f22755d3cf56afd526f45a8d724870e",
+      "bytes": 792
+    },
+    {
+      "path": "ai_docs/headless_evidence/runs/headless-2026-06-29T12-10-55-105Z/zai-live-probe.txt",
+      "sha256": "85f515fcebe1c292980ff499a2e80aed3e56787e3f7a68da9ff2333df3600098",
+      "bytes": 615
+    }
+  ]
+}

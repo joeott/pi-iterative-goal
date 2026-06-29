@@ -1,0 +1,357 @@
+{
+    "SecurityGroups": [
+        {
+            "GroupId": "sg-0ee7ab7b3fb81dfa9",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "Allow Nemotron OCR worker page manifest writes to RDS",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-0babe07d880530404"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "Allow task traffic to AWS PrivateLink endpoints",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-08b5a1546c4d917c4"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": [
+                        {
+                            "Description": "Allow task checkpoint/cache IO through the DynamoDB gateway endpoint",
+                            "PrefixListId": "pl-02cd2c6b"
+                        },
+                        {
+                            "Description": "Allow task S3 document IO through the S3 gateway endpoint",
+                            "PrefixListId": "pl-63a5400a"
+                        }
+                    ]
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "MigrationPath",
+                    "Value": "cas-native"
+                },
+                {
+                    "Key": "DeploymentCohort",
+                    "Value": "cas-ocr-v2"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-Nemotron"
+                },
+                {
+                    "Key": "NetworkPosture",
+                    "Value": "no-nat"
+                },
+                {
+                    "Key": "RuntimePosture",
+                    "Value": "no-nat"
+                },
+                {
+                    "Key": "aws:cloudformation:logical-id",
+                    "Value": "OcrWorkerWorkerTaskSecurityGroup323338A0"
+                },
+                {
+                    "Key": "OcrRuntime",
+                    "Value": "nemotron-parse-v2"
+                },
+                {
+                    "Key": "aws:cloudformation:stack-name",
+                    "Value": "UnifyOcrNemotronStack"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "Provider",
+                    "Value": "nemotron_parse_2"
+                },
+                {
+                    "Key": "CasAlignment",
+                    "Value": "canonical-rds-s3"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "cost-center",
+                    "Value": "ocr-nemotron"
+                },
+                {
+                    "Key": "DeprecationClass",
+                    "Value": "active-canonical"
+                },
+                {
+                    "Key": "aws:cloudformation:stack-id",
+                    "Value": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrNemotronStack/1ed36380-63b0-11f1-97c0-0afff9958c19"
+                }
+            ],
+            "VpcId": "vpc-53107829",
+            "SecurityGroupArn": "arn:aws:ec2:us-east-1:371292405073:security-group/sg-0ee7ab7b3fb81dfa9",
+            "OwnerId": "371292405073",
+            "GroupName": "UnifyOcrNemotronStack-OcrWorkerWorkerTaskSecurityGroup323338A0-ETcGQYZeUdqI",
+            "Description": "No-NAT Nemotron OCR task security group",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "Allow internal ALB to reach Nemotron sidecar",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-0685fe4e70225feca"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0481376bdc6ec6803",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8080,
+                    "ToPort": 8080,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "GPU OCR FastAPI",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-096e99fad85fe5681"
+                        },
+                        {
+                            "Description": "cas-uy-ocr-test",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-07871dab14054b506"
+                        },
+                        {
+                            "Description": "OCR adapter Fargate /ocr/s3 (G4 durable PC to adapter egress)",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-02f7afa7fefba100f"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "UserIdGroupPairs": [
+                        {
+                            "Description": "PostgreSQL to RDS Aurora",
+                            "UserId": "371292405073",
+                            "GroupId": "sg-0babe07d880530404"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "371292405073",
+                            "GroupId": "sg-02633ad13768cb1fc"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 10307,
+                    "ToPort": 10307,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Redis Cloud VPC peering - enrichment stream (#4047)",
+                            "CidrIp": "192.168.0.0/24"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "HTTPS to AWS APIs and Dropbox",
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 7687,
+                    "ToPort": 7687,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Neo4j Aura Bolt protocol",
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "aws:cloudformation:stack-name",
+                    "Value": "UnifyOcrCpuStack"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "aws:cloudformation:logical-id",
+                    "Value": "PipelineControllerPipelineControllerSG99359DAC"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-CPU"
+                },
+                {
+                    "Key": "cost-center",
+                    "Value": "ocr-process"
+                },
+                {
+                    "Key": "aws:cloudformation:stack-id",
+                    "Value": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrCpuStack/8f689290-0bb4-11f1-9a38-0e1e4ff2209d"
+                }
+            ],
+            "VpcId": "vpc-53107829",
+            "SecurityGroupArn": "arn:aws:ec2:us-east-1:371292405073:security-group/sg-0481376bdc6ec6803",
+            "OwnerId": "371292405073",
+            "GroupName": "UnifyOcrCpuStack-PipelineControllerPipelineControllerSG99359DAC-zOM7kLKnKwKK",
+            "Description": "Pipeline Controller EC2 - zero inbound, HTTPS + RDS egress",
+            "IpPermissions": []
+        },
+        {
+            "GroupId": "sg-02f7afa7fefba100f",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Allow all outbound traffic by default",
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "MigrationPath",
+                    "Value": "cas-native"
+                },
+                {
+                    "Key": "Provider",
+                    "Value": "nemotron_parse_2"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "OcrRuntime",
+                    "Value": "nemotron-parse-v2-gpuhttp-adapter"
+                },
+                {
+                    "Key": "aws:cloudformation:stack-id",
+                    "Value": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrAdapterStack/18d85180-70d9-11f1-a9e5-0eaa1051325b"
+                },
+                {
+                    "Key": "DeprecationClass",
+                    "Value": "active-canonical"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-Adapter"
+                },
+                {
+                    "Key": "aws:cloudformation:logical-id",
+                    "Value": "AdapterServiceSecurityGroup4377536C"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "CasAlignment",
+                    "Value": "canonical-rds-s3"
+                },
+                {
+                    "Key": "aws:cloudformation:stack-name",
+                    "Value": "UnifyOcrAdapterStack"
+                },
+                {
+                    "Key": "DeploymentCohort",
+                    "Value": "cas-ocr-v2"
+                }
+            ],
+            "VpcId": "vpc-53107829",
+            "SecurityGroupArn": "arn:aws:ec2:us-east-1:371292405073:security-group/sg-02f7afa7fefba100f",
+            "OwnerId": "371292405073",
+            "GroupName": "UnifyOcrAdapterStack-AdapterServiceSecurityGroup4377536C-hLRffZxORDDf",
+            "Description": "nemotron-ocr-adapter Fargate service (gpu_http /ocr/s3 shim)",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8080,
+                    "ToPort": 8080,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "Description": "Allow in-VPC pipeline-controller /ocr/s3 traffic",
+                            "CidrIp": "172.31.0.0/16"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        }
+    ]
+}

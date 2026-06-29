@@ -1,0 +1,293 @@
+{
+  "index": 1,
+  "startedAt": "2026-06-29T12:09:15.447Z",
+  "finishedAt": "2026-06-29T12:10:46.558Z",
+  "commands": [
+    {
+      "command": "aws sts get-caller-identity --profile unify-old --query '{Account:Account,Arn:Arn}' --output json",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "sts",
+      "operation": "get-caller-identity",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-001-sts-get-caller-identity.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-001-sts-get-caller-identity.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws sts get-caller-identity --profile api-admin --query '{Account:Account,Arn:Arn}' --output json",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "sts",
+      "operation": "get-caller-identity",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-002-sts-get-caller-identity.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-002-sts-get-caller-identity.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws cloudformation describe-stacks --stack-name UnifyOcrCpuStack --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "cloudformation",
+      "operation": "describe-stacks",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-003-cloudformation-describe-stacks.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-003-cloudformation-describe-stacks.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws cloudformation list-stack-resources --stack-name UnifyOcrCpuStack --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "cloudformation",
+      "operation": "list-stack-resources",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-004-cloudformation-list-stack-resources.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-004-cloudformation-list-stack-resources.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws cloudformation describe-stacks --stack-name UnifyOcrAdapterStack --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "cloudformation",
+      "operation": "describe-stacks",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-005-cloudformation-describe-stacks.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-005-cloudformation-describe-stacks.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws cloudformation describe-stacks --stack-name UnifyOcrNemotronStack --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "cloudformation",
+      "operation": "describe-stacks",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-006-cloudformation-describe-stacks.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-006-cloudformation-describe-stacks.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws ec2 describe-instances --profile unify-old --region us-east-1    --filters 'Name=tag:Component,Values=PipelineController' 'Name=instance-state-name,Values=running,stopped'",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "ec2",
+      "operation": "describe-instances",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-007-ec2-describe-instances.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-007-ec2-describe-instances.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws iam get-role-policy    --role-name UnifyOcrCpuStack-PipelineControllerPipelineControll-eTBCkPXF2Rhe    --policy-name PipelineControllerPipelineControllerRoleDefaultPolicyA0058FF1    --profile unify-old",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "iam",
+      "operation": "get-role-policy",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-008-iam-get-role-policy.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-008-iam-get-role-policy.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws ec2 describe-security-groups --group-ids sg-0481376bdc6ec6803 sg-02f7afa7fefba100f sg-0ee7ab7b3fb81dfa9    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "ec2",
+      "operation": "describe-security-groups",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-009-ec2-describe-security-groups.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-009-ec2-describe-security-groups.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api get-public-access-block --bucket ott-legal-evidence-documents --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "get-public-access-block",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-010-s3api-get-public-access-block.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-010-s3api-get-public-access-block.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api get-bucket-versioning --bucket ott-legal-evidence-documents --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "get-bucket-versioning",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-011-s3api-get-bucket-versioning.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-011-s3api-get-bucket-versioning.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api get-bucket-encryption --bucket ott-legal-evidence-documents --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "get-bucket-encryption",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-012-s3api-get-bucket-encryption.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-012-s3api-get-bucket-encryption.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api get-bucket-policy-status --bucket ott-legal-evidence-documents --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "get-bucket-policy-status",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-013-s3api-get-bucket-policy-status.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-013-s3api-get-bucket-policy-status.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api get-bucket-lifecycle-configuration --bucket ott-legal-evidence-documents --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "get-bucket-lifecycle-configuration",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-014-s3api-get-bucket-lifecycle-configuration.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-014-s3api-get-bucket-lifecycle-configuration.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws s3api head-object --bucket ott-legal-evidence-documents    --key pipeline-controller/src/pipeline_controller/daemon.py    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "s3api",
+      "operation": "head-object",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-015-s3api-head-object.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-015-s3api-head-object.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws rds describe-db-clusters --db-cluster-identifier ott-conformance-aurora --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "rds",
+      "operation": "describe-db-clusters",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-016-rds-describe-db-clusters.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-016-rds-describe-db-clusters.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws rds describe-db-instances --profile unify-old --region us-east-1    --filters Name=db-cluster-id,Values=ott-conformance-aurora",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "rds",
+      "operation": "describe-db-instances",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-017-rds-describe-db-instances.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-017-rds-describe-db-instances.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws rds describe-db-cluster-snapshots --db-cluster-identifier ott-conformance-aurora    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "rds",
+      "operation": "describe-db-cluster-snapshots",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-018-rds-describe-db-cluster-snapshots.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-018-rds-describe-db-cluster-snapshots.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws ecs describe-services --cluster unify-ocr-adapter-production    --services nemotron-ocr-adapter-production --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "ecs",
+      "operation": "describe-services",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-019-ecs-describe-services.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-019-ecs-describe-services.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws ecs describe-services --cluster unify-ocr-nemotron-production    --services nemotron-ocr-production --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "ecs",
+      "operation": "describe-services",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-020-ecs-describe-services.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-020-ecs-describe-services.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws ecs list-tasks --cluster graph-projection-production --desired-status RUNNING    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "ecs",
+      "operation": "list-tasks",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-021-ecs-list-tasks.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-021-ecs-list-tasks.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws events describe-rule --name UnifyOcrCpuStack-S3ObjectCreatedRule81363060-g1xdUfu728iT    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "events",
+      "operation": "describe-rule",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-022-events-describe-rule.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-022-events-describe-rule.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws events describe-rule --name UnifyOcrCpuStack-PipelineControllerSfnCompletionRul-JocNEyYNqftn    --profile unify-old --region us-east-1",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "events",
+      "operation": "describe-rule",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-023-events-describe-rule.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-023-events-describe-rule.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws secretsmanager list-secrets --profile api-admin --region us-east-1    --filters Key=name,Values=final-fact    --query 'SecretList[].{Name:Name,Arn:ARN,LastChanged:LastChangedDate,KmsKeyId:KmsKeyId}'",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "secretsmanager",
+      "operation": "list-secrets",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-024-secretsmanager-list-secrets.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-024-secretsmanager-list-secrets.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws iam get-role --role-name final-fact-secrets-reader --profile api-admin",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "iam",
+      "operation": "get-role",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-025-iam-get-role.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-025-iam-get-role.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    },
+    {
+      "command": "aws iam get-role-policy --role-name final-fact-secrets-reader    --policy-name final-fact-secrets-read --profile api-admin",
+      "status": "PASS",
+      "reason": "read-only-command-succeeded",
+      "service": "iam",
+      "operation": "get-role-policy",
+      "stdoutPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-026-iam-get-role-policy.stdout.txt",
+      "stderrPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/prod_security_review/runs/prod-security-review-2026-06-29T12-09-15-446Z/001-026-iam-get-role-policy.stderr.txt",
+      "exitCode": 0,
+      "signal": null
+    }
+  ]
+}

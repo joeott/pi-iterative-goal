@@ -1,0 +1,8 @@
+{
+    "Name": "UnifyOcrCpuStack-S3ObjectCreatedRule81363060-g1xdUfu728iT",
+    "Arn": "arn:aws:events:us-east-1:371292405073:rule/UnifyOcrCpuStack-S3ObjectCreatedRule81363060-g1xdUfu728iT",
+    "EventPattern": "{\"detail-type\":[\"Object Created\"],\"source\":[\"aws.s3\"],\"detail\":{\"bucket\":{\"name\":[\"ott-legal-evidence-documents\"]},\"object\":{\"size\":[{\"numeric\":[\">=\",1]}],\"key\":[{\"prefix\":\"input/dropbox-sync/\"},{\"prefix\":\"0060fe67-9977-5de1-ba4e-aaa2684afd4a/\"},{\"prefix\":\"7bc302c6-4593-492e-89f3-0dcd4f478fb4/\"}]}}}",
+    "State": "ENABLED",
+    "EventBusName": "default",
+    "CreatedBy": "371292405073"
+}
