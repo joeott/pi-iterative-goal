@@ -55,7 +55,8 @@ import { registerGoalCoreTools } from "./ui/tools.js";
 import { registerToolInterception } from "./ui/tool-interception.js";
 import { logDebug } from "./logging.js";
 import { loadProjectInstructions } from "./project-instructions.js";
-import { registerZaiGlm52Provider } from "./zai.js";
+import { registerHarnessUi } from "./harness-ui.js";
+import { registerZaiGlm52Provider, registerZaiGlm52ProviderWithPi } from "./zai.js";
 
 export { extractTextFromParts, synthesizePhaseResultSafe } from "./kernel/output-synthesis.js";
 
@@ -121,6 +122,7 @@ async function buildRuntimeCapabilitySnapshot(
 
 export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   log("=== Extension initializing (v3 hardened) ===");
+  registerZaiGlm52ProviderWithPi(pi);
   const stateManager = createStateManager(pi);
 
   // ── Register tools ───────────────────────────────────────────────
@@ -152,4 +154,6 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   registerGovernanceCommands(pi, stateManager);
 
   registerDashboardCommands(pi, stateManager);
+
+  registerHarnessUi(pi, stateManager);
 }

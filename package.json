@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "pi": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/pi-iterative-goal.js"
     ]
   },
   "scripts": {
