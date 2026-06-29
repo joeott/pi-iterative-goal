@@ -1,0 +1,293 @@
+{
+  "runId": "prod-security-review-2026-06-29T12-44-50-460Z",
+  "createdAt": "2026-06-29T12:46:25.002Z",
+  "algorithm": "ed25519",
+  "keyId": "18d3a8e3a1e95de2",
+  "handoffSha256": "bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc",
+  "readOnlyEnforced": true,
+  "secretValuesRead": false,
+  "productionMutationsAttempted": false,
+  "artifactCount": 56,
+  "artifacts": [
+    {
+      "path": "001-001-sts-get-caller-identity.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-001-sts-get-caller-identity.stdout.txt",
+      "bytes": 85,
+      "sha256": "699b091709803e7a518d83cc5aa55cee575fe2c82230dde41d8db76cd5b4d82c"
+    },
+    {
+      "path": "001-002-sts-get-caller-identity.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-002-sts-get-caller-identity.stdout.txt",
+      "bytes": 89,
+      "sha256": "8faf8a1c53e8f8256e730db513b2ec7cfcb0fa83df6365ff0d154e7cce6ac101"
+    },
+    {
+      "path": "001-003-cloudformation-describe-stacks.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-003-cloudformation-describe-stacks.stdout.txt",
+      "bytes": 14062,
+      "sha256": "6cda4684f9b1bc24f5bf5d8a2aab74242608c174b0cb19c3b6eae885ccccca6e"
+    },
+    {
+      "path": "001-004-cloudformation-list-stack-resources.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-004-cloudformation-list-stack-resources.stdout.txt",
+      "bytes": 89685,
+      "sha256": "c610caaae85f10a4c313a8fccb1953bda810a89db71bc9ca339e83733f35bb16"
+    },
+    {
+      "path": "001-005-cloudformation-describe-stacks.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-005-cloudformation-describe-stacks.stdout.txt",
+      "bytes": 4182,
+      "sha256": "d343b762eb631fa41548bc954d58bdd898aed87824eed2635aaa0cbe6a697f28"
+    },
+    {
+      "path": "001-006-cloudformation-describe-stacks.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-006-cloudformation-describe-stacks.stdout.txt",
+      "bytes": 7214,
+      "sha256": "a5a5105f4d1b15f337a3ea6d9275bd011ad5003a12f093099b6692dbf090ce34"
+    },
+    {
+      "path": "001-007-ec2-describe-instances.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-007-ec2-describe-instances.stdout.txt",
+      "bytes": 9214,
+      "sha256": "dda1d89fa606b448ba6aa6bcb58fcd0f4cbe0dca42621f77fbeaea47461e1bc5"
+    },
+    {
+      "path": "001-008-iam-get-role-policy.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-008-iam-get-role-policy.stdout.txt",
+      "bytes": 7812,
+      "sha256": "ba912ad82ecd1241e24539549dc9d5eae1d4310b32300813676e51ee2022809b"
+    },
+    {
+      "path": "001-009-ec2-describe-security-groups.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-009-ec2-describe-security-groups.stdout.txt",
+      "bytes": 13348,
+      "sha256": "516f7b6c50e2d195f73d0409e081f97ed7a665c8e8e2afe22ca618c2a87020e1"
+    },
+    {
+      "path": "001-010-s3api-get-public-access-block.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-010-s3api-get-public-access-block.stdout.txt",
+      "bytes": 190,
+      "sha256": "31f1f0a092cfdc6587c931923da09fc537545478aca3c5dcc2c060b73a91e4d9"
+    },
+    {
+      "path": "001-011-s3api-get-bucket-versioning.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-011-s3api-get-bucket-versioning.stdout.txt",
+      "bytes": 28,
+      "sha256": "e0d7fcfe6b2ca7b3376e1af42cfbf309d2ee91d4cd664565f9b73c4816079f22"
+    },
+    {
+      "path": "001-012-s3api-get-bucket-encryption.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-012-s3api-get-bucket-encryption.stdout.txt",
+      "bytes": 429,
+      "sha256": "9dcbf5a9219555f282511d108aea0d88f078e8824b9fdd397160394bd3c2a213"
+    },
+    {
+      "path": "001-013-s3api-get-bucket-policy-status.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-013-s3api-get-bucket-policy-status.stdout.txt",
+      "bytes": 58,
+      "sha256": "3c0663146f93074efcc73e0bb39387ba49f250faa3af9190baa6f59088eb62f8"
+    },
+    {
+      "path": "001-014-s3api-get-bucket-lifecycle-configuration.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-014-s3api-get-bucket-lifecycle-configuration.stdout.txt",
+      "bytes": 833,
+      "sha256": "ba1f823046ee71b872466a1eed53c5d272379d18fbb10b51e478bf6e2ddc8bbf"
+    },
+    {
+      "path": "001-015-s3api-head-object.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-015-s3api-head-object.stdout.txt",
+      "bytes": 308,
+      "sha256": "59c3e576b6aa4ab7187edc7a628050d0e87c74bf080e8cea20a960e7796a668b"
+    },
+    {
+      "path": "001-016-rds-describe-db-clusters.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-016-rds-describe-db-clusters.stdout.txt",
+      "bytes": 4685,
+      "sha256": "96b08969d90aa19e608370b9ccd0eb54a1e3a2f73298fbb32e7b6dec797a6910"
+    },
+    {
+      "path": "001-017-rds-describe-db-instances.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-017-rds-describe-db-instances.stdout.txt",
+      "bytes": 4104,
+      "sha256": "a418dc2e440ba503ec6f82520475fe91e751e35e39cabc1c046e16188e59f5fb"
+    },
+    {
+      "path": "001-018-rds-describe-db-cluster-snapshots.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-018-rds-describe-db-cluster-snapshots.stdout.txt",
+      "bytes": 39871,
+      "sha256": "f0ee59f2eba3262bad895a713c2166a014fca8410bb9c0d05c6807eb81794871"
+    },
+    {
+      "path": "001-019-ecs-describe-services.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-019-ecs-describe-services.stdout.txt",
+      "bytes": 12358,
+      "sha256": "6a8470ee03339cc6e8676a41e92df69b711436a0b17450b29784237ca1ef5927"
+    },
+    {
+      "path": "001-020-ecs-describe-services.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-020-ecs-describe-services.stdout.txt",
+      "bytes": 35891,
+      "sha256": "4fe5af9f671a3229dd4be117bbd12b8151ef4cffceb38be94ea1be088f093c16"
+    },
+    {
+      "path": "001-021-ecs-list-tasks.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-021-ecs-list-tasks.stdout.txt",
+      "bytes": 23,
+      "sha256": "1039f40b057a0d2cb60d60b4718d6e55419cdd4639e45432f1f0bf518159d3c3"
+    },
+    {
+      "path": "001-022-events-describe-rule.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-022-events-describe-rule.stdout.txt",
+      "bytes": 641,
+      "sha256": "5da3a588f49bef170c40db6007941245f58d4a915bbf66012ab6d784e8f803f5"
+    },
+    {
+      "path": "001-023-events-describe-rule.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-023-events-describe-rule.stdout.txt",
+      "bytes": 796,
+      "sha256": "e05cee34c518409cf905fda72abd09c9a5b7fb49ef233b1ca38cb94454bb0c13"
+    },
+    {
+      "path": "001-024-secretsmanager-list-secrets.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-024-secretsmanager-list-secrets.stdout.txt",
+      "bytes": 2777,
+      "sha256": "710f4850c02b626075017dee5eb7a49b34f871f66f92790deca9e05840e50eb2"
+    },
+    {
+      "path": "001-025-iam-get-role.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-025-iam-get-role.stdout.txt",
+      "bytes": 976,
+      "sha256": "789a54de5db026d0783bf9677e4438179daaf3d200d396de8b2e5248904a3e5f"
+    },
+    {
+      "path": "001-026-iam-get-role-policy.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "001-026-iam-get-role-policy.stdout.txt",
+      "bytes": 738,
+      "sha256": "0bc9bf01da9860b6557b3923fc2a24d7dfddf97997b58e0c039bd550910d134f"
+    },
+    {
+      "path": "findings.json",
+      "bytes": 7494,
+      "sha256": "91bf06e742f460457f6f854eb725d2317b2d06544a6959399dbe640a36942b16"
+    },
+    {
+      "path": "findings.jsonl",
+      "bytes": 6772,
+      "sha256": "8c31ee2071b239985d8249e1947391f9472d8b90c3116002f52444399bb8dd90"
+    },
+    {
+      "path": "handoff-model-context.md",
+      "bytes": 24595,
+      "sha256": "43e74e2a87bc8de77fa914b406c60da5a8b7a79e24795323478eecafe720233a"
+    },
+    {
+      "path": "iteration-001.json",
+      "bytes": 26666,
+      "sha256": "69b886f7eae71abf86f58b78e2b751ef1535fa59f41137e000c40417cd07cc02"
+    }
+  ]
+}

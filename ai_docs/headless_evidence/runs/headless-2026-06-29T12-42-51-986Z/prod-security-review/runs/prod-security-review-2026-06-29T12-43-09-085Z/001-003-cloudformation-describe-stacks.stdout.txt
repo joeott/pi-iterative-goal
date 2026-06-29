@@ -1,0 +1,261 @@
+{
+    "Stacks": [
+        {
+            "StackId": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrCpuStack/8f689290-0bb4-11f1-9a38-0e1e4ff2209d",
+            "StackName": "UnifyOcrCpuStack",
+            "ChangeSetId": "arn:aws:cloudformation:us-east-1:371292405073:changeSet/cdk-deploy-change-set/331a2319-f964-4772-abe5-0c5807983182",
+            "Description": "Unify OCR CPU - pipeline lambdas, state machine, and CPU Fargate service (Production)",
+            "Parameters": [
+                {
+                    "ParameterKey": "SsmParameterValueawsserviceamiamazonlinuxlatestal2023amikernel61arm64C96584B6F00A464EAD1953AFF4B05118Parameter",
+                    "ParameterValue": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-arm64",
+                    "ResolvedValue": "ami-06c84fbfd615657d3"
+                },
+                {
+                    "ParameterKey": "BootstrapVersion",
+                    "ParameterValue": "/cdk-bootstrap/hnb659fds/version",
+                    "ResolvedValue": "30"
+                }
+            ],
+            "CreationTime": "2026-02-17T03:55:55.659000+00:00",
+            "LastUpdatedTime": "2026-06-29T11:46:12.909000+00:00",
+            "RollbackConfiguration": {},
+            "StackStatus": "UPDATE_COMPLETE",
+            "DisableRollback": false,
+            "NotificationARNs": [],
+            "Capabilities": [
+                "CAPABILITY_IAM",
+                "CAPABILITY_NAMED_IAM",
+                "CAPABILITY_AUTO_EXPAND"
+            ],
+            "Outputs": [
+                {
+                    "OutputKey": "ReconciliationHealthProbeFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:ReconciliationHealthProbe-production",
+                    "Description": "Reconciliation Health Probe Lambda ARN (invoked by EC2 orchestrator)"
+                },
+                {
+                    "OutputKey": "WaveTriggerFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-WaveTriggerFunctionB4ECC703-vbyUBwWDzxfB",
+                    "Description": "Wave trigger Lambda ARN"
+                },
+                {
+                    "OutputKey": "PipelineControllerCallbackFunctionArn80CAFCD6",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-PipelineControllerSfnCompletionCa-lPLrZPskMyDk",
+                    "Description": "SFN completion callback Lambda ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncCursorsTableName",
+                    "OutputValue": "unify-dropbox-sync-cursors",
+                    "Description": "DynamoDB table for Dropbox sync per-folder cursor storage"
+                },
+                {
+                    "OutputKey": "DropboxSyncQueueBacklogAlarmArn",
+                    "OutputValue": "arn:aws:cloudwatch:us-east-1:371292405073:alarm:production-DropboxSyncCpu-QueueBacklog",
+                    "Description": "Dropbox Sync queue backlog alarm ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncErrorRateAlarmArn",
+                    "OutputValue": "arn:aws:cloudwatch:us-east-1:371292405073:alarm:production-DropboxSyncCpu-HighErrorRate",
+                    "Description": "Dropbox Sync Lambda error rate alarm ARN"
+                },
+                {
+                    "OutputKey": "InferenceServerInferenceServerInstanceId142D32DA",
+                    "OutputValue": "i-034a301b434472864",
+                    "Description": "Inference Server EC2 Instance ID",
+                    "ExportName": "InferenceServerInstanceId"
+                },
+                {
+                    "OutputKey": "InferenceServerInferenceServerSecurityGroupIdEE3133D2",
+                    "OutputValue": "sg-02633ad13768cb1fc",
+                    "Description": "Inference Server Security Group ID",
+                    "ExportName": "InferenceServerSecurityGroupId"
+                },
+                {
+                    "OutputKey": "PipelineControllerStateTableName6041ED36",
+                    "OutputValue": "unify-pipeline-controller-state",
+                    "Description": "DynamoDB table for controller state"
+                },
+                {
+                    "OutputKey": "PageCheckpointTableName",
+                    "OutputValue": "ocr-page-checkpoints-production",
+                    "Description": "DynamoDB table for OCR page-level checkpoints",
+                    "ExportName": "UnifyOcrCpuPageCheckpointTableName-production"
+                },
+                {
+                    "OutputKey": "ContentHashTableArn",
+                    "OutputValue": "arn:aws:dynamodb:us-east-1:371292405073:table/ocr-content-hashes-production",
+                    "Description": "Content hash DynamoDB table ARN (for GPU stack)",
+                    "ExportName": "UnifyOcrCpuContentHashTableArn-production"
+                },
+                {
+                    "OutputKey": "DropboxDownloadQueueUrl",
+                    "OutputValue": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxDownloadQueue-production",
+                    "Description": "SQS queue URL for Dropbox download tasks (discovery ? downloader)"
+                },
+                {
+                    "OutputKey": "ReconciliationHealthProbeFunctionName",
+                    "OutputValue": "ReconciliationHealthProbe-production",
+                    "Description": "Reconciliation Health Probe Lambda function name"
+                },
+                {
+                    "OutputKey": "DropboxSyncDispatcherFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-DropboxSyncDispatcherFunction7661-xXgStZX3GcaV",
+                    "Description": "Dropbox sync dispatcher Lambda ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-DropboxSyncFunction-production",
+                    "Description": "DropboxSync Lambda ARN (OcrCpuStack)"
+                },
+                {
+                    "OutputKey": "DropboxBatchSyncFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-DropboxBatchSyncFunction-production",
+                    "Description": "DropboxBatchSync Lambda ARN ? manual historical backfill (ADR-031)"
+                },
+                {
+                    "OutputKey": "PipelineControllerConcurrencyTableName0F02E4AA",
+                    "OutputValue": "unify-sfn-concurrency",
+                    "Description": "DynamoDB table for SFN concurrency tracking"
+                },
+                {
+                    "OutputKey": "CpuCodeBuildProjectName",
+                    "OutputValue": "unify-ocr-worker-cpu-production",
+                    "Description": "CodeBuild project for CPU OCR worker image builds"
+                },
+                {
+                    "OutputKey": "PipelineControllerInstanceId1261503B",
+                    "OutputValue": "i-04e23da48cd8505bb",
+                    "Description": "Pipeline Controller EC2 instance ID"
+                },
+                {
+                    "OutputKey": "InferenceServerInferenceServerPrivateIp1CBF4E81",
+                    "OutputValue": "172.31.40.39",
+                    "Description": "Inference Server private IP (for SFN HTTP invoke)",
+                    "ExportName": "InferenceServerPrivateIp"
+                },
+                {
+                    "OutputKey": "Adr029ValidationQueueUrl",
+                    "OutputValue": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-Adr029ValidationQueue-production",
+                    "Description": "ADR-029 validation queue URL for on-write chunk proofs"
+                },
+                {
+                    "OutputKey": "ContentHashTableName",
+                    "OutputValue": "ocr-content-hashes-production",
+                    "Description": "DynamoDB table for OCR content hash deduplication",
+                    "ExportName": "UnifyOcrCpuContentHashTableName-production"
+                },
+                {
+                    "OutputKey": "PipelineControllerConcurrencyTableName",
+                    "OutputValue": "unify-sfn-concurrency",
+                    "Description": "DynamoDB table for SFN concurrency tracking"
+                },
+                {
+                    "OutputKey": "DeterministicChunkingErrorAlarmArn",
+                    "OutputValue": "arn:aws:cloudwatch:us-east-1:371292405073:alarm:UnifyOcrCpuStack-DeterministicChunkingErrors-production",
+                    "Description": "Deterministic chunking error alarm ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncQueueArn",
+                    "OutputValue": "arn:aws:sqs:us-east-1:371292405073:UnifyOcrCpuStack-DropboxSyncEventQueue97A92A18-EvXlBFNMgBwG",
+                    "Description": "Dropbox sync event buffer queue ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncQueueDepthAlarmArn",
+                    "OutputValue": "arn:aws:cloudwatch:us-east-1:371292405073:alarm:UnifyOcrCpuStack-DropboxSyncQueueDepth-production",
+                    "Description": "Dropbox sync queue depth alarm ARN"
+                },
+                {
+                    "OutputKey": "PipelineControllerClosureSlosDashboardNameA2A00765",
+                    "OutputValue": "PipelineClosureSLOs-production",
+                    "Description": "Pipeline closure SLO dashboard name"
+                },
+                {
+                    "OutputKey": "Adr029ValidationRunnerFunctionName",
+                    "OutputValue": "UnifyOcrCpuStack-Adr029ValidationRunner-production",
+                    "Description": "ADR-029 validation runner Lambda function name"
+                },
+                {
+                    "OutputKey": "PageCheckpointTableArn",
+                    "OutputValue": "arn:aws:dynamodb:us-east-1:371292405073:table/ocr-page-checkpoints-production",
+                    "Description": "DynamoDB table ARN for OCR page-level checkpoints",
+                    "ExportName": "UnifyOcrCpuPageCheckpointTableArn-production"
+                },
+                {
+                    "OutputKey": "DropboxReconciliationFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-DropboxReconciliationFunction415B-Rp7JDdzYUrwK",
+                    "Description": "Dropbox Reconciliation Lambda ARN"
+                },
+                {
+                    "OutputKey": "PipelineControllerInstanceId",
+                    "OutputValue": "i-04e23da48cd8505bb",
+                    "Description": "Pipeline Controller EC2 instance ID (SSM target)"
+                },
+                {
+                    "OutputKey": "CitationVerifierFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-CitationVerifierFunction-production",
+                    "Description": "Citation verifier Lambda ARN (ADR-029 Loop 5)"
+                },
+                {
+                    "OutputKey": "DropboxSyncDashboardName",
+                    "OutputValue": "UnifyOcrCpuStack-DropboxSync-production",
+                    "Description": "Dropbox Sync pipeline monitoring dashboard name"
+                },
+                {
+                    "OutputKey": "DropboxCensusFunctionArn",
+                    "OutputValue": "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-DropboxCensusFunctionE3467791-8BAdsEBxdP9y",
+                    "Description": "Dropbox Census Lambda ARN"
+                },
+                {
+                    "OutputKey": "DropboxSyncQueueUrl",
+                    "OutputValue": "https://sqs.us-east-1.amazonaws.com/371292405073/UnifyOcrCpuStack-DropboxSyncEventQueue97A92A18-EvXlBFNMgBwG",
+                    "Description": "Dropbox sync event buffer queue URL"
+                },
+                {
+                    "OutputKey": "OcrPipelineDashboardDashboardName586E132F",
+                    "OutputValue": "UnifyOcrPipeline-production",
+                    "Description": "Unified OCR pipeline dashboard (issue #4714)"
+                },
+                {
+                    "OutputKey": "ProjectMachineArn",
+                    "OutputValue": "arn:aws:states:us-east-1:371292405073:stateMachine:ProjectMachineProjectMachineStateMachine388F7B0D-19NKFInKyk4e",
+                    "Description": "Project Machine State Machine ARN (Loops 3 & 4)"
+                },
+                {
+                    "OutputKey": "CitationVerifierFunctionName",
+                    "OutputValue": "UnifyOcrCpuStack-CitationVerifierFunction-production",
+                    "Description": "Citation verifier Lambda function name"
+                }
+            ],
+            "RoleARN": "arn:aws:iam::371292405073:role/cdk-hnb659fds-cfn-exec-role-371292405073-us-east-1",
+            "Tags": [
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-CPU"
+                },
+                {
+                    "Key": "cost-center",
+                    "Value": "ocr-process"
+                }
+            ],
+            "EnableTerminationProtection": true,
+            "DriftInformation": {
+                "StackDriftStatus": "NOT_CHECKED"
+            },
+            "LastOperations": [
+                {
+                    "OperationType": "UPDATE_STACK",
+                    "OperationId": "ce29889e-c873-4f73-81d9-0ec6dd271894"
+                }
+            ]
+        }
+    ]
+}

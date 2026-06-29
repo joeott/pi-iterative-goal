@@ -1,0 +1,90 @@
+{
+  "id": "prod-security-review-readonly",
+  "status": "PASS",
+  "summary": "Third-party production security handoff runs as a bounded read-only review iteration",
+  "details": {
+    "artifactPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review-readonly.txt",
+    "reviewSummaryPath": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review/latest-readonly-review.json",
+    "runId": "prod-security-review-2026-06-29T12-43-09-085Z",
+    "handoffSha256": "bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc",
+    "commands": 26,
+    "failedOrBlocked": 0,
+    "findings": 6,
+    "newFindings": 6,
+    "repeatedFindings": 0,
+    "resolvedFindings": 0,
+    "driftChanged": false,
+    "continuousCommand": "npm run review:prod-security:continuous",
+    "signedEvidenceManifest": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review/runs/prod-security-review-2026-06-29T12-43-09-085Z/evidence-manifest.json",
+    "laneCoverage": [
+      {
+        "lane": "Aurora",
+        "status": "covered",
+        "findings": [
+          "SEC-001",
+          "SEC-002"
+        ]
+      },
+      {
+        "lane": "Pipeline Controller IAM/S3 supply chain",
+        "status": "covered",
+        "findings": [
+          "SEC-003"
+        ]
+      },
+      {
+        "lane": "Adapter ingress/egress",
+        "status": "covered",
+        "findings": [
+          "SEC-004"
+        ]
+      },
+      {
+        "lane": "CAS/evidence overwrite/delete",
+        "status": "covered",
+        "findings": [
+          "SEC-003",
+          "SEC-005"
+        ]
+      },
+      {
+        "lane": "Graph projection controls",
+        "status": "covered",
+        "findings": []
+      },
+      {
+        "lane": "Cross-account secrets trust",
+        "status": "covered",
+        "findings": [
+          "SEC-006"
+        ]
+      },
+      {
+        "lane": "CI/deploy scanner",
+        "status": "covered",
+        "findings": []
+      },
+      {
+        "lane": "Agent trace redaction",
+        "status": "covered",
+        "findings": []
+      }
+    ],
+    "accountScope": [
+      {
+        "profile": "unify-old",
+        "expectedAccount": "371292405073",
+        "observedAccount": "371292405073"
+      },
+      {
+        "profile": "api-admin",
+        "expectedAccount": "138881449763",
+        "observedAccount": "138881449763"
+      }
+    ],
+    "secretValuesRead": false,
+    "productionMutationsAttempted": false
+  },
+  "checkedAt": "2026-06-29T12:44:40.253Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review-readonly.json"
+}

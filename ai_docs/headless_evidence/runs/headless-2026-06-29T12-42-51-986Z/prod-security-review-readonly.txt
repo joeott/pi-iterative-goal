@@ -1,0 +1,21 @@
+startedAt=2026-06-29T12:43:09.032Z
+finishedAt=2026-06-29T12:44:40.252Z
+command=node scripts/prod-security-review-readonly.mjs --handoff /Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md --output-dir /Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review --max-iterations 1 --command-timeout-ms 45000
+cwd=/Users/joe/Projects/pi-iterative-goal
+status=0
+signal=
+
+STDOUT:
+prod_security_review_readonly
+  run_id: prod-security-review-2026-06-29T12-43-09-085Z
+  handoff: /Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md
+  handoff_sha256: bd1131336a5fd4b794a757d40db83f2073c23aeb88c27f0efcb1674b042601fc
+  mode: read-only
+  iterations: 1
+  commands_per_iteration: 26
+  failed_or_blocked: 0
+  secrets_printed: false
+  report: /Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T12-42-51-986Z/prod-security-review/runs/prod-security-review-2026-06-29T12-43-09-085Z/review-summary.json
+
+
+STDERR:

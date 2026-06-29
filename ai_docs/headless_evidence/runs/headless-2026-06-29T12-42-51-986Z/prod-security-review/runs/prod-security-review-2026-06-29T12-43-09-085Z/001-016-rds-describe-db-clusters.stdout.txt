@@ -1,0 +1,123 @@
+{
+    "DBClusters": [
+        {
+            "AllocatedStorage": 1,
+            "AvailabilityZones": [
+                "us-east-1d",
+                "us-east-1b",
+                "us-east-1a"
+            ],
+            "BackupRetentionPeriod": 30,
+            "DatabaseName": "case_management",
+            "DBClusterIdentifier": "ott-conformance-aurora",
+            "DBClusterParameterGroup": "default.aurora-postgresql16",
+            "DBSubnetGroup": "ott-conformance-subnet-group",
+            "Status": "available",
+            "EarliestRestorableTime": "2026-05-30T05:18:21.476000+00:00",
+            "Endpoint": "ott-conformance-aurora.cluster-cuviucyodbeg.us-east-1.rds.amazonaws.com",
+            "ReaderEndpoint": "ott-conformance-aurora.cluster-ro-cuviucyodbeg.us-east-1.rds.amazonaws.com",
+            "MultiAZ": false,
+            "Engine": "aurora-postgresql",
+            "EngineVersion": "16.11",
+            "LatestRestorableTime": "2026-06-29T12:40:20.513000+00:00",
+            "Port": 5432,
+            "MasterUsername": "directus",
+            "PreferredBackupWindow": "05:07-05:37",
+            "PreferredMaintenanceWindow": "fri:10:17-fri:10:47",
+            "UpgradeRolloutOrder": "second",
+            "ReadReplicaIdentifiers": [],
+            "DBClusterMembers": [
+                {
+                    "DBInstanceIdentifier": "ott-conformance-aurora-instance-1",
+                    "IsClusterWriter": true,
+                    "DBClusterParameterGroupStatus": "in-sync",
+                    "PromotionTier": 1
+                }
+            ],
+            "VpcSecurityGroups": [
+                {
+                    "VpcSecurityGroupId": "sg-0babe07d880530404",
+                    "Status": "active"
+                }
+            ],
+            "HostedZoneId": "Z2R2ITUGPM61AM",
+            "StorageEncrypted": false,
+            "DbClusterResourceId": "cluster-62EGA74PIKXEFTSKFAZYY2NJL4",
+            "DBClusterArn": "arn:aws:rds:us-east-1:371292405073:cluster:ott-conformance-aurora",
+            "AssociatedRoles": [
+                {
+                    "RoleArn": "arn:aws:iam::371292405073:role/AuroraS3ImportRole",
+                    "Status": "ACTIVE",
+                    "FeatureName": "s3Import"
+                },
+                {
+                    "RoleArn": "arn:aws:iam::371292405073:role/UnifyAuroraLambdaInvokeRole",
+                    "Status": "ACTIVE",
+                    "FeatureName": "Lambda"
+                }
+            ],
+            "IAMDatabaseAuthenticationEnabled": true,
+            "CloneGroupId": "573ccc7e-8bf2-4c3b-ae6e-2bce0f29adc0",
+            "ClusterCreateTime": "2025-12-05T22:00:44.385000+00:00",
+            "EngineMode": "provisioned",
+            "AutoMinorVersionUpgrade": true,
+            "DeletionProtection": false,
+            "HttpEndpointEnabled": true,
+            "ActivityStreamStatus": "stopped",
+            "CopyTagsToSnapshot": false,
+            "CrossAccountClone": false,
+            "DomainMemberships": [],
+            "TagList": [
+                {
+                    "Key": "Project",
+                    "Value": "unify"
+                },
+                {
+                    "Key": "Owner",
+                    "Value": "joe@ott.law"
+                },
+                {
+                    "Key": "ManagedBy",
+                    "Value": "manual"
+                },
+                {
+                    "Key": "CostCenter",
+                    "Value": "legal-ai-platform"
+                },
+                {
+                    "Key": "CostTrackingId",
+                    "Value": "unify-main-pipeline"
+                },
+                {
+                    "Key": "unify-verified-date",
+                    "Value": "2025-12-25"
+                },
+                {
+                    "Key": "unify-version",
+                    "Value": "v0.2"
+                },
+                {
+                    "Key": "Component",
+                    "Value": "rds-aurora-case-management"
+                },
+                {
+                    "Key": "System",
+                    "Value": "legal-document-pipeline"
+                },
+                {
+                    "Key": "Track",
+                    "Value": "track0"
+                }
+            ],
+            "NetworkType": "IPV4",
+            "ServerlessV2ScalingConfiguration": {
+                "MinCapacity": 1.0,
+                "MaxCapacity": 16.0
+            },
+            "ServerlessV2PlatformVersion": "3",
+            "DatabaseInsightsMode": "standard",
+            "LocalWriteForwardingStatus": "disabled",
+            "EngineLifecycleSupport": "open-source-rds-extended-support"
+        }
+    ]
+}

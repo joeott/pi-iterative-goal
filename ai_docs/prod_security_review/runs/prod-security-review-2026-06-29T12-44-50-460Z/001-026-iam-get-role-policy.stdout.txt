@@ -1,0 +1,24 @@
+{
+    "RoleName": "final-fact-secrets-reader",
+    "PolicyName": "final-fact-secrets-read",
+    "PolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "ReadFinalFactSecrets",
+                "Effect": "Allow",
+                "Action": [
+                    "secretsmanager:GetSecretValue",
+                    "secretsmanager:DescribeSecret"
+                ],
+                "Resource": "arn:aws:secretsmanager:us-east-1:138881449763:secret:final-fact/*"
+            },
+            {
+                "Sid": "ListSecrets",
+                "Effect": "Allow",
+                "Action": "secretsmanager:ListSecrets",
+                "Resource": "*"
+            }
+        ]
+    }
+}
