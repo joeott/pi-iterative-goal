@@ -1,0 +1,165 @@
+{
+  "id": "extension-headless-flow",
+  "status": "PASS",
+  "summary": "Extension tools and commands run in a disposable headless Pi harness",
+  "details": {
+    "tempRepo": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-YhCfDV",
+    "registeredTools": [
+      "cyber_checkpoint",
+      "cyber_record_blocker",
+      "cyber_report_phase_result",
+      "cyber_request_approval",
+      "goal_aws_cli",
+      "goal_checkpoint",
+      "goal_git",
+      "goal_record_blocker",
+      "goal_repo_context",
+      "goal_report_phase_result",
+      "goal_request_capability_repair",
+      "goal_shell",
+      "goal_subagent",
+      "goal_update_task_plan"
+    ],
+    "registeredCommands": [
+      "goal-approve",
+      "goal-audit",
+      "goal-authorize-release",
+      "goal-dashboard",
+      "goal-deny",
+      "goal-finalize",
+      "goal-pause",
+      "goal-repair-capabilities",
+      "goal-replay",
+      "goal-reset",
+      "goal-resume",
+      "goal-start",
+      "goal-status",
+      "goal-trace"
+    ],
+    "sentPrompts": 2,
+    "status": {
+      "runId": "ig-1782731266450-skuivd",
+      "phase": "research",
+      "activePhaseId": "ig-1782731266450-skuivd/c1/research/a1",
+      "projectInstructionFiles": [
+        {
+          "path": "AGENTS.md",
+          "filename": "AGENTS.md",
+          "sha256": "397c19a22b600eab0642b5ad1e20bd1cacd24248c634933280bf4130984e8bcb",
+          "bytes": 88,
+          "truncated": false,
+          "precedence": 1
+        }
+      ],
+      "awsProfile": "unify-old"
+    },
+    "shell": {
+      "exitCode": 0,
+      "killed": false,
+      "truncated": false,
+      "allowed": true,
+      "command": "git status --short --branch",
+      "cwd": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-YhCfDV",
+      "purpose": "headless evidence shell check"
+    },
+    "repoRead": {
+      "mode": "read_file",
+      "repoRoot": "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-YhCfDV",
+      "path": "src/app.ts",
+      "files": [
+        "src/app.ts"
+      ],
+      "bytes": 40,
+      "truncated": false,
+      "dlpScanId": "dlp-1782731266552-ae1e083e",
+      "allowed": true
+    },
+    "repoSearch": {
+      "mode": "search_text",
+      "repoRoot": "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-headless-flow-YhCfDV",
+      "path": "src",
+      "query": "hello harness",
+      "files": [
+        "src/app.ts"
+      ],
+      "bytes": 52,
+      "truncated": false,
+      "dlpScanId": "dlp-1782731266581-e7038ddc",
+      "allowed": true
+    },
+    "filesystemWrite": {
+      "requestId": "headless-fs-write",
+      "decision": {
+        "result": "allow",
+        "ruleIds": [
+          "policy.fs.scope"
+        ],
+        "reason": "Allowed by policy.",
+        "lease": {
+          "id": "headless-fs-write:lease",
+          "runId": "ig-1782731266450-skuivd",
+          "effect": "fs.write",
+          "resource": {
+            "type": "path",
+            "value": "src/headless-generated.txt"
+          },
+          "maxUses": 1,
+          "expiresAt": "2026-06-29T11:12:46.597Z"
+        }
+      },
+      "ok": true,
+      "output": {
+        "path": "src/headless-generated.txt",
+        "bytesWritten": 19
+      },
+      "startedAt": "2026-06-29T11:07:46.597Z",
+      "finishedAt": "2026-06-29T11:07:46.598Z"
+    },
+    "subagentBlocked": {
+      "backendKind": "none",
+      "backendDetail": "writer-subagents-require-allowed-paths",
+      "fallback": true,
+      "result": "policy-blocked"
+    },
+    "approvalTokenPrefix": "APPROVAL_ig-1782731266450-skuivd",
+    "aws": {
+      "allowed": true,
+      "family": "read-only",
+      "isMutation": false,
+      "profile": "unify-old",
+      "region": "us-east-1",
+      "purpose": "verify headless AWS account boundary",
+      "exitCode": 0,
+      "killed": false,
+      "truncated": false,
+      "policyDecision": {
+        "result": "allow",
+        "ruleIds": [
+          "policy.process.no-shell-strings"
+        ],
+        "reason": "Allowed by policy.",
+        "lease": {
+          "id": "goal_aws_cli:1782731266658:lease",
+          "runId": "ig-1782731266450-skuivd",
+          "effect": "process.exec",
+          "resource": {
+            "type": "command",
+            "value": "aws sts get-caller-identity --profile unify-old --region us-east-1"
+          },
+          "maxUses": 1,
+          "expiresAt": "2026-06-29T11:12:46.658Z"
+        }
+      }
+    },
+    "casPolicy": {
+      "result": "deny",
+      "ruleIds": [
+        "policy.cas_unify.route"
+      ],
+      "reason": "Deprecated Paddle/CPU/SQS OCR route is blocked for current operations; use Unify Nemotron resolver/CAS route."
+    },
+    "canonicalCasRoute": "Unify self-hosted Nemotron OCR execution; consumers resolve occurrence_id -> ocr_manifest -> cas:blake3:."
+  },
+  "checkedAt": "2026-06-29T11:07:46.673Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-06-29T11-07-34-975Z/extension-headless-flow.json"
+}
