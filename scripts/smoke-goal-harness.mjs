@@ -1790,6 +1790,100 @@ import path from "node:path";
   console.log("✓ Test 25: Z.ai GLM 5.2 provider metadata and probe behavior are valid");
 }
 
+// ── Test 26: Provider env materializer and Secrets Manager controls ─
+
+{
+  const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-provider-env-"));
+  const fakeBin = path.join(tmp, "bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const commandLog = path.join(tmp, "aws-commands.jsonl");
+  const fakeAws = path.join(fakeBin, "aws");
+  fs.writeFileSync(fakeAws, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const log = process.env.PI_FAKE_AWS_LOG;
+if (log) fs.appendFileSync(log, JSON.stringify({ args }) + "\\n");
+function valueAfter(flag) {
+  const idx = args.indexOf(flag);
+  return idx >= 0 ? args[idx + 1] : "";
+}
+const profile = valueAfter("--profile");
+if (args[0] === "sts" && args[1] === "get-caller-identity") {
+  const account = profile === "control-profile" ? "111111111111" : "222222222222";
+  process.stdout.write(JSON.stringify({ Account: account, Arn: "arn:aws:iam::" + account + ":user/smoke", UserId: "smoke" }));
+  process.exit(0);
+}
+if (args[0] === "secretsmanager" && args[1] === "describe-secret") {
+  process.stderr.write("ResourceNotFoundException: not found");
+  process.exit(254);
+}
+if (args[0] === "secretsmanager" && (args[1] === "create-secret" || args[1] === "put-secret-value")) {
+  const secretString = valueAfter("--secret-string");
+  if (!secretString.startsWith("file://")) {
+    process.stderr.write("secret was passed directly instead of file://");
+    process.exit(3);
+  }
+  const payloadPath = secretString.slice("file://".length);
+  const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+  if (!payload.OPENROUTER_API_KEY || !payload.ZAI_API_KEY) {
+    process.stderr.write("provider payload missing expected keys");
+    process.exit(4);
+  }
+  process.stdout.write(JSON.stringify({ ARN: "arn:aws:secretsmanager:us-east-1:111111111111:secret:pi-iterative-goal/model-provider-tokens" }));
+  process.exit(0);
+}
+process.stderr.write("unexpected fake aws command: " + args.join(" "));
+process.exit(2);
+`);
+  fs.chmodSync(fakeAws, 0o755);
+
+  const fixtureEnv = [
+    ["OPENROUTER_API_KEY", "openrouter-secret-value"],
+    ["ZAI_API_KEY", "zai-secret-value"],
+    ["ZAI_API_BASE_URL", "https://api.z.ai/api/coding/paas/v4"],
+    ["PI_AWS_SECRET_SCOPE", "control"],
+    ["PI_AWS_CONTROL_PROFILE", "control-profile"],
+    ["PI_AWS_CONTROL_ACCOUNT_ID", "111111111111"],
+    ["PI_AWS_PROJECT_PROFILE", "project-profile"],
+    ["PI_AWS_PROJECT_ACCOUNT_ID", "222222222222"],
+  ].map(([key, value]) => `${key}=${value}`).join("\n");
+  fs.writeFileSync(path.join(tmp, ".env"), fixtureEnv);
+
+  const result = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "materialize-model-provider-env.mjs"),
+    "--operator-approved-local-secret-materialization",
+    "--operator-approved-aws-secrets-manager-write",
+    "--aws-scope", "control",
+    "--secret-name", "pi-iterative-goal/model-provider-tokens",
+    "--region", "us-east-1",
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      PI_ITERATIVE_GOAL_ROOT: tmp,
+      PI_PROVIDER_ENV_DISABLE_DEFAULT_SOURCES: "1",
+      PI_FAKE_AWS_LOG: commandLog,
+    },
+  });
+  eq(result.status, 0, result.stderr || result.stdout);
+  ok(result.stdout.includes("secrets_printed: false"));
+  ok(result.stdout.includes("aws_scope: control"));
+  ok(result.stdout.includes("aws_control_secret_write: PASS"));
+  ok(!result.stdout.includes("openrouter-secret-value"));
+  ok(!result.stdout.includes("zai-secret-value"));
+
+  const commands = fs.readFileSync(commandLog, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line).args);
+  ok(commands.some((args) => args.includes("get-caller-identity") && args.includes("control-profile")));
+  ok(commands.some((args) => args.includes("create-secret") && args.includes("control-profile")));
+  ok(!commands.some((args) => args.includes("project-profile")), "control-scope write must not use project sub-account");
+  ok(!commands.some((args) => args.some((part) => part.includes("openrouter-secret-value") || part.includes("zai-secret-value"))));
+
+  console.log("✓ Test 26: Provider env materializer gates Secrets Manager writes to the approved control account without printing secrets");
+}
+
 // ── Summary ─────────────────────────────────────────────────────────
 
 console.log("\nAll tests passed. ✓");

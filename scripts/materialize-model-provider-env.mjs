@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
+const ROOT = path.resolve(process.env.PI_ITERATIVE_GOAL_ROOT ?? new URL("..", import.meta.url).pathname);
 const MATERIALIZE_FLAG = "--operator-approved-local-secret-materialization";
 const AWS_FLAG = "--operator-approved-aws-secrets-manager-write";
 const DEFAULT_SECRET_NAME = "pi-iterative-goal/model-provider-tokens";
@@ -59,6 +59,7 @@ const expectedProjectAwsAccount = argValue("--expected-project-aws-account")
   ?? process.env.PI_AWS_PROJECT_ACCOUNT_ID
   ?? DEFAULT_PROJECT_AWS_ACCOUNT;
 
+const externalSourcesEnabled = process.env.PI_PROVIDER_ENV_DISABLE_DEFAULT_SOURCES !== "1";
 const sources = {
   harnessEnv: path.join(ROOT, ".env"),
   piModels: "/Users/joe/.pi/agent/models.json",
@@ -72,33 +73,35 @@ const values = {};
 const sourceHits = [];
 
 loadEnvFile(sources.harnessEnv, PROVIDER_KEYS);
-loadPiModels();
-loadPiAuth();
-loadEnvFile(sources.projectsEnv, [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENROUTER_API_KEY",
-  "GEMINI_API_KEY",
-  "MISTRAL_API_KEY",
-  "XAI_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "GROQ_API_KEY",
-  "PINECONE_API_KEY",
-  "LANGCHAIN_API_KEY",
-  "LANGSMITH_API_KEY",
-]);
-loadEnvFile(sources.unifyLocalEnv, [
-  "ZAI_API_KEY",
-  "ZAI_API_BASE_URL",
-  "ZAI_DEFAULT_MODEL",
-  "ZAI_DEFAULT_VISION_MODEL",
-]);
-loadEnvFile(sources.zaiEnv, [
-  "ZAI_API_KEY",
-  "ZAI_API_BASE_URL",
-  "ZAI_DEFAULT_MODEL",
-  "ZAI_DEFAULT_VISION_MODEL",
-]);
+if (externalSourcesEnabled) {
+  loadPiModels();
+  loadPiAuth();
+  loadEnvFile(sources.projectsEnv, [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "XAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY",
+    "PINECONE_API_KEY",
+    "LANGCHAIN_API_KEY",
+    "LANGSMITH_API_KEY",
+  ]);
+  loadEnvFile(sources.unifyLocalEnv, [
+    "ZAI_API_KEY",
+    "ZAI_API_BASE_URL",
+    "ZAI_DEFAULT_MODEL",
+    "ZAI_DEFAULT_VISION_MODEL",
+  ]);
+  loadEnvFile(sources.zaiEnv, [
+    "ZAI_API_KEY",
+    "ZAI_API_BASE_URL",
+    "ZAI_DEFAULT_MODEL",
+    "ZAI_DEFAULT_VISION_MODEL",
+  ]);
+}
 
 if (!values.ZAI_DEFAULT_MODEL) values.ZAI_DEFAULT_MODEL = "glm-5.2";
 if (!values.ZAI_API_BASE_URL) values.ZAI_API_BASE_URL = "https://api.z.ai/api/coding/paas/v4";

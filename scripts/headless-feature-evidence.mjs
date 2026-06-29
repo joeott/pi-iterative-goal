@@ -72,6 +72,26 @@ function truncate(value, max = 6000) {
   return text.length > max ? `${text.slice(0, max)}\n[truncated]` : text;
 }
 
+function readHarnessEnv(keys) {
+  const envPath = path.join(repoRoot, ".env");
+  const allowed = new Set(keys);
+  const values = {};
+  if (!fs.existsSync(envPath)) return values;
+  for (const raw of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const idx = line.indexOf("=");
+    const key = line.slice(0, idx).trim();
+    if (!allowed.has(key)) continue;
+    let value = line.slice(idx + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
 function appendTrace(event) {
   const full = {
     traceId,
@@ -522,6 +542,63 @@ await check("zai-live-probe", "Live Z.ai GLM-5.2 endpoint responds headlessly", 
   assert.match(result.stdout, /ok:\s+true/);
   assert.match(result.stdout, /model:\s+glm-5\.2/);
   return { artifactPath, stdoutTail: truncate(result.stdout.split(/\r?\n/).slice(-12).join("\n")) };
+});
+
+await check("aws-secret-metadata", "Control-account Secrets Manager metadata verifies provider-token persistence without reading values", [
+  "aws_integration",
+  "secrets_manager_handling",
+], async () => {
+  const env = readHarnessEnv([
+    "PI_AWS_CONTROL_PROFILE",
+    "PI_AWS_CONTROL_ACCOUNT_ID",
+    "PI_AWS_SECRET_SCOPE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+  ]);
+  const profile = env.PI_AWS_CONTROL_PROFILE || process.env.PI_AWS_CONTROL_PROFILE || "unify-old";
+  const expectedAccount = env.PI_AWS_CONTROL_ACCOUNT_ID || process.env.PI_AWS_CONTROL_ACCOUNT_ID || "371292405073";
+  const region = env.AWS_REGION || env.AWS_DEFAULT_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+  const secretName = "pi-iterative-goal/model-provider-tokens";
+
+  const sts = runCommand("aws-secret-metadata-sts", "aws", [
+    "sts",
+    "get-caller-identity",
+    "--profile",
+    profile,
+    "--output",
+    "json",
+  ], { timeout: 60_000 }, ["aws_integration", "secrets_manager_handling"]);
+  const identity = JSON.parse(sts.result.stdout);
+  assert.equal(identity.Account, expectedAccount);
+
+  const describe = runCommand("aws-secret-metadata-describe", "aws", [
+    "secretsmanager",
+    "describe-secret",
+    "--secret-id",
+    secretName,
+    "--region",
+    region,
+    "--profile",
+    profile,
+    "--output",
+    "json",
+  ], { timeout: 60_000 }, ["aws_integration", "secrets_manager_handling"]);
+  const metadata = JSON.parse(describe.result.stdout);
+  assert.equal(metadata.Name, secretName);
+  assert.match(metadata.ARN, new RegExp(`^arn:aws:secretsmanager:${region}:${expectedAccount}:secret:`));
+  assert(metadata.VersionIdsToStages && Object.values(metadata.VersionIdsToStages).some((stages) => stages.includes("AWSCURRENT")));
+
+  return {
+    profile,
+    expectedAccount,
+    resolvedAccount: identity.Account,
+    region,
+    secretName: metadata.Name,
+    secretArn: metadata.ARN,
+    lastChangedDate: metadata.LastChangedDate,
+    currentVersionCount: Object.values(metadata.VersionIdsToStages).filter((stages) => stages.includes("AWSCURRENT")).length,
+    secretValueRead: false,
+  };
 });
 
 await check("extension-headless-flow", "Extension tools and commands run in a disposable headless Pi harness", [
