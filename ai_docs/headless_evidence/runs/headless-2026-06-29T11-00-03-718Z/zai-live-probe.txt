@@ -1,0 +1,28 @@
+startedAt=2026-06-29T11:00:07.823Z
+finishedAt=2026-06-29T11:00:16.054Z
+command=npm run probe:zai
+cwd=/Users/joe/Projects/pi-iterative-goal
+status=0
+signal=
+
+STDOUT:
+
+> pi-iterative-goal@0.1.0 probe:zai
+> npm run build && node scripts/probe-zai-glm52.mjs --env-file .env
+
+
+> pi-iterative-goal@0.1.0 build
+> tsc
+
+probe_zai_glm52
+  ok: true
+  status: 200
+  model: glm-5.2
+  base_url: https://api.z.ai/api/coding/paas/v4
+  latency_ms: 6940
+  env_files_loaded: 1
+    - /Users/joe/Projects/pi-iterative-goal/.env: ZAI_API_BASE_URL, ZAI_API_KEY, ZAI_DEFAULT_MODEL, ZAI_DEFAULT_VISION_MODEL
+  response_text: OK.
+
+
+STDERR:
