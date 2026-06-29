@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const ZAI_PROVIDER = "zai";
 export const ZAI_GLM_5_2_MODEL = "glm-5.2";
@@ -71,6 +71,21 @@ export function registerZaiGlm52Provider(ctx: ExtensionContext | ExtensionComman
   return loaded;
 }
 
+export function registerZaiGlm52ProviderWithPi(pi: ExtensionAPI, cwd = process.cwd()): LoadedEnvFile[] {
+  const loaded = loadZaiLocalEnv(cwd);
+  const apiKey = process.env.ZAI_API_KEY || process.env.Z_AI_API_KEY;
+  const baseUrl = normalizeBaseUrl(process.env.ZAI_API_BASE_URL || process.env.Z_AI_API_BASE_URL || ZAI_CODING_BASE_URL);
+  pi.registerProvider(ZAI_PROVIDER, {
+    name: "Z.ai",
+    api: "openai-completions",
+    baseUrl,
+    apiKey,
+    authHeader: true,
+    models: [zaiGlm52Model(baseUrl)],
+  });
+  return loaded;
+}
+
 export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
   return {
     id: ZAI_GLM_5_2_MODEL,
@@ -78,7 +93,7 @@ export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
     api: "openai-completions",
     baseUrl: normalizeBaseUrl(baseUrl),
     reasoning: true,
-    input: ["text"] as const,
+    input: ["text"] as ("text" | "image")[],
     cost: {
       input: 0,
       output: 0,
@@ -92,7 +107,7 @@ export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
       thinkingFormat: "zai",
       zaiToolStream: true,
       maxTokensField: "max_tokens",
-    },
+    } as const,
   };
 }
 
