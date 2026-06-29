@@ -677,9 +677,9 @@ import path from "node:path";
   } = await import("../dist/domain/models.js");
 
   ok(ALLOWED_MODELS.length >= 13, "model allowlist includes screenshot plus fusion/router models");
-  deepStrictEqual(DEFAULT_PRIMARY_MODEL, { provider: "openrouter", model: "deepseek/deepseek-v4-flash" });
+  deepStrictEqual(DEFAULT_PRIMARY_MODEL, { provider: "zai", model: "glm-5.2" });
   ok(DEFAULT_FALLBACK_MODELS.some((m) => m.model === "openrouter/fusion"), "fusion fallback configured");
-  ok(DEFAULT_FALLBACK_MODELS.some((m) => m.provider === "zai" && m.model === "glm-5.2"), "direct Z.ai GLM 5.2 fallback configured");
+  ok(DEFAULT_FALLBACK_MODELS.some((m) => m.provider === "openrouter" && m.model === "z-ai/glm-5.2"), "OpenRouter Z.ai GLM 5.2 fallback configured");
   eq(isAllowedModel("openrouter", "deepseek/deepseek-v4-flash"), true);
   eq(isAllowedModel("zai", "glm-5.2"), true);
   eq(isAllowedModel("openrouter", "openai/o3-mini"), false);
@@ -1983,6 +1983,95 @@ process.exit(2);
   eq(continuousLatest.evidenceSigning.verified, true);
 
   console.log("✓ Test 27: Production security review runner parses the handoff, signs evidence, and supports bounded continuous read-only mode");
+}
+
+// ── Test 28: GLM 5.2 is the first-class harness default ─────────────
+
+{
+  const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  eq(pkg.pi.extensions[0], "./dist/pi-iterative-goal.js");
+
+  const models = await import("../dist/domain/models.js");
+  eq(models.DEFAULT_PRIMARY_MODEL.provider, "zai");
+  eq(models.DEFAULT_PRIMARY_MODEL.model, "glm-5.2");
+  ok(models.DEFAULT_FALLBACK_MODELS.some((model) => model.provider === "openrouter" && model.model === "z-ai/glm-5.2"));
+
+  const { registerZaiGlm52ProviderWithPi } = await import("../dist/zai.js");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-zai-provider-"));
+  fs.writeFileSync(path.join(tmp, ".env"), [
+    "ZAI_API_KEY=fake-zai-key",
+    "ZAI_API_BASE_URL=https://api.z.ai/api/coding/paas/v4",
+  ].join("\n"));
+  const previousKey = process.env.ZAI_API_KEY;
+  const previousBase = process.env.ZAI_API_BASE_URL;
+  delete process.env.ZAI_API_KEY;
+  delete process.env.ZAI_API_BASE_URL;
+  const calls = [];
+  const pi = {
+    registerProvider(name, config) {
+      calls.push({ name, config });
+    },
+  };
+  const loaded = registerZaiGlm52ProviderWithPi(pi, tmp);
+  eq(calls.length, 1);
+  eq(calls[0].name, "zai");
+  eq(calls[0].config.baseUrl, "https://api.z.ai/api/coding/paas/v4");
+  eq(calls[0].config.models[0].id, "glm-5.2");
+  eq(calls[0].config.models[0].compat.maxTokensField, "max_tokens");
+  ok(loaded.some((file) => file.path === path.join(tmp, ".env") && file.loadedKeys.includes("ZAI_API_KEY")));
+  if (previousKey === undefined) delete process.env.ZAI_API_KEY;
+  else process.env.ZAI_API_KEY = previousKey;
+  if (previousBase === undefined) delete process.env.ZAI_API_BASE_URL;
+  else process.env.ZAI_API_BASE_URL = previousBase;
+
+  console.log("✓ Test 28: Direct Z.ai GLM-5.2 registers early and is the harness default model");
+}
+
+// ── Test 29: Harness startup commands are registered ────────────────
+
+{
+  const { registerHarnessUi } = await import("../dist/harness-ui.js");
+  const commands = [];
+  const events = [];
+  const pi = {
+    on(event, handler) {
+      events.push({ event, handler });
+    },
+    registerCommand(name, options) {
+      commands.push({ name, options });
+    },
+    getAllTools() {
+      return [
+        { name: "goal_shell", description: "safe shell", sourceInfo: { source: "extension" } },
+        { name: "goal_subagent", description: "subagents", sourceInfo: { source: "extension" } },
+      ];
+    },
+    getActiveTools() {
+      return ["goal_shell", "goal_subagent"];
+    },
+    getCommands() {
+      return commands.map((command) => ({
+        name: command.name,
+        description: command.options.description,
+        source: "extension",
+        sourceInfo: { path: "dist/pi-iterative-goal.js", source: "extension", scope: "project", origin: "top-level" },
+      }));
+    },
+  };
+  const stateManager = {
+    getState() { return null; },
+    restore() { return null; },
+  };
+  registerHarnessUi(pi, stateManager);
+  const names = commands.map((command) => command.name).sort();
+  for (const expected of ["harness-dashboard", "harness-doctor", "harness-mode", "security-review-start", "security-review-status"]) {
+    ok(names.includes(expected), `${expected} command registered`);
+  }
+  ok(events.some((event) => event.event === "session_start"));
+  ok(events.some((event) => event.event === "model_select"));
+
+  console.log("✓ Test 29: Harness startup dashboard, doctor, mode, and security-review commands register");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
