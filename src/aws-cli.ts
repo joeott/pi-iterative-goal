@@ -12,6 +12,7 @@ import type {
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine, type PolicyDecision } from "./policy/engine.js";
 import { logDebug } from "./logging.js";
+import { attestAction, processModelVisibleText } from "./cyber-runtime.js";
 
 function log(msg: string) {
   logDebug("goal_aws_cli", msg);
@@ -337,6 +338,9 @@ export function assessAwsCliArgs(
   if (service === "iam") {
     return { allowed: false, isMutation: true, family: "blocked", reason: "IAM mutations are blocked in the harness." };
   }
+  if (service === "secretsmanager" && command === "get-secret-value") {
+    return { allowed: false, isMutation: false, family: "blocked", reason: "Secrets Manager value reads are blocked; use describe-secret or an approved ephemeral broker." };
+  }
   if (service === "cloudformation" && /^((delete|update|create|execute)-|deploy$)/.test(command)) {
     return { allowed: false, isMutation: true, family: "blocked", reason: "CloudFormation mutation is blocked in the harness." };
   }
@@ -471,6 +475,30 @@ export function registerGoalAwsCliTool(
 
       const profile = explicitProfile ?? preflight.resolvedProfile;
       const region = explicitRegion ?? preflight.resolvedRegion ?? effectiveConfig.defaultRegion;
+      if (state?.unifyCasProfile.enabled) {
+        if (preflight.identity?.account && preflight.identity.account !== state.unifyCasProfile.expectedAwsAccountId) {
+          return {
+            content: [{ type: "text" as const, text: `AWS SAFETY BLOCK: wrong AWS account ${preflight.identity.account}; expected ${state.unifyCasProfile.expectedAwsAccountId}.` }],
+            details: { allowed: false, family: "blocked", purpose, args, profile, region },
+            isError: true,
+          };
+        }
+        if (region && region !== state.unifyCasProfile.expectedAwsRegion) {
+          return {
+            content: [{ type: "text" as const, text: `AWS SAFETY BLOCK: wrong AWS region ${region}; expected ${state.unifyCasProfile.expectedAwsRegion}.` }],
+            details: { allowed: false, family: "blocked", purpose, args, profile, region },
+            isError: true,
+          };
+        }
+        const joinedArgs = args.join(" ").toLowerCase();
+        if (/\bpaddleocr\b|\bpaddleparse\b|\bsubmit_backlog_batch\.py\b|\bcpu\s*ocr\b|\bsqs\s+ocr\b/.test(joinedArgs)) {
+          return {
+            content: [{ type: "text" as const, text: "AWS SAFETY BLOCK: deprecated Paddle/CPU/SQS OCR route is blocked for current operations; use Unify Nemotron resolver/CAS route." }],
+            details: { allowed: false, family: "blocked", purpose, args, profile, region },
+            isError: true,
+          };
+        }
+      }
       if (!preflight.cliAvailable) {
         return {
           content: [{ type: "text" as const, text: "AWS CLI is not available on this machine." }],
@@ -550,8 +578,35 @@ export function registerGoalAwsCliTool(
         }
         const result = action.result;
         const truncated = result.stdout.length > 50_000 || result.stderr.length > 50_000;
-        const stdoutDisplay = result.stdout.slice(0, 50_000);
-        const stderrDisplay = result.stderr.slice(0, 50_000);
+        let stdoutDisplay = result.stdout.slice(0, 50_000);
+        let stderrDisplay = result.stderr.slice(0, 50_000);
+        let dlpScanId: string | null = null;
+        if (state) {
+          const processedStdout = processModelVisibleText({
+            text: stdoutDisplay,
+            source: `goal_aws_cli:${args.join(" ")}`,
+            classification: "untrusted_data_plane",
+            dlp: state.dlp,
+            sanitizer: state.sanitizer,
+          });
+          stdoutDisplay = processedStdout.text;
+          stateManager.updateDlpState(processedStdout.dlp);
+          stateManager.updateSanitizationState(processedStdout.sanitizer);
+          dlpScanId = processedStdout.dlpSummary.scanId;
+          if (stderrDisplay) {
+            const processedStderr = processModelVisibleText({
+              text: stderrDisplay,
+              source: `goal_aws_cli:${args.join(" ")}:stderr`,
+              classification: "untrusted_data_plane",
+              dlp: stateManager.getState()!.dlp,
+              sanitizer: stateManager.getState()!.sanitizer,
+            });
+            stderrDisplay = processedStderr.text;
+            stateManager.updateDlpState(processedStderr.dlp);
+            stateManager.updateSanitizationState(processedStderr.sanitizer);
+            dlpScanId = processedStderr.dlpSummary.scanId;
+          }
+        }
 
         const evidence = {
           timestamp: new Date().toISOString(),
@@ -578,6 +633,29 @@ export function registerGoalAwsCliTool(
               `aws-invocation-${Date.now()}.json`,
             );
             fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
+            const attestation = attestAction({
+              runId: state.runId,
+              cycle: state.cycle,
+              phase: state.phase,
+              artifactPath: evidencePath,
+              action: {
+                id: `goal_aws_cli:${Date.now()}:attest`,
+                actor: { kind: "tool", id: "goal_aws_cli" },
+                runId: state.runId,
+                effect: assessment.isMutation ? "cloud.mutate" : "cloud.read",
+                resource: { type: "cloud", value: `aws ${finalArgs.join(" ")}` },
+                input: { args: finalArgs },
+                purpose,
+                risk: assessment.isMutation ? "write" : "read",
+                dataClassification: "internal",
+              },
+              outputBytes: JSON.stringify(evidence),
+              dlpScanId,
+              trustClassification: "untrusted_data_plane",
+              signing: state.signing,
+              sandboxProfile: assessment.isMutation ? "aws_mutation" : "aws_cli_readonly",
+            });
+            stateManager.recordAttestation(attestation);
           } catch (err) {
             log(`Failed to persist AWS evidence: ${err instanceof Error ? err.message : String(err)}`);
           }

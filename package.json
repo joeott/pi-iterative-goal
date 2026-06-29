@@ -18,7 +18,9 @@
     "lint": "tsc --noEmit",
     "format:check": "node -e \"console.log('format:check: no formatter configured')\"",
     "validate": "npm run test",
-    "watch": "tsc -w"
+    "watch": "tsc -w",
+    "env:models": "node scripts/materialize-model-provider-env.mjs",
+    "probe:zai": "npm run build && node scripts/probe-zai-glm52.mjs --env-file .env"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",

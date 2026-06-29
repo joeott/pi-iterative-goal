@@ -11,10 +11,12 @@ import { Type } from "typebox";
 import { shouldBlockAwsShellCommand } from "./aws-cli.js";
 import { shouldBlockGitShellCommand } from "./git.js";
 import type { AwsCliConfig, FinalizationPolicy } from "./types.js";
+import type { StateManagerAPI } from "./state.js";
 import { commandSpecFromShellWords } from "./domain/verification.js";
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine } from "./policy/engine.js";
 import { logDebug } from "./logging.js";
+import { attestAction, processModelVisibleText } from "./cyber-runtime.js";
 
 function log(msg: string) {
   logDebug("goal_shell", msg);
@@ -54,6 +56,7 @@ export function registerGoalShellTool(
   pi: ExtensionAPI,
   getAwsCliConfig?: () => AwsCliConfig | null,
   getFinalizationPolicy?: () => FinalizationPolicy | null,
+  stateManager?: StateManagerAPI,
 ): void {
   pi.registerTool({
     name: "goal_shell",
@@ -145,10 +148,10 @@ export function registerGoalShellTool(
 
       const policy = new PolicyEngine({ repoRoot: cwd });
       const broker = new CapabilityBroker(policy);
-      const action = await broker.invoke({
+      const actionRequest = {
         id: `goal_shell:${Date.now()}`,
         actor: { kind: "tool", id: "goal_shell" },
-        runId: "unknown",
+        runId: stateManager?.getState()?.runId ?? "unknown",
         effect: "process.exec",
         resource: commandResource(commandSpec.executable, commandSpec.argv),
         input: {
@@ -159,7 +162,8 @@ export function registerGoalShellTool(
         purpose: purpose ?? "goal_shell command",
         risk: allowDestructive ? "write" : "read",
         dataClassification: "internal",
-      }, async () => pi.exec(commandSpec.executable, commandSpec.argv, {
+      } as const;
+      const action = await broker.invoke(actionRequest, async () => pi.exec(commandSpec.executable, commandSpec.argv, {
           cwd,
           signal: signal ?? undefined,
           timeout: 120_000,
@@ -185,8 +189,36 @@ export function registerGoalShellTool(
         const result = action.output;
         const truncated = result.stdout.length > 50000 ||
           result.stderr.length > 50000;
-        const stdoutDisplay = result.stdout.slice(0, 50000);
-        const stderrDisplay = result.stderr.slice(0, 50000);
+        let stdoutDisplay = result.stdout.slice(0, 50000);
+        let stderrDisplay = result.stderr.slice(0, 50000);
+        const state = stateManager?.getState();
+        let dlpScanId: string | null = null;
+        if (state) {
+          const processedStdout = processModelVisibleText({
+            text: stdoutDisplay,
+            source: `goal_shell:${command}`,
+            classification: "untrusted_data_plane",
+            dlp: state.dlp,
+            sanitizer: state.sanitizer,
+          });
+          stdoutDisplay = processedStdout.text;
+          stateManager!.updateDlpState(processedStdout.dlp);
+          stateManager!.updateSanitizationState(processedStdout.sanitizer);
+          dlpScanId = processedStdout.dlpSummary.scanId;
+          if (stderrDisplay) {
+            const processedStderr = processModelVisibleText({
+              text: stderrDisplay,
+              source: `goal_shell:${command}:stderr`,
+              classification: "untrusted_data_plane",
+              dlp: stateManager!.getState()!.dlp,
+              sanitizer: stateManager!.getState()!.sanitizer,
+            });
+            stderrDisplay = processedStderr.text;
+            stateManager!.updateDlpState(processedStderr.dlp);
+            stateManager!.updateSanitizationState(processedStderr.sanitizer);
+            dlpScanId = processedStderr.dlpSummary.scanId;
+          }
+        }
 
         let text = "";
         if (result.code === 0) {
@@ -204,6 +236,26 @@ export function registerGoalShellTool(
         if (truncated) {
           text +=
             "\n\n[Output truncated at 50KB. Use goal_shell with purpose to log the command.]";
+        }
+        if (state) {
+          try {
+            const attestationPath = stateManager!.getArtifactPath(state.cycle, state.phase, `shell-attestation-${Date.now()}.json`);
+            const attestation = attestAction({
+              runId: state.runId,
+              cycle: state.cycle,
+              phase: state.phase,
+              artifactPath: attestationPath,
+              action: actionRequest,
+              outputBytes: text,
+              dlpScanId,
+              trustClassification: "untrusted_data_plane",
+              signing: state.signing,
+              sandboxProfile: state.sandbox.profile,
+            });
+            stateManager!.recordAttestation(attestation);
+          } catch (err) {
+            log(`Failed to attest shell output: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         return {

@@ -14,6 +14,7 @@ import {
 } from "./types.js";
 import type { SubagentBackend } from "./types.js";
 import { renderCapabilitySummary, buildNamespaces } from "./capabilities.js";
+import { renderProjectInstructionsForPrompt } from "./project-instructions.js";
 import {
   generateValidationScriptFromSpecs,
   verificationSpecsFromLegacyCommands,
@@ -29,6 +30,11 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
   const hasBash = snapshot.hasBashTool;
   const hasReportResult = hasTool(ns, "goal_report_phase_result");
   const hasRecordBlocker = hasTool(ns, "goal_record_blocker");
+  const hasCyberReportResult = hasTool(ns, "cyber_report_phase_result");
+  const hasCyberRecordBlocker = hasTool(ns, "cyber_record_blocker");
+  const hasCyberApproval = hasTool(ns, "cyber_request_approval");
+  const hasTaskPlanTool = hasTool(ns, "goal_update_task_plan");
+  const hasRepoContextTool = hasTool(ns, "goal_repo_context");
   const hasSubagentTool = snapshot.hasSubagentTool || snapshot.hasAgentTool;
   const hasAwsCliTool = hasTool(ns, "goal_aws_cli");
   const hasGitTool = hasTool(ns, "goal_git");
@@ -46,19 +52,35 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
       ? "Git finalization is configured, but goal_git is not available."
       : "Git finalization not enabled for this repo.";
 
-  const reportInstruction = hasReportResult
-    ? "Call goal_report_phase_result with runId, phaseAttemptId, phase, status, summary, artifacts_produced[], blockers[], recommendations[]."
+  const reportInstruction = hasCyberReportResult
+    ? "Call cyber_report_phase_result with runId, phaseAttemptId, phase, status, summary, artifacts_produced[], blockers[], recommendations[]."
+    : hasReportResult
+      ? "Call goal_report_phase_result with runId, phaseAttemptId, phase, status, summary, artifacts_produced[], blockers[], recommendations[]."
     : "goal_report_phase_result NOT in tool list. Write findings as final message. Harness synthesizes automatically.";
 
-  const blockerInstruction = hasRecordBlocker
-    ? "Record blockers with goal_record_blocker (include runId + phaseAttemptId)."
+  const blockerInstruction = hasCyberRecordBlocker
+    ? "Record blockers with cyber_record_blocker (include runId + phaseAttemptId)."
+    : hasRecordBlocker
+      ? "Record blockers with goal_record_blocker (include runId + phaseAttemptId)."
     : "Describe blockers explicitly in your final message.";
 
   const subagentInstruction = hasSubagentTool
     ? (hasTool(ns, "goal_subagent") ? "Use goal_subagent for delegation." : `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool.`)
     : "No subagent backend. Perform ALL work in this session.";
 
-  return { shellInstruction, awsInstruction, gitInstruction, reportInstruction, blockerInstruction, subagentInstruction };
+  const approvalInstruction = hasCyberApproval
+    ? "Use cyber_request_approval for production-impacting, dangerous, or secret-accessing actions; it suspends the run."
+    : "Request explicit operator approval before dangerous or production-impacting actions.";
+
+  const taskPlanInstruction = hasTaskPlanTool
+    ? "Use goal_update_task_plan to maintain the durable checklist; include runId + phaseAttemptId."
+    : "No task-plan tool is available; preserve checklist updates in the phase summary.";
+
+  const repoContextInstruction = hasRepoContextTool
+    ? "Use goal_repo_context for repository reads, file listings, and text search before raw shell."
+    : "Use available read/search tools or goal_shell for repository inspection.";
+
+  return { shellInstruction, awsInstruction, gitInstruction, reportInstruction, blockerInstruction, subagentInstruction, approvalInstruction, taskPlanInstruction, repoContextInstruction };
 }
 
 function harnessMeta(state: IterativeGoalState): string {
@@ -68,6 +90,26 @@ function harnessMeta(state: IterativeGoalState): string {
     `[HARNESS_META] runId=${state.runId} cycle=${state.cycle} phase=${state.phase} status=${state.status}${v ? ` lastVerdict=${v.goal_met}/${v.confidence}` : ""}`,
     `[HARNESS_META] phaseAttemptId=${phaseAttemptId}`,
     ``,
+  ].join("\n");
+}
+
+function renderTaskPlanSummary(state: IterativeGoalState): string {
+  const plan = state.taskPlan;
+  if (!plan || plan.items.length === 0) {
+    return [
+      "Durable Task Plan:",
+      "- No task plan recorded yet. Create one with goal_update_task_plan before or during planning.",
+    ].join("\n");
+  }
+  return [
+    "Durable Task Plan:",
+    `- Updated: ${plan.updatedAt ?? "unknown"}`,
+    `- Rationale: ${plan.rationale ?? "none"}`,
+    ...plan.items.map((item) => {
+      const detail = item.detail ? ` - ${item.detail}` : "";
+      const evidence = item.evidence.length > 0 ? ` Evidence: ${item.evidence.join("; ")}` : "";
+      return `- [${item.status}] ${item.id}: ${item.title}${detail}${evidence}`;
+    }),
   ].join("\n");
 }
 
@@ -96,7 +138,7 @@ export function renderResearchPrompt(state: IterativeGoalState, snapshot: Capabi
     `Run ID: ${state.runId}`, `Cycle: ${state.cycle}`, "",
     "Goal:", `${state.goal}`, "",
     "Completion Criterion:", `${state.goalCriterion}`, "",
-    lastEvalBlock, "", capSummary, "",
+    lastEvalBlock, "", renderProjectInstructionsForPrompt(state.projectInstructions), "", renderTaskPlanSummary(state), "", capSummary, "",
     "Research Instructions:",
     "1. Explore the codebase to understand the current state relevant to the goal.",
     "2. Identify files, patterns, tests, and modules that may need changes.",
@@ -107,9 +149,15 @@ export function renderResearchPrompt(state: IterativeGoalState, snapshot: Capabi
     `- Shell: ${ti.shellInstruction}`,
     `- AWS: ${ti.awsInstruction}`,
     `- Git: ${ti.gitInstruction}`,
+    `- Repo Context: ${ti.repoContextInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
+    `- Task Plan: ${ti.taskPlanInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
+    `- Approval: ${ti.approvalInstruction}`,
+    "CAS/Unify Policy:",
+    "- Current OCR execution route is Unify self-hosted Nemotron / unify_nemotron resolver projection.",
+    "- PaddleOCR, CPU/SQS OCR waves, and PaddleParse are deprecated for current operations unless the goal is rollback or historical audit.", "",
     `IDENTITY NONCE: Include runId="${state.runId}" phaseAttemptId="${state.lock.activePhaseId || ""}" in all harness tool calls.`, "",
     "IMPORTANT:",
     "- Do NOT make any file edits during Research.",
@@ -137,7 +185,7 @@ export function renderPlanPrompt(state: IterativeGoalState, snapshot: Capability
       ? [`goal_met=${state.evaluator.lastVerdict.goal_met}`, `confidence=${state.evaluator.lastVerdict.confidence}`,
           ...state.evaluator.lastVerdict.remaining_work.map(w => `  [${w.priority}] ${w.description}`)].join("\n")
       : "No evaluator feedback yet.",
-    "", capSummary, "",
+    "", renderProjectInstructionsForPrompt(state.projectInstructions), "", renderTaskPlanSummary(state), "", capSummary, "",
     "Plan Instructions:",
     "1. Read the most recent Research artifact.",
     "2. Propose a bounded implementation plan for THIS cycle only.",
@@ -146,6 +194,10 @@ export function renderPlanPrompt(state: IterativeGoalState, snapshot: Capability
     "5. Include safety invariants.",
     "6. Include a fallback path.",
     "7. State assumptions explicitly.", "",
+    "Durable Task Plan Instructions:",
+    "- Call goal_update_task_plan with the bounded checklist for this cycle.",
+    "- Keep exactly zero or one item in_progress.",
+    "- Update the checklist as implementation and validation progress changes.", "",
     "Required Plan Sections:",
     "- Exact files to modify (the allowlist)",
     "- Change descriptions per file",
@@ -157,9 +209,15 @@ export function renderPlanPrompt(state: IterativeGoalState, snapshot: Capability
     `- Shell: ${ti.shellInstruction}`,
     `- AWS: ${ti.awsInstruction}`,
     `- Git: ${ti.gitInstruction}`,
+    `- Repo Context: ${ti.repoContextInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
+    `- Task Plan: ${ti.taskPlanInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
+    `- Approval: ${ti.approvalInstruction}`,
+    "CAS/Unify Policy:",
+    "- Source-prioritize cas_migration current-state and UNIFIED-DATAFLOW architecture when Unify/OCR/CAS is in scope.",
+    "- Plan current OCR work around Unify Nemotron and occurrence_id -> ocr_manifest -> cas:blake3:, not Paddle.", "",
     `IDENTITY NONCE: Include runId="${state.runId}" phaseAttemptId="${state.lock.activePhaseId || ""}" in all harness tool calls.`, "",
     "If information is missing, state assumptions and choose the safest non-destructive next step.",
     "Do NOT stop. Report your plan as the final message.",
@@ -180,7 +238,7 @@ export function renderImplementPrompt(state: IterativeGoalState, snapshot: Capab
     "[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]", "",
     `Run ID: ${state.runId}`, `Cycle: ${state.cycle}`, "",
     "Goal:", `${state.goal}`, "",
-    capSummary, "",
+    renderProjectInstructionsForPrompt(state.projectInstructions), "", renderTaskPlanSummary(state), "", capSummary, "",
     "Implementation Instructions:",
     "1. Read the Plan artifact.",
     "2. Execute exactly ONE bounded slice — stay within plan allowlist.",
@@ -188,6 +246,10 @@ export function renderImplementPrompt(state: IterativeGoalState, snapshot: Capab
     "4. Use available fallbacks if tools are missing.",
     "5. Record blockers explicitly.",
     "6. Write a detailed summary.", "",
+    "Task Plan Instructions:",
+    "- Read the durable task plan before editing.",
+    "- Call goal_update_task_plan when an item moves to in_progress, completed, or blocked.",
+    "- Do not use the task plan to expand beyond the Plan artifact allowlist.", "",
     "CRITICAL RULES:",
     "- Preserve user dirty worktrees.",
     "- Destructive ops need operator approval.",
@@ -201,9 +263,15 @@ export function renderImplementPrompt(state: IterativeGoalState, snapshot: Capab
     `- Shell: ${ti.shellInstruction}`,
     `- AWS: ${ti.awsInstruction}`,
     `- Git: ${ti.gitInstruction}`,
+    `- Repo Context: ${ti.repoContextInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
+    `- Task Plan: ${ti.taskPlanInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
+    `- Approval: ${ti.approvalInstruction}`,
+    "CAS/Unify Policy:",
+    "- Do not launch PaddleOCR, CPU/SQS OCR waves, PaddleParse, local CDK deploys, direct CloudFormation mutations, or secret value reads.",
+    "- If such an action appears necessary, request approval and replan through the approved CAS/Nemotron path.", "",
     `IDENTITY NONCE: Include runId="${state.runId}" phaseAttemptId="${state.lock.activePhaseId || ""}" in all harness tool calls.`, "",
     "Write your summary as the final message.",
   ].join("\n");
@@ -222,7 +290,7 @@ export function renderValidatePrompt(state: IterativeGoalState, snapshot: Capabi
     `Run ID: ${state.runId}`, `Cycle: ${state.cycle}`, "",
     "Goal:", `${state.goal}`, "",
     "Completion Criterion:", `${state.goalCriterion}`, "",
-    capSummary, "",
+    renderProjectInstructionsForPrompt(state.projectInstructions), "", renderTaskPlanSummary(state), "", capSummary, "",
     "Validation Instructions:",
     `1. Collect evidence and persist to: ${cycleDir}/`,
     `2. Run tests: YOUR_TEST_CMD >> ${cycleDir}/test-results.txt 2>&1`,
@@ -233,6 +301,9 @@ export function renderValidatePrompt(state: IterativeGoalState, snapshot: Capabi
     generateValidationScript(state, "", ""),
     "```", "",
     "Run this script first, then append your test/gate outputs.", "",
+    "Task Plan Instructions:",
+    "- Update the durable task plan with validation outcomes and evidence paths.",
+    "- Leave incomplete or blocked items visible for the evaluator.", "",
     "STATUS VOCABULARY:",
     "- PASS / FAIL for gates/tests",
     "- BLOCKED_EXTERNAL for credential/operator blockers",
@@ -243,8 +314,14 @@ export function renderValidatePrompt(state: IterativeGoalState, snapshot: Capabi
     `- Shell: ${ti.shellInstruction}`,
     `- AWS: ${ti.awsInstruction}`,
     `- Git: ${ti.gitInstruction}`,
+    `- Repo Context: ${ti.repoContextInstruction}`,
+    `- Task Plan: ${ti.taskPlanInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
+    `- Approval: ${ti.approvalInstruction}`,
+    "CAS/Unify Validation Policy:",
+    "- If OCR is touched, validation must prove the Unify Nemotron/CAS resolver route and reject deprecated Paddle/CPU/SQS current-route evidence.",
+    "- Validation evidence must be signed by the harness before the evaluator can accept completion.", "",
     `IDENTITY NONCE: Include runId="${state.runId}" phaseAttemptId="${state.lock.activePhaseId || ""}" in all harness tool calls.`, "",
     "IMPORTANT: Only the evaluator may declare goal completion.",
     "Even if everything looks perfect, report and let the evaluator judge.",
@@ -302,12 +379,16 @@ export function renderResumePrompt(state: IterativeGoalState, snapshot: Capabili
 // ── Compaction ───────────────────────────────────────────────────────
 
 export function renderCompactionSummary(state: IterativeGoalState): string {
+  const taskPlan = state.taskPlan ?? { items: [] };
+  const projectInstructions = state.projectInstructions ?? { files: [] };
   return [
     "[ITERATIVE-GOAL COMPACTION SNAPSHOT]",
     `Run ID: ${state.runId}`, `Goal: ${state.goal}`,
     `Status: ${state.status}`, `Cycle: ${state.cycle}`, `Phase: ${state.phase}`,
     `Evaluator: ${state.evaluator.lastVerdict ? `goal_met=${state.evaluator.lastVerdict.goal_met}` : "none"}`,
     `Errors: ${state.errors.length}`,
+    `Project Instructions: ${projectInstructions.files.length} files`,
+    `Task Plan: ${taskPlan.items.length} items, in_progress=${taskPlan.items.find(item => item.status === "in_progress")?.id ?? "none"}`,
     `Artifacts: R:${state.artifacts.research.length} P:${state.artifacts.plans.length} I:${state.artifacts.implementations.length} V:${state.artifacts.validations.length}`,
     "", `State: .pi/iterative-goal/runs/${state.runId}/`,
     "After compaction, re-read latest.md and resume.",

@@ -24,6 +24,27 @@ export const ErrorKindSchema = StringEnum(
     "dirty_worktree",
     "credential_or_permission",
     "ci_failure",
+    "validation_failure",
+    "missing_authorization",
+    "unsafe_request",
+    "external_blocker",
+    "policy_denied",
+    "pending_approval",
+    "approval_denied",
+    "approval_expired",
+    "dlp_secret_detected",
+    "dlp_scanner_unavailable",
+    "ipi_detected",
+    "sanitizer_failure",
+    "sandbox_violation",
+    "sandbox_unavailable",
+    "attestation_missing",
+    "signature_invalid",
+    "wrong_aws_account",
+    "wrong_aws_region",
+    "stale_or_deprecated_guidance",
+    "cloudformation_risk_blocked",
+    "aws_security_posture_blocked",
     "unknown",
   ] as const,
 );
@@ -124,6 +145,20 @@ export interface CapabilitySnapshot {
   model: string;
   provider: string;
   awsCli: AwsCliPreflight | null;
+  hasFilesystem: boolean;
+  hasGit: boolean;
+  hasNetwork: boolean;
+  hasAws: boolean;
+  hasAwsConfig: boolean;
+  hasAwsSecurityHub: boolean;
+  hasAwsAccessAnalyzer: boolean;
+  hasScannerTools: boolean;
+  hasSandbox: boolean;
+  hasDlpProxy: boolean;
+  hasIpiSanitizer: boolean;
+  hasEvidenceSigner: boolean;
+  cyberCapabilities: string[];
+  unavailableCapabilities: string[];
   gitFinalization: {
     enabled: boolean;
     allowCommit: boolean;
@@ -166,7 +201,7 @@ export interface EvaluatorVerdict {
     description: string;
   }>;
   next_cycle_directive: {
-    focus: Phase | "capability_repair" | "external_blocked_complete";
+    focus: Phase | "capability_repair" | "external_blocked_complete" | "pending_approval";
     reason: string;
   };
   safety_notes: string[];
@@ -185,7 +220,7 @@ export const EvaluatorVerdictSchema = Type.Object({
     }),
   ),
   next_cycle_directive: Type.Object({
-    focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete"] as const),
+    focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete", "pending_approval"] as const),
     reason: Type.String(),
   }),
   safety_notes: Type.Array(Type.String()),
@@ -210,6 +245,9 @@ export interface PhaseArtifact {
     nonceMatched: boolean;
     reason?: string;
   };
+  dlpScanId?: string;
+  trustClassification?: TrustClassification;
+  attestationId?: string;
 }
 
 // ── Main goal state ──────────────────────────────────────────────────
@@ -220,6 +258,7 @@ export type RunStatus =
   | "recovering"
   | "succeeded"
   | "completed_external_blockers"
+  | "pending_approval"
   | "waiting_for_approval"
   | "blocked_external"
   | "requirement_conflict"
@@ -242,6 +281,10 @@ export interface GoalConstraints {
   allowGitFinalization: boolean;
   requireOperatorApprovalForDangerousOps: true;
   subagentTimeoutMs: number;
+  allowExternalNetworkScanning: boolean;
+  allowProductionWriteActions: boolean;
+  allowSecretMaterialCollection: boolean;
+  allowLongLivedCredentials: boolean;
 }
 
 export interface RunConfig {
@@ -269,6 +312,7 @@ export interface IterativeGoalState {
   evaluator: EvaluatorConfig;
   config: RunConfig;
   capabilities: CapabilitySnapshot | null;
+  projectInstructions: ProjectInstructionsState;
   errors: IterativeGoalError[];
   artifacts: {
     research: PhaseArtifact[];
@@ -277,12 +321,158 @@ export interface IterativeGoalState {
     validations: PhaseArtifact[];
     evaluatorReports: EvaluatorVerdict[];
   };
+  taskPlan: TaskPlanState;
   constraints: GoalConstraints;
+  trustBoundaries: TrustBoundaryState;
+  approvals: ApprovalState;
+  dlp: CyberDlpState;
+  sanitizer: CyberSanitizationState;
+  sandbox: CyberSandboxState;
+  signing: CyberSigningState;
+  attestations: ActionAttestation[];
+  unifyCasProfile: CyberUnifyCasProfile;
   lock: RunLock;
   phaseAttempts: PhaseAttempt[];
   evaluatorState: EvaluatorState | null;
   finalizationPolicy: FinalizationPolicy;
   releaseAuthorization: ReleaseAuthorization | null;
+}
+
+// ── Durable task planning ───────────────────────────────────────────
+
+export type TaskPlanItemStatus = "pending" | "in_progress" | "completed" | "blocked" | "cancelled";
+
+export interface TaskPlanItem {
+  id: string;
+  title: string;
+  status: TaskPlanItemStatus;
+  detail: string | null;
+  evidence: string[];
+  updatedAt: string;
+}
+
+export interface TaskPlanState {
+  updatedAt: string | null;
+  updatedByPhaseAttemptId: string | null;
+  rationale: string | null;
+  items: TaskPlanItem[];
+}
+
+// ── Project instruction discovery ──────────────────────────────────
+
+export interface ProjectInstructionFile {
+  path: string;
+  absolutePath: string;
+  filename: "AGENTS.md" | "CLAUDE.md";
+  sha256: string;
+  bytes: number;
+  content: string;
+  truncated: boolean;
+  precedence: number;
+}
+
+export interface ProjectInstructionsState {
+  discoveredAt: string | null;
+  repoRoot: string | null;
+  cwd: string | null;
+  files: ProjectInstructionFile[];
+}
+
+// ── Cyber / zero-trust runtime state ────────────────────────────────
+
+export type TrustClassification = "trusted_control_plane" | "trusted_repo_policy" | "untrusted_data_plane";
+
+export interface TrustBoundaryState {
+  trustedControlPlaneSources: string[];
+  trustedRepoPolicySources: string[];
+  untrustedDataSources: string[];
+}
+
+export interface DlpScanSummary {
+  scanId: string;
+  scannedAt: string;
+  detectedSecrets: number;
+  detectorCounts: Record<string, number>;
+}
+
+export interface CyberDlpState {
+  enabled: boolean;
+  scannerAvailable: boolean;
+  redactionCount: number;
+  detectorCounts: Record<string, number>;
+  lastScan: DlpScanSummary | null;
+}
+
+export interface CyberSanitizationState {
+  enabled: boolean;
+  sanitizerAvailable: boolean;
+  lastSanitizedAt: string | null;
+  ipiDetections: number;
+}
+
+export interface CyberSandboxState {
+  enabled: boolean;
+  profile: "readonly_inspection" | "test_untrusted_code" | "local_build" | "aws_cli_readonly" | "aws_mutation";
+  networkDefaultDeny: boolean;
+  readOnlyMountsByDefault: boolean;
+  osLevelSandboxAvailable: boolean;
+  lastViolation: string | null;
+}
+
+export interface CyberSigningState {
+  required: true;
+  algorithm: "ed25519";
+  runPublicKey: string;
+  privateKeyPem?: string;
+  available: boolean;
+  createdAt: string;
+  keyId: string;
+}
+
+export interface ApprovalRequest {
+  token: string;
+  requestedAction: string;
+  blastRadiusAssessment: string;
+  justification: string;
+  rollbackPlan: string;
+  affectedResources: string[];
+  exactCommands: string[];
+  exactAwsActions: string[];
+  dataAccessScope: string | null;
+  requestedAt: string;
+  expiresAt: string | null;
+  status: "pending" | "approved" | "denied" | "expired";
+  resolvedAt: string | null;
+}
+
+export interface ApprovalState {
+  pending: ApprovalRequest[];
+  history: ApprovalRequest[];
+}
+
+export interface ActionAttestation {
+  artifactId: string;
+  runId: string;
+  cycle: number;
+  phase: string;
+  path: string;
+  type: "markdown" | "json" | "jsonl" | "log" | "diff" | "sarif" | "junit" | "text" | "in_toto" | "attestation";
+  createdAt: string;
+  sha256: string;
+  cryptographicSignature: string;
+  provenanceAttestation: Record<string, unknown>;
+  dlpScanId: string | null;
+  trustClassification: TrustClassification;
+}
+
+export interface CyberUnifyCasProfile {
+  enabled: boolean;
+  sourcePriority: string[];
+  expectedAwsAccountId: string;
+  expectedAwsRegion: string;
+  canonicalOcrEngine: "unify_nemotron";
+  deprecatedOcrEngines: string[];
+  currentRouteSummary: string;
 }
 
 // ── Persistence envelope ─────────────────────────────────────────────
@@ -324,7 +514,7 @@ export const EvaluatorPromptSchema = Type.Object({
       description: Type.String(),
     }),
   ),
-  next_focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete"] as const),
+  next_focus: StringEnum([...PHASE_ORDER, "capability_repair", "external_blocked_complete", "pending_approval"] as const),
   next_focus_reason: Type.String(),
   safety_notes: Type.Array(Type.String()),
 });

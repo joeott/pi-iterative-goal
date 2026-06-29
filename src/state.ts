@@ -38,6 +38,11 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  type ActionAttestation,
+  type ApprovalRequest,
+  type CyberDlpState,
+  type CyberSanitizationState,
+  type CyberSandboxState,
   type IterativeGoalState,
   type EvaluatorVerdict,
   type PhaseArtifact,
@@ -52,8 +57,17 @@ import {
   type EvaluatorState,
   type FinalizationPolicy,
   type ReleaseAuthorization,
+  type TaskPlanState,
+  type ProjectInstructionsState,
   PHASE_ORDER,
 } from "./types.js";
+import {
+  DEFAULT_UNIFY_CAS_PROFILE,
+  createSigningState,
+  defaultDlpState,
+  defaultSanitizationState,
+  defaultSandboxState,
+} from "./cyber-runtime.js";
 import {
   DEFAULT_PRIMARY_MODEL,
   DEFAULT_FALLBACK_MODELS,
@@ -78,6 +92,7 @@ export interface StateManagerAPI {
   isPaused(): boolean;
   createRun(goal: string, goalCriterion: string, config?: Partial<IterativeGoalState["config"]>): IterativeGoalState;
   setCapabilities(snapshot: CapabilitySnapshot): void;
+  setProjectInstructions(projectInstructions: ProjectInstructionsState): void;
   recordError(error: IterativeGoalError): void;
   recordArtifact(artifact: PhaseArtifact): void;
   recordVerdict(verdict: EvaluatorVerdict): void;
@@ -104,6 +119,12 @@ export interface StateManagerAPI {
   setEvaluatorState(es: EvaluatorState): void;
   getEvaluatorState(): EvaluatorState | null;
   setReleaseAuthorization(auth: ReleaseAuthorization | null): void;
+  updateTaskPlan(taskPlan: TaskPlanState): void;
+  updateDlpState(dlp: CyberDlpState): void;
+  updateSanitizationState(sanitizer: CyberSanitizationState): void;
+  recordAttestation(attestation: ActionAttestation): void;
+  requestApproval(request: ApprovalRequest): void;
+  resolveApproval(token: string, status: "approved" | "denied" | "expired"): ApprovalRequest | null;
 
   // ── New: artifact path helpers ─────────────────────────────────
   getRunDir(): string;
@@ -271,8 +292,35 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     release_authorization_updated(replayed, event) {
       replayed.releaseAuthorization = event.authorization ?? null;
     },
+    task_plan_updated(replayed, event) {
+      replayed.taskPlan = event.taskPlan;
+    },
+    dlp_state_updated(replayed, event) {
+      replayed.dlp = event.dlp;
+    },
+    sanitizer_state_updated(replayed, event) {
+      replayed.sanitizer = event.sanitizer;
+    },
+    attestation_recorded(replayed, event) {
+      replayed.attestations.push(event.attestation);
+    },
+    approval_requested(replayed, event) {
+      replayed.approvals.pending.push(event.request);
+      replayed.status = "pending_approval";
+      replayed.lock.phaseStatus = "paused";
+    },
+    approval_resolved(replayed, event) {
+      const request = event.request as ApprovalRequest;
+      replayed.approvals.pending = replayed.approvals.pending.filter((item) => item.token !== request.token);
+      replayed.approvals.history.push(request);
+      replayed.status = request.status === "approved" ? "running" : "policy_denied";
+      replayed.lock.phaseStatus = request.status === "approved" ? "running" : "paused";
+    },
     capabilities_updated(replayed, event) {
       replayed.capabilities = event.capabilities;
+    },
+    project_instructions_updated(replayed, event) {
+      replayed.projectInstructions = event.projectInstructions;
     },
     goal_met(replayed) {
       replayed.status = "succeeded";
@@ -337,6 +385,18 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     updateLatestMd();
   }
 
+  function stateForPersistence(): IterativeGoalState | null {
+    if (!state) return null;
+    return {
+      ...state,
+      signing: {
+        ...state.signing,
+        privateKeyPem: undefined,
+        available: state.signing.available && !!state.signing.runPublicKey,
+      },
+    };
+  }
+
   /** Migrate v1 state or incomplete v2 state to current v2 format. */
   function migrateState(raw: any): IterativeGoalState {
     // v1 states lack lock, phaseAttempts, evaluatorState, finalizationPolicy, modelHealth
@@ -394,6 +454,51 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       raw.config.fallbackModels = DEFAULT_FALLBACK_MODELS.map((model) => ({ ...model }));
     }
     if (!("releaseAuthorization" in raw)) raw.releaseAuthorization = null;
+    if (!raw.taskPlan) {
+      raw.taskPlan = {
+        updatedAt: null,
+        updatedByPhaseAttemptId: null,
+        rationale: null,
+        items: [],
+      };
+    }
+    if (!raw.projectInstructions) {
+      raw.projectInstructions = {
+        discoveredAt: null,
+        repoRoot: null,
+        cwd: null,
+        files: [],
+      };
+    }
+    if (raw.status === "waiting_for_approval") raw.status = "pending_approval";
+    if (!raw.trustBoundaries) {
+      raw.trustBoundaries = {
+        trustedControlPlaneSources: ["harness policy", "operator approval token", "external evaluator verdict"],
+        trustedRepoPolicySources: DEFAULT_UNIFY_CAS_PROFILE.sourcePriority,
+        untrustedDataSources: ["tool output", "logs", "cloud API responses", "file contents", "web data", "test output"],
+      };
+    }
+    if (!raw.approvals) raw.approvals = { pending: [], history: [] };
+    if (!raw.dlp) raw.dlp = defaultDlpState();
+    if (!raw.sanitizer) raw.sanitizer = defaultSanitizationState();
+    if (!raw.sandbox) raw.sandbox = defaultSandboxState();
+    if (!raw.signing) raw.signing = createSigningState(raw.runId ?? "restored-run");
+    if (!raw.signing.privateKeyPem) raw.signing.available = false;
+    if (!raw.attestations) raw.attestations = [];
+    if (!raw.unifyCasProfile) raw.unifyCasProfile = { ...DEFAULT_UNIFY_CAS_PROFILE };
+    raw.constraints = {
+      ...(raw.constraints ?? {}),
+      neverStopUntilEvaluatorGoalMet: true,
+      requireAllFourPhasesEachCycle: true,
+      allowDestructiveOps: raw.constraints?.allowDestructiveOps ?? false,
+      allowGitFinalization: raw.constraints?.allowGitFinalization ?? false,
+      requireOperatorApprovalForDangerousOps: true,
+      subagentTimeoutMs: raw.constraints?.subagentTimeoutMs ?? 300_000,
+      allowExternalNetworkScanning: raw.constraints?.allowExternalNetworkScanning ?? false,
+      allowProductionWriteActions: raw.constraints?.allowProductionWriteActions ?? false,
+      allowSecretMaterialCollection: raw.constraints?.allowSecretMaterialCollection ?? false,
+      allowLongLivedCredentials: raw.constraints?.allowLongLivedCredentials ?? false,
+    };
     raw.version = 2;
     return raw as IterativeGoalState;
   }
@@ -402,7 +507,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!state) return;
     const envelope: PersistenceEnvelope = {
       version: 2,
-      state,
+      state: stateForPersistence()!,
       updatedAt: new Date().toISOString(),
     };
     pi.appendEntry(PERSISTENCE_TYPE, envelope);
@@ -413,7 +518,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     const statePath = path.join(runDir, "state.json");
     const envelope: PersistenceEnvelope = {
       version: 2,
-      state,
+      state: stateForPersistence()!,
       updatedAt: new Date().toISOString(),
     };
     writeFileAtomic(statePath, JSON.stringify(envelope, null, 2));
@@ -447,6 +552,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     const verdictsPath = path.join(runDir, "evaluator-verdicts.jsonl");
     if (!fs.existsSync(verdictsPath)) fs.writeFileSync(verdictsPath, "");
+    const approvalsPath = path.join(runDir, "approvals.jsonl");
+    if (!fs.existsSync(approvalsPath)) fs.writeFileSync(approvalsPath, "");
+    const redactionsPath = path.join(runDir, "dlp-redactions.jsonl");
+    if (!fs.existsSync(redactionsPath)) fs.writeFileSync(redactionsPath, "");
+    const attestationsPath = path.join(runDir, "attestations.jsonl");
+    if (!fs.existsSync(attestationsPath)) fs.writeFileSync(attestationsPath, "");
+    const taskPlanPath = path.join(runDir, "task-plan.jsonl");
+    if (!fs.existsSync(taskPlanPath)) fs.writeFileSync(taskPlanPath, "");
   }
 
   function ensurePhaseDirs(cycle: number, phase: Phase): string {
@@ -474,6 +587,18 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       `- **Status**: ${s.status}`,
       `- **Cycle**: ${s.cycle}`,
       `- **Phase**: ${s.phase}`,
+      `- **DLP Redactions**: ${s.dlp.redactionCount}`,
+      `- **IPI Detections**: ${s.sanitizer.ipiDetections}`,
+      `- **Evidence Signer**: ${s.signing.available ? "available" : "unavailable"} (${s.signing.keyId})`,
+      `- **Pending Approvals**: ${s.approvals.pending.length}`,
+      `- **Project Instructions**: ${s.projectInstructions.files.length}`,
+      ``,
+      `## Task Plan`,
+      ``,
+      `- **Updated**: ${s.taskPlan.updatedAt ?? "never"}`,
+      `- **Updated By**: ${s.taskPlan.updatedByPhaseAttemptId ?? "none"}`,
+      `- **Items**: ${s.taskPlan.items.length}`,
+      `- **In Progress**: ${s.taskPlan.items.find(item => item.status === "in_progress")?.title ?? "none"}`,
       ``,
       `## Lock`,
       ``,
@@ -481,6 +606,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       `- **Active Phase**: ${s.lock.activePhaseId ?? "none"}`,
       `- **Phase Status**: ${s.lock.phaseStatus}`,
       `- **Queued Phase IDs**: [${s.lock.queuedPhaseIds.join(", ")}]`,
+      ``,
+      `## Project Instructions`,
+      ``,
+      `- **Discovered**: ${s.projectInstructions.discoveredAt ?? "never"}`,
+      `- **Repo Root**: ${s.projectInstructions.repoRoot ?? "unknown"}`,
+      `- **Current Path**: ${s.projectInstructions.cwd ?? "unknown"}`,
+      ...s.projectInstructions.files.map(file =>
+        `- ${file.path} (${file.filename}, sha256=${file.sha256}, truncated=${file.truncated ? "yes" : "no"})`),
       ``,
       `## Evaluator`,
       ``,
@@ -511,6 +644,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     for (const err of s.errors.slice(-10)) {
       lines.push(`- [${err.phase}] ${err.kind}${err.missingTool ? `:${err.missingTool}` : ""} - ${err.recoveryAction}${err.resolved ? " ✓" : ""}`);
+    }
+
+    if (s.taskPlan.items.length > 0) {
+      lines.push(``, `## Task Plan Items`, ``);
+      for (const item of s.taskPlan.items) {
+        const detail = item.detail ? ` - ${item.detail}` : "";
+        lines.push(`- [${item.status}] ${item.id}: ${item.title}${detail}`);
+      }
     }
 
     if (s.evaluator.lastVerdict) {
@@ -619,6 +760,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           },
         },
         capabilities: null,
+        projectInstructions: {
+          discoveredAt: null,
+          repoRoot: null,
+          cwd: null,
+          files: [],
+        },
         errors: [],
         artifacts: {
           research: [],
@@ -627,6 +774,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           validations: [],
           evaluatorReports: [],
         },
+        taskPlan: {
+          updatedAt: null,
+          updatedByPhaseAttemptId: null,
+          rationale: null,
+          items: [],
+        },
         constraints: {
           neverStopUntilEvaluatorGoalMet: true,
           requireAllFourPhasesEachCycle: true,
@@ -634,7 +787,23 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           allowGitFinalization: false,
           requireOperatorApprovalForDangerousOps: true,
           subagentTimeoutMs: 300_000,
+          allowExternalNetworkScanning: false,
+          allowProductionWriteActions: false,
+          allowSecretMaterialCollection: false,
+          allowLongLivedCredentials: false,
         },
+        trustBoundaries: {
+          trustedControlPlaneSources: ["harness policy", "operator approval token", "external evaluator verdict"],
+          trustedRepoPolicySources: DEFAULT_UNIFY_CAS_PROFILE.sourcePriority,
+          untrustedDataSources: ["tool output", "logs", "cloud API responses", "file contents", "web data", "test output"],
+        },
+        approvals: { pending: [], history: [] },
+        dlp: defaultDlpState(),
+        sanitizer: defaultSanitizationState(),
+        sandbox: defaultSandboxState(),
+        signing: createSigningState(runId),
+        attestations: [],
+        unifyCasProfile: { ...DEFAULT_UNIFY_CAS_PROFILE },
         lock: {
           activeRunId: runId,
           activePhaseId: null,
@@ -663,7 +832,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         runId,
         goal,
         goalCriterion,
-        initialState: state,
+        initialState: stateForPersistence(),
         timestamp: new Date().toISOString(),
       });
 
@@ -776,10 +945,88 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       persistAllInternal();
     },
 
+    updateTaskPlan(taskPlan: TaskPlanState): void {
+      if (!state) return;
+      state.taskPlan = taskPlan;
+      if (runDir) appendJsonLine(path.join(runDir, "task-plan.jsonl"), { type: "task_plan_updated", taskPlan });
+      appendEvent({ type: "task_plan_updated", taskPlan, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
+    updateDlpState(dlp: CyberDlpState): void {
+      if (!state) return;
+      state.dlp = dlp;
+      appendEvent({ type: "dlp_state_updated", dlp, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
+    updateSanitizationState(sanitizer: CyberSanitizationState): void {
+      if (!state) return;
+      state.sanitizer = sanitizer;
+      appendEvent({ type: "sanitizer_state_updated", sanitizer, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
+    recordAttestation(attestation: ActionAttestation): void {
+      if (!state) return;
+      state.attestations.push(attestation);
+      if (runDir) appendJsonLine(path.join(runDir, "attestations.jsonl"), attestation as unknown as Record<string, unknown>);
+      appendEvent({ type: "attestation_recorded", attestation, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
+    requestApproval(request: ApprovalRequest): void {
+      if (!state) return;
+      state.approvals.pending.push(request);
+      state.status = "pending_approval";
+      state.lock.phaseStatus = "paused";
+      persistLock();
+      if (runDir) appendJsonLine(path.join(runDir, "approvals.jsonl"), { type: "approval_requested", ...request });
+      appendEvent({ type: "approval_requested", request, timestamp: new Date().toISOString() });
+      persistAllInternal();
+    },
+
+    resolveApproval(token: string, status: "approved" | "denied" | "expired"): ApprovalRequest | null {
+      if (!state) return null;
+      const idx = state.approvals.pending.findIndex((request) => request.token === token);
+      if (idx < 0) return null;
+      const [request] = state.approvals.pending.splice(idx, 1);
+      const resolved: ApprovalRequest = {
+        ...request,
+        status,
+        resolvedAt: new Date().toISOString(),
+      };
+      state.approvals.history.push(resolved);
+      state.status = status === "approved" ? "running" : "policy_denied";
+      state.lock.phaseStatus = status === "approved" ? "running" : "paused";
+      persistLock();
+      if (runDir) appendJsonLine(path.join(runDir, "approvals.jsonl"), { type: "approval_resolved", ...resolved });
+      appendEvent({ type: "approval_resolved", request: resolved, timestamp: new Date().toISOString() });
+      persistAllInternal();
+      return resolved;
+    },
+
     setCapabilities(snapshot: CapabilitySnapshot): void {
       if (!state) return;
       state.capabilities = snapshot;
       appendEvent({ type: "capabilities_updated", capabilities: snapshot, timestamp: new Date().toISOString() });
+      appendEvent({
+        type: "project_instructions_updated",
+        projectInstructions: state.projectInstructions,
+        timestamp: new Date().toISOString(),
+      });
+      persistAllInternal();
+    },
+
+    setProjectInstructions(projectInstructions: ProjectInstructionsState): void {
+      if (!state) return;
+      state.projectInstructions = projectInstructions;
+      appendEvent({
+        type: "project_instructions_updated",
+        projectInstructions,
+        timestamp: new Date().toISOString(),
+      });
+      persistAllInternal();
     },
 
     recordError(error: IterativeGoalError): void {

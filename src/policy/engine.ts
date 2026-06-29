@@ -6,6 +6,7 @@ import {
   resolveContainedPath,
 } from "../domain/path-scope.js";
 import { checkCommand, isPackageInstallCommand } from "../safety.js";
+import { assessCasUnifyCommand } from "../cyber-runtime.js";
 
 export type Effect =
   | "fs.read"
@@ -123,6 +124,10 @@ export class PolicyEngine {
       }
       if (isPackageInstallCommand(command)) {
         return deny("policy.package.install", "Package installation must use an approved package.install capability with planned lockfile effects.");
+      }
+      const casBlock = assessCasUnifyCommand(command);
+      if (casBlock) {
+        return deny("policy.cas_unify.route", casBlock);
       }
       const safety = checkCommand(
         command,

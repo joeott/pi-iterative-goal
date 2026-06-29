@@ -273,6 +273,17 @@ async function handleValidateTransition(
     return;
   }
 
+  if (verdict.next_cycle_directive.focus === "pending_approval") {
+    stateManager.setStatus("pending_approval");
+    state.lock.phaseStatus = "paused";
+    stateManager.releaseLock(state.runId, phaseAttemptId);
+    updateStatusBar(ctx, state);
+    updateWidget(ctx, state);
+    ctx.ui.notify("Iterative goal suspended pending operator approval.", "warning");
+    services.log(`PENDING_APPROVAL after cycle ${state.cycle}`);
+    return;
+  }
+
   state.lock.phaseStatus = "transition_pending";
   stateManager.incrementCycle();
   stateManager.setPhase("research");

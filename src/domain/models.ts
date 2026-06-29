@@ -20,6 +20,7 @@ export const ALLOWED_MODELS: readonly AllowedModel[] = [
   { provider: "openrouter", model: "anthropic/claude-opus-4.8", role: "reviewer" },
   { provider: "openrouter", model: "anthropic/claude-sonnet-4.6", role: "reviewer" },
   { provider: "openrouter", model: "z-ai/glm-5.2", role: "fallback" },
+  { provider: "zai", model: "glm-5.2", role: "fallback" },
   { provider: "openrouter", model: "openrouter/fusion", role: "router" },
   { provider: "openrouter", model: "openrouter/pareto-code", role: "router" },
   { provider: "openrouter", model: "openrouter/auto", role: "router" },
@@ -29,6 +30,7 @@ export const DEFAULT_PRIMARY_MODEL = { provider: "openrouter", model: "deepseek/
 
 export const DEFAULT_FALLBACK_MODELS = [
   { provider: "openrouter", model: "deepseek/deepseek-v4-pro" },
+  { provider: "zai", model: "glm-5.2" },
   { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
   { provider: "openrouter", model: "openrouter/fusion" },
 ] as const;

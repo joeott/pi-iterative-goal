@@ -16,6 +16,7 @@ export type ActionHandler<T = unknown> = (request: ActionRequest, signal?: Abort
 export interface ActionInvocationOptions {
   signal?: AbortSignal;
   outputSchema?: object;
+  transformOutput?: <T>(output: T, request: ActionRequest) => T;
 }
 
 export class CapabilityBroker {
@@ -47,11 +48,14 @@ export class CapabilityBroker {
       const validatedOutput = options.outputSchema
         ? parseWithSchema<T>(options.outputSchema, output, `Capability output for ${request.effect}`)
         : output;
+      const transformedOutput = options.transformOutput
+        ? options.transformOutput<T>(validatedOutput, request)
+        : validatedOutput;
       return {
         requestId: request.id,
         decision,
         ok: true,
-        output: validatedOutput,
+        output: transformedOutput,
         startedAt,
         finishedAt: new Date().toISOString(),
       };

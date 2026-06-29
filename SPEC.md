@@ -47,6 +47,8 @@ Before every phase, the extension takes a snapshot of:
 - Registered commands (getCommands)
 - MCP servers (detected from tool sources)
 - Subagent backend (subagent tool, Agent tool, command, or none)
+- Applicable project instruction files (`AGENTS.md`, `CLAUDE.md`) from repo root
+  to the current working directory
 
 This is injected into the phase prompt so the model never hallucinates
 unavailable tools.
@@ -90,8 +92,28 @@ Three-layer persistence:
 | `goal_record_blocker` | Record a blocker that prevents progress |
 | `goal_request_capability_repair` | Request tool/model restoration |
 | `goal_shell` | Safe shell execution with allowlists |
+| `goal_repo_context` | Read, list, or search repo files with containment, DLP/IPI processing, and attestation |
 | `goal_subagent` | Subagent delegation with backend detection |
+| `goal_update_task_plan` | Maintain durable task checklist across phases, compaction, and evaluator cycles |
 | `goal_checkpoint` | Force state checkpoint |
+
+## 4.1 Model Provider Runtime
+
+The harness supports a gitignored local `.env` for model-provider tokens and a
+mirrored AWS Secrets Manager bundle for project-account runtime use.
+
+- Local materialization: `npm run env:models -- --operator-approved-local-secret-materialization`
+- AWS persistence: add `--operator-approved-aws-secrets-manager-write --aws-profile unify-old --expected-aws-account 371292405073`
+- Default secret name: `pi-iterative-goal/model-provider-tokens`
+- Secret values are never printed; status output reports key names only.
+
+Z.ai GLM 5.2 is registered dynamically as:
+
+- Provider: `zai`
+- Model: `glm-5.2`
+- Base URL: `https://api.z.ai/api/coding/paas/v4`
+- API: OpenAI-compatible chat completions
+- Headless probe: `npm run probe:zai`
 
 ## 5. Data Model
 
@@ -107,6 +129,20 @@ interface IterativeGoalState {
   phase: "research" | "plan" | "implement" | "validate";
   evaluator: { model, provider, lastVerdict? };
   capabilities: CapabilitySnapshot | null;
+  projectInstructions: {
+    discoveredAt: string | null;
+    repoRoot: string | null;
+    cwd: string | null;
+    files: Array<{
+      path: string;
+      filename: "AGENTS.md" | "CLAUDE.md";
+      sha256: string;
+      bytes: number;
+      content: string;
+      truncated: boolean;
+      precedence: number;
+    }>;
+  };
   errors: IterativeGoalError[];
   artifacts: {
     research: PhaseArtifact[];
@@ -114,6 +150,19 @@ interface IterativeGoalState {
     implementations: PhaseArtifact[];
     validations: PhaseArtifact[];
     evaluatorReports: EvaluatorVerdict[];
+  };
+  taskPlan: {
+    updatedAt: string | null;
+    updatedByPhaseAttemptId: string | null;
+    rationale: string | null;
+    items: Array<{
+      id: string;
+      title: string;
+      status: "pending" | "in_progress" | "completed" | "blocked" | "cancelled";
+      detail: string | null;
+      evidence: string[];
+      updatedAt: string;
+    }>;
   };
   constraints: {
     neverStopUntilEvaluatorGoalMet: true;
@@ -168,5 +217,6 @@ Project runtime files:
   state.json         - Machine-readable state
   events.jsonl       - Append-only event log
   latest.md          - Human-readable summary
+  task-plan.jsonl    - Durable task-plan update audit trail
   evaluator-verdicts.jsonl - Evaluator verdicts
 ```

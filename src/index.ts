@@ -26,6 +26,7 @@ import {
 import { takeCapabilitySnapshot } from "./capabilities.js";
 import { classifyError, getRecoveryAction } from "./errors.js";
 import { registerGoalShellTool } from "./shell.js";
+import { registerGoalRepoContextTool } from "./repo-context.js";
 import { registerGoalSubagentTool } from "./subagents.js";
 import {
   generateValidationScript,
@@ -53,6 +54,8 @@ import { registerGoalRuntimeCommands } from "./ui/goal-commands.js";
 import { registerGoalCoreTools } from "./ui/tools.js";
 import { registerToolInterception } from "./ui/tool-interception.js";
 import { logDebug } from "./logging.js";
+import { loadProjectInstructions } from "./project-instructions.js";
+import { registerZaiGlm52Provider } from "./zai.js";
 
 export { extractTextFromParts, synthesizePhaseResultSafe } from "./kernel/output-synthesis.js";
 
@@ -84,11 +87,13 @@ async function buildRuntimeCapabilitySnapshot(
   ctx: ExtensionContext | ExtensionCommandContext,
   state?: IterativeGoalState | null,
 ): Promise<CapabilitySnapshot> {
+  registerZaiGlm52Provider(ctx);
   const snapshot = takeCapabilitySnapshot(pi);
   if (!state) return snapshot;
 
   refreshAwsCliConfig(state, ctx.cwd);
   refreshFinalizationPolicy(state, ctx.cwd);
+  state.projectInstructions = loadProjectInstructions(ctx.cwd);
   if (!state.config.awsCli.enabled) {
     snapshot.awsCli = null;
   } else {
@@ -97,6 +102,18 @@ async function buildRuntimeCapabilitySnapshot(
     snapshot.awsCli = preflight;
   }
   snapshot.gitFinalization = await getGitCapability(pi, ctx, state.finalizationPolicy);
+  snapshot.hasAws = state.config.awsCli.enabled;
+  snapshot.hasAwsConfig = state.config.awsCli.enabled;
+  snapshot.hasSandbox = state.sandbox.enabled;
+  snapshot.hasDlpProxy = state.dlp.enabled && state.dlp.scannerAvailable;
+  snapshot.hasIpiSanitizer = state.sanitizer.enabled && state.sanitizer.sanitizerAvailable;
+  snapshot.hasEvidenceSigner = state.signing.available;
+  snapshot.unavailableCapabilities = [
+    !snapshot.hasDlpProxy ? "dlp_pre_context_scrub" : "",
+    !snapshot.hasIpiSanitizer ? "ipi_untrusted_data_delimiters" : "",
+    !snapshot.hasEvidenceSigner ? "ed25519_evidence_attestation" : "",
+    !snapshot.hasSandbox ? "sandbox_profile" : "",
+  ].filter(Boolean);
   return snapshot;
 }
 
@@ -112,9 +129,11 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     pi,
     () => stateManager.getState()?.config.awsCli ?? null,
     () => stateManager.getState()?.finalizationPolicy ?? null,
+    stateManager,
   );
   registerGoalAwsCliTool(pi, stateManager);
   registerGoalGitTool(pi, stateManager);
+  registerGoalRepoContextTool(pi, stateManager);
   registerGoalSubagentTool(pi, () => stateManager.getState()?.capabilities ?? null);
   registerGoalCoreTools(pi, stateManager, { log });
 

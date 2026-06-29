@@ -28,6 +28,16 @@ export function classifyError(rawText: string): ErrorKind {
     return "credential_or_permission";
   }
   if (/CI|test.*fail|build.*fail/i.test(rawText)) return "ci_failure";
+  if (/pending[_ -]?approval|approval requested/i.test(rawText)) return "pending_approval";
+  if (/approval denied/i.test(rawText)) return "approval_denied";
+  if (/approval expired/i.test(rawText)) return "approval_expired";
+  if (/DLP|secret detected|redacted secret/i.test(rawText)) return "dlp_secret_detected";
+  if (/prompt injection|IPI|untrusted data/i.test(rawText)) return "ipi_detected";
+  if (/sandbox|process tree|network egress/i.test(rawText)) return "sandbox_violation";
+  if (/attestation|signature/i.test(rawText)) return "attestation_missing";
+  if (/wrong AWS account/i.test(rawText)) return "wrong_aws_account";
+  if (/wrong AWS region/i.test(rawText)) return "wrong_aws_region";
+  if (/deprecated|stale guidance|PaddleOCR|PaddleParse|CPU\/SQS OCR/i.test(rawText)) return "stale_or_deprecated_guidance";
   return "unknown";
 }
 
@@ -139,6 +149,50 @@ export function getRecoveryAction(
         requiresModelSwitch: false,
         continuePhase: true,
       };
+
+    case "pending_approval":
+      return { action: "Suspend execution until approval, denial, or expiry.", requiresModelSwitch: false, continuePhase: false };
+
+    case "approval_denied":
+      return { action: "Record policy denial and replan without the denied action.", requiresModelSwitch: false, continuePhase: false };
+
+    case "approval_expired":
+      return { action: "Record expired approval and return to plan.", requiresModelSwitch: false, continuePhase: false };
+
+    case "dlp_secret_detected":
+      return { action: "Redact secret references and invalidate any raw artifact.", requiresModelSwitch: false, continuePhase: true };
+
+    case "dlp_scanner_unavailable":
+      return { action: "Block security-sensitive tool output and repair DLP capability.", requiresModelSwitch: false, continuePhase: false };
+
+    case "ipi_detected":
+      return { action: "Treat untrusted content as inert data after sanitizer wrapping.", requiresModelSwitch: false, continuePhase: true };
+
+    case "sanitizer_failure":
+      return { action: "Block data ingestion and return to research.", requiresModelSwitch: false, continuePhase: false };
+
+    case "sandbox_violation":
+      return { action: "Terminate command, record violation, and replan safer execution.", requiresModelSwitch: false, continuePhase: false };
+
+    case "sandbox_unavailable":
+      return { action: "Block shell for security-sensitive tasks and repair capability.", requiresModelSwitch: false, continuePhase: false };
+
+    case "attestation_missing":
+    case "signature_invalid":
+      return { action: "Reject evidence and rerun validation with signed artifacts.", requiresModelSwitch: false, continuePhase: false };
+
+    case "wrong_aws_account":
+    case "wrong_aws_region":
+      return { action: "Block AWS actions until identity preflight matches the Unify binding.", requiresModelSwitch: false, continuePhase: false };
+
+    case "stale_or_deprecated_guidance":
+      return { action: "Resolve source priority against CAS architecture and replan.", requiresModelSwitch: false, continuePhase: false };
+
+    case "cloudformation_risk_blocked":
+      return { action: "Use approved CI deploy path or replan a non-mutating check.", requiresModelSwitch: false, continuePhase: false };
+
+    case "aws_security_posture_blocked":
+      return { action: "Collect AWS posture evidence before completion.", requiresModelSwitch: false, continuePhase: true };
 
     case "unknown":
     default:

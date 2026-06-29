@@ -21,6 +21,7 @@ import { type StateManagerAPI } from "./state.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logDebug } from "./logging.js";
+import { assertEvaluatorCyberPrereqs } from "./cyber-runtime.js";
 
 function log(msg: string) {
   logDebug("evaluator", msg);
@@ -38,6 +39,10 @@ Return goal_met=true ONLY if:
 - No unresolved critical blockers remain
 - The state is reproducible from committed/recorded artifacts
 - The implementation matches what was planned (no allowlist violations)
+- Durable task-plan items are completed or intentionally cancelled
+- Applicable project instructions were considered and not violated
+- DLP, indirect prompt-injection sanitization, and evidence signing controls are available
+- Validation evidence includes harness-produced signed attestations
 
 If unsure, return goal_met=false and specify what remains to be done.
 
@@ -49,7 +54,7 @@ You MUST return valid JSON matching this schema:
   "accepted_evidence": string[],
   "rejected_evidence": string[],
   "remaining_work": [{ "priority": "critical"|"high"|"medium"|"low", "description": string }],
-  "next_focus": "research"|"plan"|"implement"|"validate"|"capability_repair"|"external_blocked_complete",
+  "next_focus": "research"|"plan"|"implement"|"validate"|"capability_repair"|"external_blocked_complete"|"pending_approval",
   "next_focus_reason": string,
   "safety_notes": string[]
 }
@@ -237,6 +242,62 @@ export async function runExternalEvaluator(
       ].join("\n")
     : "";
 
+  const hasAllFourCurrentCycle = state.artifacts.research.some((artifact) => artifact.cycle === state.cycle)
+    && state.artifacts.plans.some((artifact) => artifact.cycle === state.cycle)
+    && state.artifacts.implementations.some((artifact) => artifact.cycle === state.cycle)
+    && state.artifacts.validations.some((artifact) => artifact.cycle === state.cycle);
+  const currentCycleAttestations = state.attestations.filter((attestation) => attestation.cycle === state.cycle);
+  const cyberBlockers = assertEvaluatorCyberPrereqs({
+    hasAllFourCurrentCycle,
+    signing: state.signing,
+    dlp: state.dlp,
+    sanitizer: state.sanitizer,
+    attestations: currentCycleAttestations,
+  });
+
+  if (cyberBlockers.length > 0) {
+    updateEvaluatorHeartbeat(stateManager, state, "failed");
+    return {
+      goal_met: false,
+      confidence: 0,
+      completion_blockers: cyberBlockers,
+      accepted_evidence: [],
+      rejected_evidence: cyberBlockers,
+      remaining_work: cyberBlockers.map((description) => ({ priority: "critical" as const, description })),
+      next_cycle_directive: {
+        focus: cyberBlockers.some((blocker) => /signer|DLP|sanitizer/i.test(blocker))
+          ? "capability_repair"
+          : "validate",
+        reason: "Cyber completion prerequisites are missing.",
+      },
+      safety_notes: ["Completion blocked by zero-trust evaluator prerequisites."],
+    };
+  }
+
+  const unfinishedTasks = state.taskPlan.items.filter((item) =>
+    item.status === "pending" || item.status === "in_progress" || item.status === "blocked"
+  );
+  if (unfinishedTasks.length > 0) {
+    const blockers = unfinishedTasks.map((item) => `Task plan item not complete: [${item.status}] ${item.id} ${item.title}`);
+    updateEvaluatorHeartbeat(stateManager, state, "failed");
+    return {
+      goal_met: false,
+      confidence: 0,
+      completion_blockers: blockers,
+      accepted_evidence: [],
+      rejected_evidence: blockers,
+      remaining_work: blockers.map((description) => ({
+        priority: /blocked/.test(description) ? "high" as const : "medium" as const,
+        description,
+      })),
+      next_cycle_directive: {
+        focus: unfinishedTasks.some((item) => item.status === "blocked") ? "research" : "implement",
+        reason: "Durable task plan still has unfinished work.",
+      },
+      safety_notes: ["Completion blocked until durable task plan is resolved."],
+    };
+  }
+
   const prompt = [
     EVALUATOR_SYSTEM_PROMPT,
     "",
@@ -271,6 +332,32 @@ export async function runExternalEvaluator(
     "--- VALIDATION MANIFEST ---",
     manifest,
     allowlistBlock,
+    "",
+    "--- PROJECT INSTRUCTIONS ---",
+    state.projectInstructions.files.length > 0
+      ? state.projectInstructions.files.map((file) =>
+          `${file.path} sha256=${file.sha256} truncated=${file.truncated ? "yes" : "no"}`,
+        ).join("\n")
+      : "No AGENTS.md or CLAUDE.md files discovered.",
+    "",
+    "--- DURABLE TASK PLAN ---",
+    state.taskPlan.items.length > 0
+      ? [
+          `Updated: ${state.taskPlan.updatedAt ?? "unknown"}`,
+          `Rationale: ${state.taskPlan.rationale ?? "none"}`,
+          ...state.taskPlan.items.map((item) =>
+            `[${item.status}] ${item.id}: ${item.title}${item.detail ? ` - ${item.detail}` : ""}${item.evidence.length > 0 ? ` Evidence: ${item.evidence.join("; ")}` : ""}`,
+          ),
+        ].join("\n")
+      : "No durable task-plan items recorded.",
+    "",
+    "--- ZERO TRUST CONTROL SUMMARY ---",
+    `DLP enabled: ${state.dlp.enabled} scanner=${state.dlp.scannerAvailable} redactions=${state.dlp.redactionCount}`,
+    `IPI sanitizer enabled: ${state.sanitizer.enabled} detections=${state.sanitizer.ipiDetections}`,
+    `Evidence signer: ${state.signing.available ? "available" : "unavailable"} key=${state.signing.keyId}`,
+    `Signed attestations this cycle: ${currentCycleAttestations.length}`,
+    `CAS/Unify route: ${state.unifyCasProfile.currentRouteSummary}`,
+    "Deprecated current-operation OCR routes: PaddleOCR, CPU/SQS OCR waves, PaddleParse.",
     "",
     "--- ERRORS THIS CYCLE ---",
     state.errors

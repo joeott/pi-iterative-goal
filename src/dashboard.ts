@@ -32,6 +32,7 @@ function statusIcon(status: string): string {
     case "recovering": return "🔄";
     case "succeeded": return "✓";
     case "completed_external_blockers": return "⊘";
+    case "pending_approval": return "⏸";
     default: return "•";
   }
 }

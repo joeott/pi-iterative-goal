@@ -123,6 +123,51 @@ export function registerGoalRuntimeCommands(
     },
   });
 
+  pi.registerCommand("goal-approve", {
+    description: "Approve a pending cyber approval token",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const token = args.trim();
+      if (!token) { ctx.ui.notify("Usage: /goal-approve <token>", "warning"); return; }
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const resolved = stateManager.resolveApproval(token, "approved");
+      if (!resolved) { ctx.ui.notify(`No pending approval found for token: ${token}`, "warning"); return; }
+      const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
+      stateManager.setCapabilities(snapshot);
+      const backends = detectSubagentBackend(pi, snapshot);
+      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      const prompt = renderResumePrompt(state, snapshot, backends);
+      pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+      updateStatusBar(ctx, state); updateWidget(ctx, state);
+      ctx.ui.notify(`Approval accepted for: ${resolved.requestedAction}`, "info");
+      services.log(`Approval accepted: ${token}`);
+    },
+  });
+
+  pi.registerCommand("goal-deny", {
+    description: "Deny a pending cyber approval token",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const token = args.trim();
+      if (!token) { ctx.ui.notify("Usage: /goal-deny <token>", "warning"); return; }
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const resolved = stateManager.resolveApproval(token, "denied");
+      if (!resolved) { ctx.ui.notify(`No pending approval found for token: ${token}`, "warning"); return; }
+      stateManager.recordError({
+        timestamp: new Date().toISOString(),
+        phase: state.phase,
+        cycle: state.cycle,
+        kind: "approval_denied",
+        rawText: `Approval denied for ${resolved.requestedAction}`,
+        recoveryAction: "Record policy_denied and replan without the denied action.",
+        resolved: false,
+      });
+      updateStatusBar(ctx, state); updateWidget(ctx, state);
+      ctx.ui.notify(`Approval denied for: ${resolved.requestedAction}`, "warning");
+      services.log(`Approval denied: ${token}`);
+    },
+  });
+
   pi.registerCommand("goal-repair-capabilities", {
     description: "Run capability preflight and fix",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -251,6 +296,20 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
       implementations: state.artifacts.implementations.length, validations: state.artifacts.validations.length,
       evaluatorReports: state.artifacts.evaluatorReports.length,
     },
+    projectInstructions: {
+      discoveredAt: state.projectInstructions.discoveredAt,
+      repoRoot: state.projectInstructions.repoRoot,
+      cwd: state.projectInstructions.cwd,
+      files: state.projectInstructions.files.map(file => ({
+        path: file.path,
+        filename: file.filename,
+        sha256: file.sha256,
+        bytes: file.bytes,
+        truncated: file.truncated,
+        precedence: file.precedence,
+      })),
+    },
+    taskPlan: state.taskPlan,
     errors: state.errors.length,
     unresolvedErrors: state.errors.filter(e => !e.resolved).map(e => ({
       phase: e.phase, kind: e.kind, cycle: e.cycle, recoveryAction: e.recoveryAction,
@@ -258,6 +317,22 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
     modelHealth: state.config.modelHealth,
     awsCli: state.config.awsCli,
     finalizationPolicy: state.finalizationPolicy,
+    cyber: {
+      dlp: state.dlp,
+      sanitizer: state.sanitizer,
+      sandbox: state.sandbox,
+      signing: {
+        required: state.signing.required,
+        algorithm: state.signing.algorithm,
+        keyId: state.signing.keyId,
+        available: state.signing.available,
+        runPublicKey: state.signing.runPublicKey,
+      },
+      attestations: state.attestations.length,
+      pendingApprovals: state.approvals.pending,
+      approvalHistory: state.approvals.history.slice(-10),
+      unifyCasProfile: state.unifyCasProfile,
+    },
     releaseAuthorization: state.releaseAuthorization ? {
       id: state.releaseAuthorization.id,
       headSha: state.releaseAuthorization.headSha,
@@ -296,7 +371,14 @@ function renderStatusText(state: IterativeGoalState): string[] {
     `  Status: ${state.status}`, `  Cycle: ${state.cycle}`, `  Phase: ${state.phase}`,
     `  Lock: ${state.lock.phaseStatus} (owner: ${state.lock.activePhaseId || "none"})`,
     `  Artifacts: R:${state.artifacts.research.length} P:${state.artifacts.plans.length} I:${state.artifacts.implementations.length} V:${state.artifacts.validations.length}`,
+    `  Project instructions: ${state.projectInstructions.files.length} files`,
+    `  Task plan: ${state.taskPlan.items.length} items, in_progress=${state.taskPlan.items.find(item => item.status === "in_progress")?.id ?? "none"}`,
     `  Errors: ${state.errors.length}`,
+    `  DLP redactions: ${state.dlp.redactionCount}`,
+    `  IPI detections: ${state.sanitizer.ipiDetections}`,
+    `  Evidence signer: ${state.signing.available ? "available" : "unavailable"} (${state.signing.keyId})`,
+    `  Attestations: ${state.attestations.length}`,
+    `  Pending approvals: ${state.approvals.pending.length}`,
   ];
   if (state.config.awsCli.enabled) {
     lines.push(

@@ -61,6 +61,26 @@ export function takeCapabilitySnapshot(pi: ExtensionAPI): CapabilitySnapshot {
     model: "",
     provider: "",
     awsCli: null,
+    hasFilesystem: true,
+    hasGit: true,
+    hasNetwork: true,
+    hasAws: allTools.some((t) => t.name === "goal_aws_cli"),
+    hasAwsConfig: false,
+    hasAwsSecurityHub: false,
+    hasAwsAccessAnalyzer: false,
+    hasScannerTools: false,
+    hasSandbox: true,
+    hasDlpProxy: true,
+    hasIpiSanitizer: true,
+    hasEvidenceSigner: true,
+    cyberCapabilities: [
+      "dlp_pre_context_scrub",
+      "ipi_untrusted_data_delimiters",
+      "ed25519_evidence_attestation",
+      "pending_approval_state",
+      "cas_unify_nemotron_policy",
+    ],
+    unavailableCapabilities: [],
     gitFinalization: null,
   };
 }
@@ -156,6 +176,21 @@ export function renderCapabilitySummary(
       `- session-manager-plugin: ${snapshot.awsCli.sessionManagerPluginAvailable ? "yes" : "no"}`,
     );
   }
+  lines.push(`- filesystem: ${checkmark(snapshot.hasFilesystem !== false)}`);
+  lines.push(`- git: ${checkmark(snapshot.hasGit !== false)}`);
+  lines.push(`- network: ${checkmark(snapshot.hasNetwork !== false)}`);
+  lines.push(`- sandbox: ${checkmark(snapshot.hasSandbox !== false)}`);
+  lines.push(`- dlp-proxy: ${checkmark(snapshot.hasDlpProxy !== false)}`);
+  lines.push(`- ipi-sanitizer: ${checkmark(snapshot.hasIpiSanitizer !== false)}`);
+  lines.push(`- evidence-signer: ${checkmark(snapshot.hasEvidenceSigner !== false)}`);
+  const cyberCapabilities = snapshot.cyberCapabilities ?? [];
+  const unavailableCapabilities = snapshot.unavailableCapabilities ?? [];
+  if (cyberCapabilities.length > 0) {
+    lines.push(`- Cyber controls: ${cyberCapabilities.join(", ")}`);
+  }
+  if (unavailableCapabilities.length > 0) {
+    lines.push(`- Unavailable controls: ${unavailableCapabilities.join(", ")}`);
+  }
   if (snapshot.gitFinalization?.enabled) {
     lines.push(
       `- git-finalization: yes (commit=${snapshot.gitFinalization.allowCommit ? "yes" : "no"}, push=${snapshot.gitFinalization.allowPush ? "yes" : "no"}, pr=${snapshot.gitFinalization.allowPR ? "yes" : "no"})`,
@@ -164,6 +199,9 @@ export function renderCapabilitySummary(
       `- gh: ${snapshot.gitFinalization.ghAvailable ? (snapshot.gitFinalization.ghAuthenticated ? "yes (authenticated)" : "installed, auth missing") : "no"}`,
     );
   }
+  lines.push(
+    "- CAS/Unify OCR policy: current route is Unify self-hosted Nemotron / unify_nemotron resolver projection; Paddle/CPU/SQS OCR routes are deprecated for current operations.",
+  );
 
   if (ns.extensionTools.length > 0) {
     lines.push(`- Extension tools: ${ns.extensionTools.join(", ")}`);
