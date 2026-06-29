@@ -53,6 +53,7 @@ const features = [
   ["coverage_report", "Feature-by-feature coverage report"],
   ["realistic_workloads", "Representative coding-agent workloads, not only static unit checks"],
   ["vulnerability_remediation", "Headless vulnerability-hunting and remediation workload"],
+  ["claude_code_parity_analysis", "Empirical scorecard against Claude Code-style agentic coding expectations"],
 ];
 
 function redact(value) {
@@ -1215,6 +1216,119 @@ const derivedGaps = [
 for (const gap of derivedGaps) {
   addFeatureEvidence(gap.id, `derived-${gap.id}`, gap.status, gap.summary, null);
 }
+
+await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-style agentic coding expectations", [
+  "repo_instruction_loading",
+  "planning",
+  "task_tracking",
+  "tool_use",
+  "repo_search_read_edit_flows",
+  "shell_execution",
+  "subagent_worktree_isolation",
+  "evaluator_gating",
+  "approval_flows",
+  "model_fallback",
+  "resumability",
+  "compaction_recovery",
+  "git_finalization",
+  "aws_integration",
+  "dlp",
+  "indirect_prompt_injection",
+  "sandboxing",
+  "signing_attestation",
+  "secrets_manager_handling",
+  "cas_unify_policy",
+  "headless_cli",
+  "glm52_live",
+  "tracing",
+  "coverage_report",
+  "realistic_workloads",
+  "vulnerability_remediation",
+  "claude_code_parity_analysis",
+], async () => {
+  const checkStatus = Object.fromEntries(results.map((result) => [result.id, result.status]));
+  const featureStatus = new Map();
+  for (const [id] of features) {
+    const evidence = featureEvidence.get(id) ?? [];
+    const statuses = evidence.map((item) => item.status);
+    featureStatus.set(id, statuses.includes("FAIL")
+      ? "FAIL"
+      : statuses.includes("PASS")
+        ? "PASS"
+        : statuses.includes("WARN")
+          ? "WARN"
+          : "GAP");
+  }
+  const scorecard = [
+    {
+      expectation: "Loads repo instructions and keeps durable task planning state",
+      evidenceIds: ["smoke-tests", "workload-benchmark", "vulnerability-remediation-workload"],
+      featureIds: ["repo_instruction_loading", "planning", "task_tracking"],
+    },
+    {
+      expectation: "Uses tools for repository search, scoped edits, and shell validation",
+      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload"],
+      featureIds: ["tool_use", "repo_search_read_edit_flows", "shell_execution", "sandboxing"],
+    },
+    {
+      expectation: "Preserves agent workflow integrity across fallback, evaluator gates, git finalization, and restart/replay",
+      evidenceIds: ["smoke-tests", "workload-benchmark"],
+      featureIds: ["subagent_worktree_isolation", "evaluator_gating", "model_fallback", "resumability", "compaction_recovery", "git_finalization"],
+    },
+    {
+      expectation: "Runs first-class headless CLI workloads with live GLM 5.2",
+      evidenceIds: ["zai-live-probe", "workload-benchmark", "vulnerability-remediation-workload"],
+      featureIds: ["headless_cli", "glm52_live", "realistic_workloads"],
+    },
+    {
+      expectation: "Defends cyber workloads with DLP, IPI delimiting, approvals, signed attestations, Secrets Manager handling, AWS boundaries, and CAS route policy",
+      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload"],
+      featureIds: ["approval_flows", "aws_integration", "dlp", "indirect_prompt_injection", "signing_attestation", "secrets_manager_handling", "cas_unify_policy"],
+      exceedsBaselineOn: ["secret redaction", "untrusted-input delimiting", "explicit approval tokens", "CAS route enforcement"],
+    },
+    {
+      expectation: "Exports empirical traces and feature coverage with remaining gaps documented",
+      evidenceIds: ["local-trace-artifact"],
+      featureIds: ["tracing", "coverage_report"],
+    },
+    {
+      expectation: "Remediates representative vulnerabilities, not only generic coding bugs",
+      evidenceIds: ["vulnerability-remediation-workload"],
+      featureIds: ["vulnerability_remediation"],
+      exceedsBaselineOn: ["security test baseline", "scoped fix", "attested validation"],
+    },
+  ].map((entry) => {
+    const checkResults = entry.evidenceIds.map((id) => ({ id, status: checkStatus[id] ?? "MISSING" }));
+    const featureResults = entry.featureIds.map((id) => ({ id, status: featureStatus.get(id) ?? "MISSING" }));
+    const passed = checkResults.every((item) => item.status === "PASS")
+      && featureResults.every((item) => item.status === "PASS");
+    return { ...entry, status: passed ? "PASS" : "FAIL", checkResults, featureResults };
+  });
+
+  const failed = scorecard.filter((entry) => entry.status !== "PASS");
+  const score = scorecard.filter((entry) => entry.status === "PASS").length / scorecard.length;
+  const artifactPath = path.join(runDir, "claude-parity-scorecard.json");
+  const report = {
+    comparisonMode: "claude-code-style-expectations",
+    note: "This compares Pi harness empirical outcomes to explicit Claude Code-style agentic coding expectations; it is not a live Claude Code product benchmark.",
+    score,
+    parityThreshold: 1,
+    verdict: failed.length === 0 ? "meets_or_exceeds_claude_code_style_expectations" : "below_claude_code_style_expectations",
+    failedExpectations: failed.map((entry) => entry.expectation),
+    scorecard,
+  };
+  fs.writeFileSync(artifactPath, JSON.stringify(report, null, 2));
+  appendTrace({
+    type: "claude_parity_scorecard.summary",
+    comparisonMode: report.comparisonMode,
+    verdict: report.verdict,
+    score,
+    failedExpectations: report.failedExpectations,
+    artifact: artifactPath,
+  });
+  assert.equal(failed.length, 0);
+  return { artifactPath, ...report };
+});
 
 const featureRows = features.map(([id, requirement]) => {
   const evidence = featureEvidence.get(id) ?? [];

@@ -145,6 +145,12 @@ from failing tests for reflected XSS, path traversal, and implementation
 disclosure, applying a scoped fix through the harness policy layer, then rerunning
 the security tests and recording signed evidence.
 
+The runner also emits `claude-parity-scorecard.json`, which compares empirical
+Pi harness outcomes against explicit Claude Code-style expectations for repo
+context, planning, tool use, validation, replay, model fallback, git finalization,
+headless execution, traceability, and zero-trust security controls. This is a
+style-expectation scorecard, not a live Claude Code product benchmark.
+
 ## 5. Data Model
 
 ```typescript
