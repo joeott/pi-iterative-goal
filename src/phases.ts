@@ -64,9 +64,12 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
       ? "Record blockers with goal_record_blocker (include runId + phaseAttemptId)."
     : "Describe blockers explicitly in your final message.";
 
-  const subagentInstruction = hasSubagentTool
-    ? (hasTool(ns, "goal_subagent") ? "Use goal_subagent for delegation." : `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool.`)
-    : "No subagent backend. Perform ALL work in this session.";
+  const hasGoalSubagentTool = hasTool(ns, "goal_subagent");
+  const subagentInstruction = hasGoalSubagentTool
+    ? "Use goal_subagent for delegation: pass a scalar task or a tasks[] batch; mode defaults to single (parallel/chain stay disabled unless iterativeGoal.swarm.enabled is set — the tool demotes to single while off). Writer roles (Implementer, Test engineer, Integrator) require allowedPaths."
+    : hasSubagentTool
+      ? `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool.`
+      : "No subagent backend. Perform ALL work in this session.";
 
   const approvalInstruction = hasCyberApproval
     ? "Use cyber_request_approval for production-impacting, dangerous, or secret-accessing actions; it suspends the run."

@@ -66,6 +66,8 @@ export interface RenderModel {
   inProgressTask: string | null;
   /** Dormant until Chapter 6's shard_posted/shard_completed events land. */
   shards: { done: number; total: number } | null;
+  /** Null until subagent activity exists (Campaign 1 swarm line, §5.2). */
+  swarm: { done: number; running: number; failed: number; total: number } | null;
   evaluator: { status: string; warn: boolean; heartbeatAgeS: number | null } | null;
   verdict: EvaluatorVerdict | null;
   blockers: string[];
@@ -87,6 +89,7 @@ export function renderModel(state: IterativeGoalState, now: number = Date.now())
     taskTotal: items.length,
     inProgressTask: state.taskPlan.items.find((item) => item.status === "in_progress")?.title ?? null,
     shards: null,
+    swarm: swarmSummary(state),
     evaluator: es
       ? {
         status: es.status,
@@ -109,6 +112,18 @@ function elapsedMs(state: IterativeGoalState, now: number): number {
   const startedAt = state.lock.phaseStartedAt || openAttempt?.startedAt || "";
   const ms = startedAt ? now - Date.parse(startedAt) : 0;
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+/** Swarm counts from the ledger-backed task records; null while no subagent ran. */
+function swarmSummary(state: IterativeGoalState): RenderModel["swarm"] {
+  const tasks = state.swarm?.tasks ?? [];
+  if (tasks.length === 0) return null;
+  return {
+    total: tasks.length,
+    done: tasks.filter((task) => task.status === "completed").length,
+    running: tasks.filter((task) => task.status === "running").length,
+    failed: tasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
+  };
 }
 
 export function formatElapsed(ms: number): string {
@@ -145,6 +160,7 @@ export function formatStatusLine(model: RenderModel): string {
     `🎯 C${model.cycle} ${phaseIcon(model.phase)} ${model.phase} ${model.elapsed}`,
     `task ${model.taskDone}/${model.taskTotal}`,
   ];
+  if (model.swarm) parts.push(`swarm ${model.swarm.done}/${model.swarm.total} done, ${model.swarm.running} running, ${model.swarm.failed} failed`);
   if (model.shards) parts.push(`shards ${model.shards.done}/${model.shards.total}`);
   parts.push(`eval ${evalDisplay(model)}`);
   return parts.join(" · ");
@@ -156,6 +172,9 @@ export function formatWidgetLines(model: RenderModel): string[] {
   lines.push(`C${model.cycle} ${phaseIcon(model.phase)} ${model.phase} · ${model.status}`);
   if (model.inProgressTask) {
     lines.push(`▸ ${model.inProgressTask}`);
+  }
+  if (model.swarm) {
+    lines.push(`swarm: ${model.swarm.done}/${model.swarm.total} done · ${model.swarm.running} running · ${model.swarm.failed} failed`);
   }
   if (model.evaluator) {
     const heartbeat = model.evaluator.heartbeatAgeS !== null ? ` · hb ${model.evaluator.heartbeatAgeS}s` : "";

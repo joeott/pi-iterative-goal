@@ -137,7 +137,7 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   registerGoalAwsCliTool(pi, stateManager);
   registerGoalGitTool(pi, stateManager);
   registerGoalRepoContextTool(pi, stateManager);
-  registerGoalSubagentTool(pi, () => stateManager.getState()?.capabilities ?? null);
+  registerGoalSubagentTool(pi, () => stateManager.getState()?.capabilities ?? null, { stateManager });
   registerGoalCoreTools(pi, stateManager, { log });
 
   registerGoalLifecycle(pi, stateManager, {

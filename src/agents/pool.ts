@@ -5,18 +5,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Value } from "typebox/value";
 import { normalizeRepoPath } from "../domain/path-scope.js";
+import type { AgentRole } from "./roles.js";
 
-export type AgentRole =
-  | "Scout"
-  | "Requirements analyst"
-  | "Planner"
-  | "Implementer"
-  | "Test engineer"
-  | "Security reviewer"
-  | "Architecture/Ousterhout advisor"
-  | "Documentation reviewer"
-  | "Release reviewer"
-  | "Integrator";
+export type { AgentRole } from "./roles.js";
+
+/** Swarm fan-out band (§5.1): default 4, hard cap 8 — the single source. */
+export const DEFAULT_SWARM_CONCURRENCY = 4;
+export const MAX_SWARM_CONCURRENCY = 8;
+
+/** What pool.cancel() found for the task id. */
+export type PoolCancelStatus = "running" | "queued" | "unknown";
 
 export interface AgentTask<T = unknown> {
   id: string;
@@ -47,6 +45,8 @@ export interface AgentResult<T = unknown> {
   stderr: string;
   workspacePath?: string;
   patch?: string;
+  /** True when the run succeeded but output failed schema validation (prose preserved). */
+  degraded?: boolean;
   usage: {
     input: number;
     output: number;
@@ -60,16 +60,42 @@ export interface AgentResult<T = unknown> {
 export interface AgentPool {
   submit<T>(task: AgentTask<T>, signal?: AbortSignal): Promise<AgentResult<T>>;
   map<T>(tasks: AgentTask<T>[], options?: { concurrency?: number; signal?: AbortSignal }): Promise<AgentResult<T>[]>;
-  cancel(taskId: string): Promise<void>;
+  cancel(taskId: string): Promise<PoolCancelStatus>;
+  /** Tear down a long-lived pool: kill in-flight tasks and release all write scopes. */
+  shutdown?(): Promise<void>;
+  /** Queue tracking so cancel() can report/admit queued-but-not-yet-running tasks. */
+  noteQueued?(taskId: string): void;
+  unnoteQueued?(taskId: string): void;
+  /** True when a task was terminated/pre-empted via cancel()/shutdown(). */
+  wasCancelled?(taskId: string): boolean;
+  /** True while a task id is running or queued on this pool. */
+  isTaskActive?(taskId: string): boolean;
+}
+
+export interface PiSubprocessAgentPoolOptions {
+  /** Injectable spawn for tests; defaults to node:child_process.spawn. */
+  spawnImpl?: typeof spawn;
 }
 
 export class PiSubprocessAgentPool implements AgentPool {
   private readonly running = new Map<string, ReturnType<typeof spawn>>();
+  // Cross-call write-scope registry: lives as long as the pool, so a writer
+  // admitted by an earlier goal_subagent call still blocks colliding scopes.
   private readonly activeWriteScopes = new Map<string, string[]>();
+  private readonly cancelledTasks = new Set<string>();
+  private readonly queuedTasks = new Set<string>();
+  private readonly spawnImpl: typeof spawn;
 
-  constructor(private readonly cwd: string) {}
+  constructor(private readonly cwd: string, options: PiSubprocessAgentPoolOptions = {}) {
+    this.spawnImpl = options.spawnImpl ?? spawn;
+  }
 
   async submit<T>(task: AgentTask<T>, signal?: AbortSignal): Promise<AgentResult<T>> {
+    // Cancel-before-admission guard: a task cancelled while queued is never
+    // executed — the ledger may say cancelled only because nothing ran.
+    if (this.cancelledTasks.has(task.id)) {
+      return failedResult(task, `Task ${task.id} was cancelled before admission; it never executed.`);
+    }
     let workspace: IsolatedWorkspace | null = null;
     let runCwd = this.cwd;
     if (task.workspace === "isolated_worktree") {
@@ -88,7 +114,7 @@ export class PiSubprocessAgentPool implements AgentPool {
     const args = buildPiSubprocessArgs(task);
 
     return await new Promise<AgentResult<T>>((resolve) => {
-      const proc = spawn("pi", args, { cwd: runCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+      const proc = this.spawnImpl("pi", args, { cwd: runCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
       this.running.set(task.id, proc);
       let stdout = "";
       let stderr = "";
@@ -121,16 +147,21 @@ export class PiSubprocessAgentPool implements AgentPool {
         workspace?.cleanup();
         const outputText = extractFinalText(stdout);
         const structured = validateStructuredOutput<T>(task, outputText);
+        // Schema degradation: a validation failure never discards outputText —
+        // prose reaches the supervisor with a validation note in stderr and the
+        // result marked degraded instead of failed (C1-OUS-002 / C1-ADV-007).
+        const degraded = code === 0 && !structured.ok;
         resolve({
           taskId: task.id,
           role: task.role,
-          ok: code === 0 && structured.ok,
+          ok: code === 0,
           outputText: patch ? `${outputText}\n\n[ISOLATED_WORKTREE_PATCH]\n${patch}`.trim() : outputText,
           structuredOutput: structured.value,
-          exitCode: code === 0 && !structured.ok ? 1 : code,
+          exitCode: code,
           stderr: [stderr, structured.error].filter(Boolean).join("\n"),
           workspacePath,
           patch,
+          ...(degraded ? { degraded: true } : {}),
           usage,
         });
       });
@@ -156,7 +187,9 @@ export class PiSubprocessAgentPool implements AgentPool {
 
   async map<T>(tasks: AgentTask<T>[], options?: { concurrency?: number; signal?: AbortSignal }): Promise<AgentResult<T>[]> {
     const results: AgentResult<T>[] = new Array(tasks.length);
-    const concurrency = Math.max(1, Math.min(options?.concurrency ?? 2, tasks.length || 1));
+    // Default 4, hard cap 8 (§5.1): beyond ~8 parallel specialists,
+    // coordination overhead and token cost dominate.
+    const concurrency = Math.max(1, Math.min(options?.concurrency ?? DEFAULT_SWARM_CONCURRENCY, MAX_SWARM_CONCURRENCY, tasks.length || 1));
     let next = 0;
     await Promise.all(new Array(concurrency).fill(null).map(async () => {
       while (next < tasks.length) {
@@ -167,10 +200,54 @@ export class PiSubprocessAgentPool implements AgentPool {
     return results;
   }
 
-  async cancel(taskId: string): Promise<void> {
+  async cancel(taskId: string): Promise<PoolCancelStatus> {
     const proc = this.running.get(taskId);
-    if (proc) proc.kill("SIGTERM");
-    this.activeWriteScopes.delete(taskId);
+    if (proc) {
+      this.cancelledTasks.add(taskId);
+      proc.kill("SIGTERM");
+      this.activeWriteScopes.delete(taskId);
+      return "running";
+    }
+    if (this.queuedTasks.delete(taskId)) {
+      // Queued but never spawned: pre-empt admission so submit() refuses it.
+      this.cancelledTasks.add(taskId);
+      this.activeWriteScopes.delete(taskId);
+      return "queued";
+    }
+    return "unknown";
+  }
+
+  async shutdown(): Promise<void> {
+    for (const [taskId, proc] of this.running.entries()) {
+      this.cancelledTasks.add(taskId);
+      proc.kill("SIGTERM");
+    }
+    this.running.clear();
+    this.activeWriteScopes.clear();
+    this.queuedTasks.clear();
+  }
+
+  noteQueued(taskId: string): void {
+    this.queuedTasks.add(taskId);
+  }
+
+  unnoteQueued(taskId: string): void {
+    this.queuedTasks.delete(taskId);
+  }
+
+  /** True when a task was terminated/pre-empted via cancel()/shutdown(). */
+  wasCancelled(taskId: string): boolean {
+    return this.cancelledTasks.has(taskId);
+  }
+
+  /** True while a task id is running or queued on this pool. */
+  isTaskActive(taskId: string): boolean {
+    return this.running.has(taskId) || this.queuedTasks.has(taskId);
+  }
+
+  /** Introspection for diagnostics and smoke tests. */
+  getActiveWriteScopes(): ReadonlyMap<string, string[]> {
+    return this.activeWriteScopes;
   }
 
   private findWriteScopeConflict(task: AgentTask): string | null {
@@ -207,6 +284,9 @@ function accumulateUsageFromJsonLine(
 }
 
 export function buildPiSubprocessArgs(task: AgentTask): string[] {
+  const schemaKeys = task.outputSchema
+    ? Object.keys((task.outputSchema as { properties?: Record<string, unknown> }).properties ?? {})
+    : [];
   const prompt = [
     `Role: ${task.role}`,
     "",
@@ -217,7 +297,10 @@ export function buildPiSubprocessArgs(task: AgentTask): string[] {
     "",
     task.instructions,
     "",
-    "Return concise structured findings. Do not claim success without evidence.",
+    schemaKeys.length > 0
+      ? `Respond with a single JSON object (no surrounding prose) with keys: ${schemaKeys.join(", ")}.`
+      : "Return concise structured findings.",
+    "Do not claim success without evidence.",
   ].join("\n");
 
   const args = ["--mode", "json", "-p", "--no-session"];

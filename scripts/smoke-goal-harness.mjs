@@ -20,6 +20,9 @@
  * 16. C0 sole-writer grep: phase-indicator.ts owns the iterative-goal surface ID
  * 17. C0 warm session restart repaints restored runs; live interval tears down on shutdown
  * 18. C0 modal dashboard re-reads state in invalidate() and renders live progress
+ * 19. C1 swarm wiring: role profiles, shardability gate, cross-call write scopes,
+ *     subagent ledger events + replay, swarm status line, fallback contract,
+ *     and the recorded swarm-vs-single baseline benchmark (§8.4)
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -2508,6 +2511,995 @@ process.exit(2);
   ok(after.includes("Phase elapsed:"), "modal renders per-phase elapsed");
 
   console.log("✓ Test 37: modal dashboard re-reads state in invalidate() and renders Progress: {pct}%");
+}
+
+// ── C1 shared fixtures: fake pi subprocess spawner + git repo maker ──
+
+const c1 = await (async () => {
+  const { EventEmitter } = await import("node:events");
+  const { execFileSync } = await import("node:child_process");
+
+  function makeGitRepo(prefix) {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "smoke@example.com"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Smoke"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo, stdio: "ignore" });
+    return repo;
+  }
+
+  // Role-conformant JSON output, so validateStructuredOutput accepts it.
+  function fakeOutputForPrompt(prompt) {
+    const role = (String(prompt).match(/^Role: (.+)$/m) ?? [])[1] ?? "Scout";
+    const outputs = {
+      "Scout": { claims: ["c1"], sources: ["s1"], confidence: 0.9, unknowns: [] },
+      "Requirements analyst": { requirements: ["r1"], constraints: ["c1"], acceptanceCriteria: ["a1"] },
+      "Planner": { tasks: ["t1"], dependsOn: [], allowedPaths: [] },
+      "Implementer": { summary: "done", patchRef: "patch", filesChanged: ["src/a.ts"], testsRun: ["npm test"], uncertainties: [] },
+      "Test engineer": { testFiles: ["tests/a.test.ts"], commands: ["npm test"], verdict: "pass", coverageNotes: [] },
+      "Security reviewer": { findings: [], verdict: "pass" },
+      "Architecture/Ousterhout advisor": { hotspots: [], moduleDepthNotes: [], recommendations: [] },
+      "Documentation reviewer": { gaps: [], inaccuracies: [], suggestedEdits: [] },
+      "Release reviewer": { checklist: [{ item: "i", status: "ok" }], blockers: [], verdict: "pass" },
+      "Integrator": { mergePlan: [], conflicts: [], resolvedPatchRef: "p", verification: "v" },
+    };
+    return JSON.stringify(outputs[role] ?? outputs.Scout);
+  }
+
+  function usageMessageLine(prompt) {
+    return JSON.stringify({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: fakeOutputForPrompt(prompt) }],
+        usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.003 } },
+      },
+    });
+  }
+
+  // Fake child_process.spawn: emits one assistant message_end line with usage
+  // counters, then closes after `latencyMs`. Records every spawn.
+  // outputForPrompt overrides the role-conformant JSON text (e.g. prose).
+  function makeFakeSpawn({ latencyMs = 20, closeCode = 0, outputForPrompt = null } = {}) {
+    const spawns = [];
+    const spawnImpl = (cmd, args, opts) => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.killed = false;
+      proc.kill = () => { proc.killed = true; };
+      spawns.push({ cmd, args, opts, proc });
+      setTimeout(() => {
+        const text = outputForPrompt ? String(outputForPrompt(args.at(-1))) : fakeOutputForPrompt(args.at(-1));
+        const line = JSON.stringify({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text }],
+            usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.003 } },
+          },
+        });
+        proc.stdout.emit("data", Buffer.from(line + "\n"));
+        proc.emit("close", closeCode);
+      }, latencyMs);
+      return proc;
+    };
+    spawnImpl.spawns = spawns;
+    return spawnImpl;
+  }
+
+  // Manual-close variant: tasks stay in flight until finish() is called.
+  function makeManualSpawn() {
+    const pending = [];
+    const spawnImpl = (cmd, args, opts) => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.killed = false;
+      proc.kill = () => { proc.killed = true; };
+      proc.finish = (code = 0) => {
+        proc.stdout.emit("data", Buffer.from(usageMessageLine(args.at(-1)) + "\n"));
+        proc.emit("close", code);
+      };
+      pending.push(proc);
+      return proc;
+    };
+    spawnImpl.pending = pending;
+    return spawnImpl;
+  }
+
+  const emptySnapshot = { allTools: [], commands: [] };
+
+  return { makeGitRepo, makeFakeSpawn, makeManualSpawn, fakeOutputForPrompt, emptySnapshot };
+})();
+
+// ── Test 38: C1 role profiles — budgets, workspaces, output schemas ──
+
+{
+  const { Value } = await import("typebox/value");
+  const {
+    AGENT_ROLE_PROFILES,
+    getRoleProfile,
+    isTestScopedPath,
+    outputContractHint,
+  } = await import("../dist/agents/roles.js");
+  const { buildAgentTaskFromProfile } = await import("../dist/subagents.js");
+
+  const expectedRoles = [
+    "Scout", "Requirements analyst", "Planner", "Implementer", "Test engineer",
+    "Security reviewer", "Architecture/Ousterhout advisor", "Documentation reviewer",
+    "Release reviewer", "Integrator",
+  ];
+  deepStrictEqual(Object.keys(AGENT_ROLE_PROFILES), expectedRoles);
+
+  // §5.2 table: budgets scale with expected effort.
+  eq(getRoleProfile("Scout").budget.maxTurns, 6);
+  eq(getRoleProfile("Scout").budget.maxTokens, 24_000);
+  eq(getRoleProfile("Requirements analyst").budget.maxTurns, 4);
+  eq(getRoleProfile("Implementer").budget.maxTurns, 12);
+  eq(getRoleProfile("Implementer").budget.maxTokens, 60_000);
+  eq(getRoleProfile("Implementer").budget.timeoutMs, 900_000);
+  eq(getRoleProfile("Test engineer").budget.maxTurns, 10);
+  eq(getRoleProfile("Test engineer").budget.timeoutMs, 600_000);
+  eq(getRoleProfile("Integrator").budget.timeoutMs, 900_000);
+
+  // Workspace split: writers isolated, everyone else read-only.
+  for (const role of ["Implementer", "Test engineer", "Integrator"]) {
+    eq(getRoleProfile(role).workspace, "isolated_worktree");
+    eq(getRoleProfile(role).writer, true);
+    ok(getRoleProfile(role).permittedEffects.includes("fs.write"));
+  }
+  for (const role of expectedRoles.filter((r) => !["Implementer", "Test engineer", "Integrator"].includes(r))) {
+    eq(getRoleProfile(role).workspace, "read_only_snapshot");
+    eq(getRoleProfile(role).writer, false);
+  }
+  eq(getRoleProfile("Test engineer").allowedPathsPolicy, "tests_only");
+
+  // Typed output schemas validate conforming output and reject bad shapes.
+  ok(Value.Check(getRoleProfile("Scout").outputSchema, { claims: ["c"], sources: ["s"], confidence: 0.9, unknowns: [] }));
+  ok(!Value.Check(getRoleProfile("Scout").outputSchema, { claims: ["c"] }));
+  ok(Value.Check(getRoleProfile("Implementer").outputSchema, { summary: "s", patchRef: "p", filesChanged: [], testsRun: [], uncertainties: [] }));
+  ok(Value.Check(getRoleProfile("Security reviewer").outputSchema, { findings: [{ severity: "high", path: "src/a.ts", evidence: "e" }], verdict: "fail" }));
+  ok(!Value.Check(getRoleProfile("Security reviewer").outputSchema, { findings: [{ severity: "catastrophic", path: "x", evidence: "e" }], verdict: "fail" }));
+  ok(outputContractHint(getRoleProfile("Scout")).includes("confidence"));
+
+  // Test-engineer scoping: test-authorship paths only.
+  ok(isTestScopedPath("tests/foo.ts"));
+  ok(isTestScopedPath("src/__tests__/foo.ts"));
+  ok(isTestScopedPath("src/foo.test.ts"));
+  ok(!isTestScopedPath("src/foo.ts"));
+
+  // Profile-driven task construction + writer policy blocks.
+  const scout = buildAgentTaskFromProfile({ role: "Scout", task: "map the repo", allowedPaths: [], inputArtifactIds: [] });
+  eq(scout.ok, true);
+  eq(scout.task.budget.maxTokens, 24_000);
+  ok(scout.task.outputSchema, "Scout task carries the typed output schema");
+  eq(scout.task.workspace, "read_only_snapshot");
+
+  const blockedWriter = buildAgentTaskFromProfile({ role: "Implementer", task: "edit", allowedPaths: [], inputArtifactIds: [] });
+  eq(blockedWriter.ok, false);
+  ok(blockedWriter.error.includes("allowedPaths"));
+
+  const blockedScope = buildAgentTaskFromProfile({ role: "Test engineer", task: "write tests", allowedPaths: ["src/impl.ts"], inputArtifactIds: [] });
+  eq(blockedScope.ok, false);
+  const allowedScope = buildAgentTaskFromProfile({ role: "Test engineer", task: "write tests", allowedPaths: ["tests/impl.test.ts"], inputArtifactIds: [] });
+  eq(allowedScope.ok, true);
+  eq(allowedScope.task.workspace, "isolated_worktree");
+
+  const explicitId = buildAgentTaskFromProfile({ id: "task-x", role: "Scout", task: "t", allowedPaths: [], inputArtifactIds: [] });
+  eq(explicitId.task.id, "task-x", "caller-provided task ids are honored");
+
+  console.log("✓ Test 38: C1 role profiles carry §5.2 budgets, workspaces, and typed output schemas");
+}
+
+// ── Test 39: C1 shardability gate rejects overlapping parallel writers ──
+
+{
+  const { checkShardability, buildAgentTaskFromProfile, registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  // Unit level: structured reject naming the holding task.
+  const writerA = buildAgentTaskFromProfile({ role: "Implementer", task: "implement A", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
+  const writerB = buildAgentTaskFromProfile({ role: "Implementer", task: "implement B", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
+  const verdict = checkShardability([writerA, writerB]);
+  eq(verdict.ok, false);
+  eq(verdict.rejected, true);
+  eq(verdict.reason, "write_scope_conflict");
+  eq(verdict.holdingTaskId, writerA.id);
+  eq(verdict.taskId, writerB.id);
+
+  // Tool level: the batch is rejected with a structured error and no dispatch.
+  const repo = c1.makeGitRepo("pi-ig-c1-gate-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Shardability gate", "Overlapping parallel writers are rejected");
+  const spawnImpl = c1.makeFakeSpawn();
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+  const result = await pi.tool.execute("gate-1", {
+    mode: "parallel",
+    tasks: [
+      { role: "Implementer", task: "implement slice A", allowedPaths: ["src/a.ts"] },
+      { role: "Implementer", task: "implement slice B", allowedPaths: ["src/a.ts"] },
+    ],
+  }, undefined, undefined, { cwd: repo });
+
+  eq(result.isError, true);
+  eq(result.details.result, "shardability-gate-rejected");
+  eq(result.details.gate.rejected, true);
+  eq(result.details.gate.reason, "write_scope_conflict");
+  ok(result.details.gate.holdingTaskId, "structured error names the holding task");
+  ok(result.content[0].text.includes(result.details.gate.holdingTaskId), "holding task named in the message");
+  eq(spawnImpl.spawns.length, 0, "rejected batch dispatches nothing");
+  eq(stateManager.getState().swarm.tasks.length, 0, "no ledger entries for a rejected batch");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 39: C1 shardability gate rejects overlapping parallel writers, naming the holding task");
+}
+
+// ── Test 40: C1 shardability demotes unshardable batches to chain/single ──
+
+{
+  const { checkShardability, buildAgentTaskFromProfile, registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { createAgentTask, PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  // Shared context: an in-batch artifact dependency demotes parallel → chain.
+  const researchA = buildAgentTaskFromProfile({ id: "research-a", role: "Scout", task: "research A", allowedPaths: [], inputArtifactIds: [] }).task;
+  const researchB = buildAgentTaskFromProfile({ id: "research-b", role: "Scout", task: "research B", allowedPaths: [], inputArtifactIds: ["research-a"] }).task;
+  const chainVerdict = checkShardability([researchA, researchB]);
+  eq(chainVerdict.ok, false);
+  eq(chainVerdict.rejected, false);
+  eq(chainVerdict.demotedTo, "chain");
+
+  // Not independently verifiable: missing typed output schemas demote → single.
+  const bareA = createAgentTask("Scout", "bare A");
+  const bareB = createAgentTask("Scout", "bare B");
+  const singleVerdict = checkShardability([bareA, bareB]);
+  eq(singleVerdict.ok, false);
+  eq(singleVerdict.rejected, false);
+  eq(singleVerdict.demotedTo, "single");
+
+  // Tool level: demoted batch executes as a chain with artifact handoff.
+  const repo = c1.makeGitRepo("pi-ig-c1-demote-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Shardability demotion", "Unshardable batches demote safely");
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+  const result = await pi.tool.execute("demote-1", {
+    mode: "parallel",
+    tasks: [
+      { id: "research-a", role: "Scout", task: "research slice A" },
+      { id: "research-b", role: "Scout", task: "research slice B", inputArtifactIds: ["research-a"] },
+    ],
+  }, undefined, undefined, { cwd: repo });
+
+  eq(result.details.demotedFrom, "parallel");
+  eq(result.details.mode, "chain");
+  ok(result.details.demotionReasons.length > 0);
+  ok(result.content[0].text.includes('demoted to mode:"chain"'));
+  eq(result.details.tasks.length, 2);
+  ok(result.details.tasks.every((task) => task.ok), "chain tasks complete");
+  eq(spawnImpl.spawns.length, 2, "chain executes both tasks");
+  const secondPrompt = String(spawnImpl.spawns[1].args.at(-1));
+  ok(secondPrompt.includes("--- artifact research-a ---"), "chain labels the bound predecessor artifact");
+  ok(secondPrompt.includes('"claims":["c1"]'), "chain binds the predecessor's recorded CONTENT, not just the header");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 40: C1 shardability demotes shared-context batches to chain and unverifiable batches to single");
+}
+
+// ── Test 41: C1 cross-call write-scope conflict + long-lived pool registry ──
+
+{
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { buildAgentTaskFromProfile } = await import("../dist/subagents.js");
+  const { getRunAgentPool, shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-crosscall-");
+  const spawnImpl = c1.makeManualSpawn();
+  const pool = new PiSubprocessAgentPool(repo, { spawnImpl });
+  const writerA = buildAgentTaskFromProfile({ role: "Implementer", task: "edit a", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
+  const writerB = buildAgentTaskFromProfile({ role: "Implementer", task: "edit a too", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
+
+  // First call admits writer A; its scope registers while in flight.
+  const promiseA = pool.submit(writerA);
+  eq(pool.getActiveWriteScopes().size, 1);
+
+  // A later call (same long-lived pool) colliding with the in-flight scope
+  // is rejected with an error naming the holding task — the registry
+  // survives call boundaries.
+  const rejectedB = await pool.submit(writerB);
+  eq(rejectedB.ok, false);
+  ok(rejectedB.stderr.includes(writerA.id), "rejection names the holding task");
+  eq(pool.getActiveWriteScopes().size, 1, "rejected writer never registers a scope");
+  eq(spawnImpl.pending.length, 1, "rejected writer never spawns");
+
+  // Completion releases the scope; a retry is then admitted.
+  spawnImpl.pending[0].finish(0);
+  const resultA = await promiseA;
+  eq(resultA.ok, true);
+  eq(pool.getActiveWriteScopes().size, 0);
+  const promiseB = pool.submit(writerB);
+  eq(pool.getActiveWriteScopes().size, 1, "scope re-registers after release");
+  spawnImpl.pending[1].finish(0);
+  eq((await promiseB).ok, true);
+
+  // The run-scoped registry returns one long-lived pool per run and tears
+  // down pools at run boundaries.
+  await shutdownRunAgentPools();
+  const fakePoolA = { async submit() {}, async map() {}, async cancel() { return "unknown"; }, down: false, async shutdown() { this.down = true; } };
+  const entryA1 = getRunAgentPool("run-a", repo, { poolFactory: () => fakePoolA });
+  const entryA2 = getRunAgentPool("run-a", repo, { poolFactory: () => fakePoolA });
+  eq(entryA1, entryA2, "same pool instance across calls within a run");
+  const fakePoolB = { async submit() {}, async map() {}, async cancel() { return "unknown"; }, down: false, async shutdown() { this.down = true; } };
+  const entryB = getRunAgentPool("run-b", repo, { poolFactory: () => fakePoolB });
+  ok(entryB !== entryA1, "a new run gets a new pool");
+  eq(fakePoolA.down, true, "previous run's pool is shut down at the run boundary");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 41: C1 cross-call write-scope registry rejects collisions and survives call boundaries");
+}
+
+// ── Test 42: C1 ledger — subagent events carry usage and replay restores swarm state ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-ledger-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Swarm ledger", "subagent events hash-chain and replay");
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+
+  const result = await pi.tool.execute("ledger-1", {
+    mode: "parallel",
+    concurrency: 2,
+    tasks: [
+      { role: "Scout", task: "scout module A" },
+      { role: "Scout", task: "scout module B" },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(result.isError, false);
+  eq(result.details.mode, "parallel");
+  eq(result.details.tasks.length, 2);
+
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const started = events.filter((event) => event.type === "subagent_started");
+  const finished = events.filter((event) => event.type === "subagent_finished");
+  eq(started.length, 2);
+  eq(finished.length, 2);
+  ok(started.every((event) => event.task.role === "Scout" && event.task.mode === "parallel"
+    && event.backend === "pi-subprocess" && event.detectedBackend === "none"));
+  for (const event of finished) {
+    eq(event.status, "completed");
+    ok(event.usage && event.usage.input === 120 && event.usage.output === 40 && event.usage.turns === 1,
+      "subagent_finished carries AgentResult.usage counters");
+    ok(event.usage.cost > 0);
+  }
+
+  // verifyEventHashChain passes (replay returns state) and swarm state is rebuilt.
+  const replayed = stateManager.replayActiveState();
+  ok(replayed, "replay verifies the hash chain and returns state");
+  eq(replayed.swarm.tasks.length, 2);
+  ok(replayed.swarm.tasks.every((task) => task.status === "completed" && task.usage && task.usage.turns === 1));
+  eq(replayed.swarm.backend, "pi-subprocess", "selected backend recorded per run");
+
+  // In-flight subagent state survives restart via replay.
+  stateManager.recordSubagentStarted({
+    taskId: "inflight-1", batchId: result.details.batchId, runId: run.runId, role: "Implementer", mode: "parallel",
+    backend: "pi-subprocess", detectedBackend: "none", workspace: "isolated_worktree", allowedPaths: ["src/c.ts"],
+    status: "running", startedAt: new Date().toISOString(), finishedAt: null, usage: null, error: null,
+  });
+  const replayedInflight = stateManager.replayActiveState();
+  eq(replayedInflight.swarm.tasks.length, 3);
+  eq(replayedInflight.swarm.tasks.find((task) => task.taskId === "inflight-1").status, "running",
+    "replay restores in-flight subagent state");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 42: C1 subagent_started/finished events carry usage and replay restores in-flight swarm state");
+}
+
+// ── Test 43: C1 swarm status line renders only when subagent activity exists ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { renderModel, formatStatusLine, formatWidgetLines } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c1-swarm-line-"));
+  const pi = { appendEntry() {} };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Swarm status", "Swarm line renders on activity only");
+
+  // Dormant: no subagent activity → no swarm segment (same forward-compat
+  // pattern as the dormant shards field).
+  const idleModel = renderModel(stateManager.getState());
+  eq(idleModel.swarm, null);
+  ok(!formatStatusLine(idleModel).includes("swarm"));
+  ok(!formatWidgetLines(idleModel).some((line) => line.startsWith("swarm:")));
+
+  const startedAt = new Date().toISOString();
+  for (const [taskId, role] of [["sw-1", "Scout"], ["sw-2", "Scout"], ["sw-3", "Implementer"]]) {
+    stateManager.recordSubagentStarted({
+      taskId, batchId: "batch-sw", runId: run.runId, role, mode: "parallel", backend: "pi-subprocess",
+      detectedBackend: "none",
+      workspace: role === "Implementer" ? "isolated_worktree" : "read_only_snapshot",
+      allowedPaths: [], status: "running", startedAt, finishedAt: null, usage: null, error: null,
+    });
+  }
+  stateManager.recordSubagentFinished("sw-1", { runId: run.runId, status: "completed", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } });
+  stateManager.recordSubagentFinished("sw-3", { runId: run.runId, status: "failed", error: "boom" });
+
+  const model = renderModel(stateManager.getState());
+  deepStrictEqual(model.swarm, { done: 1, running: 1, failed: 1, total: 3 });
+  ok(formatStatusLine(model).includes("swarm 1/3 done, 1 running, 1 failed"));
+  ok(formatWidgetLines(model).some((line) => line === "swarm: 1/3 done · 1 running · 1 failed"));
+
+  console.log("✓ Test 43: C1 swarm status line is additive and renders only with subagent activity");
+}
+
+// ── Test 44: C1 fallback contract + swarm feature flag defaults off ──
+
+{
+  const { loadSwarmConfig, registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  // Flag defaults off; settings can enable it; concurrency clamps to [1, 8].
+  const noSettings = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c1-flag-off-"));
+  eq(loadSwarmConfig(noSettings).enabled, false);
+  const withSettings = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c1-flag-on-"));
+  fs.mkdirSync(path.join(withSettings, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(withSettings, ".pi", "settings.json"), JSON.stringify({ iterativeGoal: { swarm: { enabled: true, defaultConcurrency: 99 } } }));
+  eq(loadSwarmConfig(withSettings).enabled, true);
+  eq(loadSwarmConfig(withSettings).defaultConcurrency, 8);
+
+  // No backend → single-agent fallback with the full task list rendered.
+  const repo = c1.makeGitRepo("pi-ig-c1-fallback-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Fallback contract", "No backend yields the single-agent fallback");
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => false,
+    swarmEnabled: true,
+  });
+  const fallback = await pi.tool.execute("fallback-1", {
+    mode: "parallel",
+    tasks: [
+      { role: "Scout", task: "scout module A" },
+      { role: "Implementer", task: "implement module B", allowedPaths: ["src/b.ts"] },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(fallback.details.fallback, true);
+  eq(fallback.details.result, "single-agent-fallback");
+  ok(fallback.content[0].text.includes("[SUBAGENT BACKEND: NONE]"));
+  ok(fallback.content[0].text.includes("[Scout] scout module A"));
+  ok(fallback.content[0].text.includes("[Implementer] implement module B"));
+  ok(fallback.content[0].text.includes("allowedPaths: src/b.ts"));
+
+  // Flag off: mode:"parallel" demotes to sequential single with a visible note.
+  const pi2 = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  registerGoalSubagentTool(pi2, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: false,
+  });
+  const demoted = await pi2.tool.execute("flag-1", {
+    mode: "parallel",
+    tasks: [
+      { role: "Scout", task: "scout module A" },
+      { role: "Scout", task: "scout module B" },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(demoted.details.requestedMode, "parallel");
+  eq(demoted.details.mode, "single");
+  eq(demoted.details.swarmModesDisabled, true);
+  ok(demoted.content[0].text.includes("SWARM MODES DISABLED"));
+  eq(spawnImpl.spawns.length, 2, "both tasks still execute sequentially");
+  eq(demoted.isError, false);
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 44: C1 fallback contract intact and swarm modes land flag-off by default");
+}
+
+// ── Test 45: C1 dispatch-wall-time unit benchmark — AgentPool.map vs sequential submit ──
+//
+// NOTE (C1-ADV-008 / C1-OUS-009): this benchmarks the pool's dispatch wall
+// time ONLY, with a fake spawner. It is NOT the §5.3 evidence gate for
+// enabling mode:"parallel" by default — that decision still requires a
+// real-model benchmark of the swarm path vs the single-agent fallback on a
+// representative corpus. The production parallel loop (subagents.ts worker
+// loop over dispatchAgentTask) is proven to overlap by Test 49.
+
+{
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { buildAgentTaskFromProfile } = await import("../dist/subagents.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-bench-");
+  const latencyMs = 25;
+  const corpus = [
+    { role: "Scout", task: "scout the event ledger" },
+    { role: "Scout", task: "scout the policy engine" },
+    { role: "Requirements analyst", task: "extract swarm requirements" },
+    { role: "Requirements analyst", task: "extract ledger requirements" },
+  ].map((entry) => buildAgentTaskFromProfile({ ...entry, allowedPaths: [], inputArtifactIds: [] }).task);
+
+  const parallelPool = new PiSubprocessAgentPool(repo, { spawnImpl: c1.makeFakeSpawn({ latencyMs }) });
+  const parallelStart = Date.now();
+  const parallelResults = await parallelPool.map(corpus, { concurrency: 4 });
+  const parallelMs = Date.now() - parallelStart;
+
+  const singlePool = new PiSubprocessAgentPool(repo, { spawnImpl: c1.makeFakeSpawn({ latencyMs }) });
+  const singleStart = Date.now();
+  const singleResults = [];
+  for (const task of corpus) singleResults.push(await singlePool.submit(task));
+  const singleMs = Date.now() - singleStart;
+
+  ok(parallelResults.every((result) => result.ok && result.structuredOutput), "swarm path returns typed artifacts");
+  ok(singleResults.every((result) => result.ok));
+  const totalTurns = parallelResults.reduce((sum, result) => sum + result.usage.turns, 0);
+  eq(totalTurns, corpus.length);
+  ok(parallelMs < singleMs, "parallel fan-out beats sequential dispatch on the smoke corpus");
+  const speedup = singleMs / Math.max(1, parallelMs);
+  // Recorded dispatch-wall-time baseline (unit benchmark; see NOTE above).
+  console.log(`  benchmark swarm_vs_single corpus=${corpus.length} latency_ms=${latencyMs} single_ms=${singleMs} parallel_ms=${parallelMs} speedup=${speedup.toFixed(2)}x total_turns=${totalTurns}`);
+  ok(speedup > 1.5, "recorded baseline shows a material dispatch-path advantage");
+
+  console.log("✓ Test 45: C1 dispatch-wall-time unit benchmark recorded (map vs sequential)");
+}
+
+// ── Test 46: C1 ledger records the EXECUTED backend, detection carried separately ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-backend-honesty-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Backend honesty", "Ledger records the executed backend");
+  // Snapshot advertises a "subagent" tool → detection says tool:subagent,
+  // but dispatch always executes via the pi-subprocess engine (C1-ADV-002).
+  const toolSnapshot = { allTools: [{ name: "subagent", description: "delegate", source: "extension" }], commands: [] };
+  registerGoalSubagentTool(pi, () => toolSnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl: c1.makeFakeSpawn({ latencyMs: 5 }) }),
+    swarmEnabled: true,
+  });
+
+  const result = await pi.tool.execute("backend-1", { role: "Scout", task: "scout honestly" }, undefined, undefined, { cwd: repo });
+  eq(result.isError, false);
+  eq(result.details.detectedBackend, "tool:subagent", "detection result carried in details");
+
+  const state = stateManager.getState();
+  eq(state.swarm.backend, "pi-subprocess", "state records the EXECUTED backend");
+  eq(state.swarm.detectedBackend, "tool:subagent", "state records detection separately");
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const started = events.filter((event) => event.type === "subagent_started");
+  eq(started.length, 1);
+  eq(started[0].backend, "pi-subprocess", "ledger event asserts the executed backend");
+  eq(started[0].detectedBackend, "tool:subagent");
+  eq(started[0].task.backend, "pi-subprocess");
+  const replayed = stateManager.replayActiveState();
+  eq(replayed.swarm.backend, "pi-subprocess");
+  eq(replayed.swarm.detectedBackend, "tool:subagent");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 46: C1 ledger records the executed backend; detection is carried separately");
+}
+
+// ── Test 47: C1 duplicate task ids rejected — in-batch and cross-call ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-dupes-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Duplicate ids", "Duplicate task ids are rejected");
+  const spawnImpl = c1.makeManualSpawn();
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+
+  // In-batch: same id on two writers (disjoint paths) → structured rejection.
+  const inBatch = await pi.tool.execute("dup-1", {
+    mode: "parallel",
+    tasks: [
+      { id: "w1", role: "Implementer", task: "edit a", allowedPaths: ["src/a.ts"] },
+      { id: "w1", role: "Implementer", task: "edit b", allowedPaths: ["src/b.ts"] },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(inBatch.isError, true);
+  eq(inBatch.details.result, "duplicate-task-id");
+  eq(inBatch.details.duplicateTaskId, "w1");
+  eq(spawnImpl.pending.length, 0, "duplicate batch dispatches nothing");
+
+  // Cross-call: first call's writer w2 is in flight; a second call reusing
+  // w2 (disjoint paths) is rejected while w2 runs.
+  const first = pi.tool.execute("dup-2", {
+    tasks: [{ id: "w2", role: "Implementer", task: "edit a", allowedPaths: ["src/a.ts"] }],
+  }, undefined, undefined, { cwd: repo });
+  const second = await pi.tool.execute("dup-3", {
+    tasks: [{ id: "w2", role: "Implementer", task: "edit b", allowedPaths: ["src/b.ts"] }],
+  }, undefined, undefined, { cwd: repo });
+  eq(second.isError, true);
+  eq(second.details.result, "duplicate-task-id");
+  eq(second.details.duplicateTaskId, "w2");
+  eq(spawnImpl.pending.length, 1, "rejected reuse never spawns");
+
+  // Registry intact after the first completes; the id is then reusable.
+  spawnImpl.pending[0].finish(0);
+  const firstResult = await first;
+  eq(firstResult.isError, false);
+  const retry = pi.tool.execute("dup-4", {
+    tasks: [{ id: "w2", role: "Implementer", task: "edit b", allowedPaths: ["src/b.ts"] }],
+  }, undefined, undefined, { cwd: repo });
+  eq(spawnImpl.pending.length, 2, "completed id is reusable");
+  spawnImpl.pending[1].finish(0);
+  eq((await retry).isError, false);
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 47: C1 duplicate task ids are rejected in-batch and cross-call; registry stays intact");
+}
+
+// ── Test 48: C1 schema-validation failure degrades — prose reaches the supervisor ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-degraded-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Graceful degradation", "Prose survives schema validation failure");
+  const prose = "The repo uses an event-sourced ledger. No JSON here — plain findings.";
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl: c1.makeFakeSpawn({ latencyMs: 5, outputForPrompt: () => prose }) }),
+    swarmEnabled: true,
+  });
+
+  const result = await pi.tool.execute("degrade-1", { role: "Scout", task: "scout in prose" }, undefined, undefined, { cwd: repo });
+  eq(result.isError, false, "schema failure no longer hard-fails the call");
+  ok(result.content[0].text.includes("event-sourced ledger"), "prose findings reach the supervisor");
+  ok(!result.content[0].text.includes("SUBAGENT FAILED"), "no failure banner for degraded output");
+  eq(result.details.degraded, true, "degraded flagged in details");
+  eq(result.details.fallback, false, "degraded is not a fallback");
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const finished = events.filter((event) => event.type === "subagent_finished");
+  eq(finished.length, 1);
+  eq(finished[0].status, "completed", "degraded result is ledgered as completed, not failed");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 48: C1 schema-validation failure degrades to ok with prose preserved");
+}
+
+// ── Test 49: C1 production parallel loop overlaps execution ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-overlap-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Parallel overlap", "Production loop fans out concurrently");
+  const spawnImpl = c1.makeManualSpawn();
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+
+  const execPromise = pi.tool.execute("overlap-1", {
+    mode: "parallel",
+    concurrency: 2,
+    tasks: [
+      { role: "Scout", task: "scout 1" },
+      { role: "Scout", task: "scout 2" },
+      { role: "Scout", task: "scout 3" },
+    ],
+  }, undefined, undefined, { cwd: repo });
+
+  // Workers dispatch synchronously up to the concurrency band: exactly two
+  // spawns are pending before any finishes — the production loop overlaps.
+  eq(spawnImpl.pending.length, 2, "concurrency=2 holds two tasks in flight");
+  spawnImpl.pending[0].finish(0);
+  spawnImpl.pending[1].finish(0);
+  while (spawnImpl.pending.length < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+  spawnImpl.pending[2].finish(0);
+  const result = await execPromise;
+  eq(result.isError, false);
+  eq(result.details.mode, "parallel");
+  eq(result.details.tasks.length, 3);
+  ok(result.details.tasks.every((task) => task.status === "completed"));
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  eq(events.filter((event) => event.type === "subagent_finished").length, 3);
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 49: C1 production parallel loop overlaps execution up to the concurrency band");
+}
+
+// ── Test 50: C1 cancelling a queued task pre-empts admission — it never executes ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { cancelRunSubagent, shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-cancel-queued-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Cancel queued", "Queued cancellation pre-empts admission");
+  const spawnImpl = c1.makeManualSpawn();
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+
+  const execPromise = pi.tool.execute("cancel-q1", {
+    mode: "parallel",
+    concurrency: 1,
+    tasks: [
+      { id: "task-a", role: "Scout", task: "scout a" },
+      { id: "task-b", role: "Scout", task: "scout b" },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(spawnImpl.pending.length, 1, "concurrency=1 starts only task-a");
+
+  const cancelStatus = await cancelRunSubagent(run.runId, "task-b");
+  eq(cancelStatus, "queued", "queued task reports queued cancellation");
+  spawnImpl.pending[0].finish(0);
+  const result = await execPromise;
+
+  eq(spawnImpl.pending.length, 1, "cancelled queued task never spawns");
+  eq(result.details.tasks.find((task) => task.taskId === "task-a").status, "completed");
+  eq(result.details.tasks.find((task) => task.taskId === "task-b").status, "cancelled");
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const finishedB = events.filter((event) => event.type === "subagent_finished" && event.taskId === "task-b");
+  eq(finishedB.length, 1);
+  eq(finishedB[0].status, "cancelled");
+  eq(finishedB[0].error, "cancelled_before_admission", "ledger never claims cancelled for executed work");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 50: C1 queued cancellation pre-empts admission; the task never executes");
+}
+
+// ── Test 51: C1 /goal-swarm-cancel reports truthfully for unknown and running ids ──
+
+{
+  const { registerGoalRuntimeCommands } = await import("../dist/ui/goal-commands.js");
+  const { getRunAgentPool, shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { buildAgentTaskFromProfile } = await import("../dist/subagents.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-swarm-cancel-");
+  const pi = {
+    appendEntry() {},
+    commands: new Map(),
+    registerCommand(name, options) { this.commands.set(name, options); },
+  };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Swarm cancel", "Cancel reports truthful statuses");
+  const phaseIndicator = { tickOnce() {}, stop() {}, clearSurfaces() {}, setHeaderFactory() {}, trackDashboard() {} };
+  registerGoalRuntimeCommands(pi, stateManager, { buildRuntimeCapabilitySnapshot: async () => ({}), log() {} }, phaseIndicator);
+
+  const notifications = [];
+  const ctx = { cwd: repo, ui: { notify(message, level) { notifications.push({ message, level }); }, confirm: async () => true } };
+  const cancelCommand = pi.commands.get("goal-swarm-cancel");
+  ok(cancelCommand, "goal-swarm-cancel command registered");
+
+  // No pool yet → reports no pool (does not over-claim).
+  await cancelCommand.handler("ghost-1", ctx);
+  ok(notifications.at(-1).message.includes("No swarm pool found"));
+
+  // Pool exists, id unknown → reports not found as a warning.
+  const spawnImpl = c1.makeManualSpawn();
+  const pool = new PiSubprocessAgentPool(repo, { spawnImpl });
+  getRunAgentPool(run.runId, repo, { poolFactory: () => pool });
+  await cancelCommand.handler("ghost-2", ctx);
+  ok(notifications.at(-1).message.includes("No in-flight subagent task found with id: ghost-2"));
+  eq(notifications.at(-1).level, "warning");
+
+  // Running task → cancelled truthfully, task marked cancelled on the pool.
+  const scoutTask = buildAgentTaskFromProfile({ id: "live-1", role: "Scout", task: "scout", allowedPaths: [], inputArtifactIds: [] }).task;
+  const running = pool.submit(scoutTask);
+  await cancelCommand.handler("live-1", ctx);
+  ok(notifications.at(-1).message.includes("was running"));
+  eq(notifications.at(-1).level, "info");
+  eq(pool.wasCancelled("live-1"), true);
+  spawnImpl.pending[0].finish(143);
+  await running;
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 51: C1 /goal-swarm-cancel reports unknown ids truthfully and cancels running tasks");
+}
+
+// ── Test 52: C1 swarm flag reads the session cwd only — params.cwd cannot enable it ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  // Session cwd has NO settings; the passed cwd has swarm.enabled=true.
+  const sessionCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c1-flag-session-"));
+  const craftedCwd = c1.makeGitRepo("pi-ig-c1-flag-crafted-");
+  fs.mkdirSync(path.join(craftedCwd, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(craftedCwd, ".pi", "settings.json"), JSON.stringify({ iterativeGoal: { swarm: { enabled: true } } }));
+
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: craftedCwd, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Flag scope", "Crafted settings in params.cwd cannot enable swarm");
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    // NOTE: no swarmEnabled override — the flag must come from ctx.cwd settings.
+  });
+
+  const result = await pi.tool.execute("flag-scope-1", {
+    mode: "parallel",
+    cwd: craftedCwd,
+    tasks: [
+      { role: "Scout", task: "scout 1" },
+      { role: "Scout", task: "scout 2" },
+    ],
+  }, undefined, undefined, { cwd: sessionCwd });
+
+  eq(result.details.requestedMode, "parallel");
+  eq(result.details.mode, "single", "crafted params.cwd settings do not enable parallel");
+  eq(result.details.swarmModesDisabled, true);
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 52: C1 swarm flag cannot be enabled via a crafted params.cwd");
+}
+
+// ── Test 53: C1 crash reconciliation + cross-run record guard ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+
+  const tmp = c1.makeGitRepo("pi-ig-c1-reconcile-");
+  const managerA = createStateManager({ appendEntry() {} });
+  eq(managerA.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
+  const run = managerA.createRun("Crash reconcile", "Running tasks reconcile on restore");
+  managerA.recordSubagentStarted({
+    taskId: "ghost-1", batchId: "b1", runId: run.runId, role: "Scout", mode: "parallel",
+    backend: "pi-subprocess", detectedBackend: "none", workspace: "read_only_snapshot",
+    allowedPaths: [], status: "running", startedAt: new Date().toISOString(), finishedAt: null, usage: null, error: null,
+  });
+  // Cross-run guard (C1-ADV-003): a record tagged with another runId is ignored.
+  managerA.recordSubagentStarted({
+    taskId: "alien-1", batchId: "b1", runId: "some-other-run", role: "Scout", mode: "single",
+    backend: "pi-subprocess", detectedBackend: "none", workspace: "read_only_snapshot",
+    allowedPaths: [], status: "running", startedAt: new Date().toISOString(), finishedAt: null, usage: null, error: null,
+  });
+  eq(managerA.getState().swarm.tasks.length, 1, "record tagged with a foreign runId is ignored");
+
+  // Simulated crash + restart: a fresh manager restores from disk.
+  const managerB = createStateManager({ appendEntry() {} });
+  const restored = managerB.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } });
+  ok(restored, "restore replays the crashed run");
+  eq(restored.swarm.tasks.length, 1);
+  eq(restored.swarm.tasks[0].status, "failed", "orphaned running task reconciled to failed");
+  eq(restored.swarm.tasks[0].error, "process_restart");
+  ok(restored.swarm.tasks[0].finishedAt);
+
+  const events = fs.readFileSync(managerB.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const reconciled = events.filter((event) => event.type === "subagent_finished" && event.taskId === "ghost-1");
+  eq(reconciled.length, 1, "reconciliation appends a hash-chained subagent_finished event");
+  eq(reconciled[0].error, "process_restart");
+  ok(managerB.replayActiveState(), "hash chain still verifies after reconciliation");
+
+  console.log("✓ Test 53: C1 crash reconciliation fails orphaned running tasks with process_restart");
+}
+
+// ── Test 54: C1 chain binding truncates large artifacts and surfaces unresolved ids ──
+
+{
+  const { registerGoalSubagentTool } = await import("../dist/subagents.js");
+  const { shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c1-chain-trunc-");
+  const pi = { appendEntry() {}, registerTool(tool) { this.tool = tool; } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  stateManager.createRun("Chain truncation", "Bound artifacts are budgeted");
+  const longClaim = "x".repeat(6_000);
+  const spawnImpl = c1.makeFakeSpawn({
+    latencyMs: 5,
+    outputForPrompt: () => JSON.stringify({ claims: [longClaim], sources: [], confidence: 0.5, unknowns: [] }),
+  });
+  registerGoalSubagentTool(pi, () => c1.emptySnapshot, {
+    stateManager,
+    commandExists: () => true,
+    poolFactory: (cwd) => new PiSubprocessAgentPool(cwd, { spawnImpl }),
+    swarmEnabled: true,
+  });
+
+  const result = await pi.tool.execute("chain-trunc-1", {
+    mode: "chain",
+    tasks: [
+      { id: "long-a", role: "Scout", task: "produce a long artifact" },
+      { id: "short-b", role: "Scout", task: "consume it", inputArtifactIds: ["long-a", "ghost-id"] },
+    ],
+  }, undefined, undefined, { cwd: repo });
+  eq(result.isError, false);
+  deepStrictEqual(result.details.unresolvedArtifacts, ["ghost-id"], "unresolved inputArtifactIds surfaced in details");
+
+  const secondPrompt = String(spawnImpl.spawns[1].args.at(-1));
+  ok(secondPrompt.includes("--- artifact long-a ---"));
+  ok(secondPrompt.includes("[truncated"), "oversized artifact is truncated with a note");
+  ok(!secondPrompt.includes(longClaim), "full 6000-char artifact is not bound verbatim");
+  ok(secondPrompt.includes("(unresolved: no recorded output)"), "unresolved artifact marked in the prompt");
+  await shutdownRunAgentPools();
+
+  console.log("✓ Test 54: C1 chain binding truncates oversized artifacts and surfaces unresolved ids");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

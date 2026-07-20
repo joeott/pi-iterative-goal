@@ -8,6 +8,7 @@ import { renderPhasePrompt, renderResumePrompt } from "../phases.js";
 import { type StateManagerAPI } from "../state.js";
 import { type CapabilitySnapshot, type IterativeGoalState, type PhaseArtifact } from "../types.js";
 import { detectSubagentBackend } from "../capabilities.js";
+import { cancelRunSubagent, shutdownRunAgentPools } from "../agents/run-pool.js";
 import { checkModelHealth, preflightAllModels, startPhaseAttempt } from "../kernel/workflow-engine.js";
 import { getChangedFiles, getDiffStat } from "../workspace/change-set.js";
 
@@ -160,6 +161,27 @@ export function registerGoalRuntimeCommands(
     },
   });
 
+  pi.registerCommand("goal-swarm-cancel", {
+    description: "Cancel an in-flight subagent task and release its write scope",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const taskId = args.trim();
+      if (!taskId) { ctx.ui.notify("Usage: /goal-swarm-cancel <taskId>", "warning"); return; }
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const status = await cancelRunSubagent(state.runId, taskId);
+      if (status === "running") {
+        ctx.ui.notify(`Subagent task ${taskId} was running; SIGTERM sent and its write scope is released.`, "info");
+      } else if (status === "queued") {
+        ctx.ui.notify(`Subagent task ${taskId} was queued; it will never be executed (cancelled before admission).`, "info");
+      } else if (status === "unknown") {
+        ctx.ui.notify(`No in-flight subagent task found with id: ${taskId}`, "warning");
+      } else {
+        ctx.ui.notify(`No swarm pool found for this run (task ${taskId} not cancelled).`, "warning");
+      }
+      services.log(`Swarm cancel requested: task=${taskId}, status=${status ?? "no-pool"}`);
+    },
+  });
+
   pi.registerCommand("goal-repair-capabilities", {
     description: "Run capability preflight and fix",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -221,6 +243,9 @@ export function registerGoalRuntimeCommands(
 
       archiveActiveRun();
       stateManager.clear();
+      // Run boundary: tear down the run's pool and its cross-call
+      // write-scope registry with the run (C1-ADV-003).
+      await shutdownRunAgentPools();
       phaseIndicator.clearSurfaces(ctx);
       ctx.ui.notify("Iterative goal reset.", "info");
       services.log("Reset by user");
@@ -263,6 +288,7 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
   return {
     active: true, runId: state.runId, goal: state.goal, goalCriterion: state.goalCriterion,
     status: state.status, cycle: state.cycle, phase: state.phase,
+    swarm: renderSwarmSummary(state.swarm),
     lock: {
       activeRunId: state.lock.activeRunId, activePhaseId: state.lock.activePhaseId,
       phaseStatus: state.lock.phaseStatus, phaseStartedAt: state.lock.phaseStartedAt,
@@ -355,6 +381,20 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
   };
 }
 
+function renderSwarmSummary(swarm: IterativeGoalState["swarm"]): Record<string, unknown> {
+  const tasks = swarm?.tasks ?? [];
+  // failed folds cancelled — consistent with the phase-indicator swarm line;
+  // cancelled is reported separately here as a per-status detail (C1-ADV-017).
+  return {
+    backend: swarm?.backend ?? null,
+    total: tasks.length,
+    running: tasks.filter((task) => task.status === "running").length,
+    completed: tasks.filter((task) => task.status === "completed").length,
+    failed: tasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
+    cancelled: tasks.filter((task) => task.status === "cancelled").length,
+  };
+}
+
 function renderStatusText(state: IterativeGoalState): string[] {
   const lines = [
     `Iterative Goal Status:`,
@@ -371,6 +411,13 @@ function renderStatusText(state: IterativeGoalState): string[] {
     `  Attestations: ${state.attestations.length}`,
     `  Pending approvals: ${state.approvals.pending.length}`,
   ];
+  const swarmSummary = renderSwarmSummary(state.swarm);
+  if ((swarmSummary.total as number) > 0) {
+    lines.push(
+      `  Swarm: ${swarmSummary.completed}/${swarmSummary.total} done · ${swarmSummary.running} running · ${swarmSummary.failed} failed` +
+      (state.swarm.backend ? ` · backend ${state.swarm.backend}` : ""),
+    );
+  }
   if (state.config.awsCli.enabled) {
     lines.push(
       `  AWS: profile=${state.config.awsCli.preflight?.resolvedProfile ?? "unresolved"} region=${state.config.awsCli.preflight?.resolvedRegion ?? state.config.awsCli.defaultRegion}`,

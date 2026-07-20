@@ -15,6 +15,7 @@ import {
   type PhaseArtifact,
 } from "../types.js";
 import { verifyImplementationAgainstPlan } from "../workspace/change-set.js";
+import { shutdownRunAgentPools } from "../agents/run-pool.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
 
@@ -216,6 +217,8 @@ async function handleValidateTransition(
   if (verdict.goal_met === true) {
     stateManager.markSucceeded();
     stateManager.releaseLock(state.runId, phaseAttemptId);
+    // Run boundary: tear down the run's swarm pool with the run (C1-ADV-003).
+    await shutdownRunAgentPools();
     pi.sendMessage({
       customType: "iterative-goal-complete",
       content: [
@@ -235,6 +238,8 @@ async function handleValidateTransition(
   if (verdict.next_cycle_directive.focus === "external_blocked_complete") {
     stateManager.markCompletedBlocked();
     stateManager.releaseLock(state.runId, phaseAttemptId);
+    // Run boundary: tear down the run's swarm pool with the run (C1-ADV-003).
+    await shutdownRunAgentPools();
 
     const patchPath = stateManager.getArtifactPath(state.cycle, "validate", "final.patch");
     try {

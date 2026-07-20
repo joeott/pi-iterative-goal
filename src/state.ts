@@ -57,6 +57,9 @@ import {
   type EvaluatorState,
   type FinalizationPolicy,
   type ReleaseAuthorization,
+  type SubagentTaskRecord,
+  type SubagentTaskStatus,
+  type SubagentUsageCounters,
   type TaskPlanState,
   type ProjectInstructionsState,
   PHASE_ORDER,
@@ -74,6 +77,7 @@ import {
   filterAllowedModels,
   normalizeConfiguredModel,
 } from "./domain/models.js";
+import { logDebug } from "./logging.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
 const DEFAULT_AWS_CLI_CONFIG = {
@@ -121,6 +125,13 @@ export interface StateManagerAPI {
   getEvaluatorState(): EvaluatorState | null;
   setReleaseAuthorization(auth: ReleaseAuthorization | null): void;
   updateTaskPlan(taskPlan: TaskPlanState): void;
+
+  // ── New: swarm / subagent ledger (Campaign 1) ──────────────────
+  recordSubagentStarted(task: SubagentTaskRecord): void;
+  recordSubagentFinished(
+    taskId: string,
+    finish: { runId: string; status: SubagentTaskStatus; usage?: SubagentUsageCounters | null; error?: string | null },
+  ): void;
   updateDlpState(dlp: CyberDlpState): void;
   updateSanitizationState(sanitizer: CyberSanitizationState): void;
   recordAttestation(attestation: ActionAttestation): void;
@@ -325,6 +336,21 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     capabilities_updated(replayed, event) {
       replayed.capabilities = event.capabilities;
     },
+    subagent_started(replayed, event) {
+      const task = event.task as SubagentTaskRecord;
+      if (typeof event.backend === "string") replayed.swarm.backend = event.backend;
+      if (typeof event.detectedBackend === "string") replayed.swarm.detectedBackend = event.detectedBackend;
+      replayed.swarm.tasks.push(task);
+    },
+    subagent_finished(replayed, event) {
+      const task = replayed.swarm.tasks.find((item) => item.taskId === event.taskId);
+      if (task) {
+        task.status = event.status;
+        task.finishedAt = event.timestamp;
+        task.usage = event.usage ?? null;
+        task.error = event.error ?? null;
+      }
+    },
     project_instructions_updated(replayed, event) {
       replayed.projectInstructions = event.projectInstructions;
     },
@@ -492,6 +518,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!raw.signing.privateKeyPem) raw.signing.available = false;
     if (!raw.attestations) raw.attestations = [];
     if (!raw.unifyCasProfile) raw.unifyCasProfile = { ...DEFAULT_UNIFY_CAS_PROFILE };
+    if (!raw.swarm || typeof raw.swarm !== "object") raw.swarm = { backend: null, detectedBackend: null, tasks: [] };
+    if (!Array.isArray(raw.swarm.tasks)) raw.swarm.tasks = [];
+    if (!("detectedBackend" in raw.swarm)) raw.swarm.detectedBackend = null;
     raw.constraints = {
       ...(raw.constraints ?? {}),
       neverStopUntilEvaluatorGoalMet: true,
@@ -545,11 +574,35 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     writeFileAtomic(esPath, JSON.stringify(es, null, 2));
   }
 
+  // Crash reconciliation (C1-ADV-010): replay stays deterministic — it
+  // restores in-flight tasks as running; only at load time do we mark them
+  // failed, since the pool that ran them died with the previous process.
+  // Each reconciliation is itself a hash-chained subagent_finished event.
+  function reconcileRunningSubagents(): void {
+    if (!state) return;
+    const orphaned = state.swarm.tasks.filter((task) => task.status === "running");
+    if (orphaned.length === 0) return;
+    for (const task of orphaned) {
+      const finishedAt = new Date().toISOString();
+      task.status = "failed";
+      task.finishedAt = finishedAt;
+      task.error = "process_restart";
+      appendEvent({
+        type: "subagent_finished",
+        taskId: task.taskId,
+        status: "failed",
+        usage: null,
+        error: "process_restart",
+        timestamp: finishedAt,
+      });
+    }
+    logDebug("state", `reconciled ${orphaned.length} orphaned running subagent task(s) as failed: process_restart`);
+  }
+
   function ensureRunDirs(): void {
     if (!stateDir || !state?.runId) return;
     runDir = path.join(stateDir, "runs", state.runId);
     fs.mkdirSync(runDir, { recursive: true });
-
     const cyclesDir = path.join(runDir, "cycles");
     fs.mkdirSync(cyclesDir, { recursive: true });
 
@@ -832,6 +885,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           fallback: "patch",
         },
         releaseAuthorization: null,
+        swarm: { backend: null, detectedBackend: null, tasks: [] },
       };
 
       ensureRunDirs();
@@ -961,6 +1015,55 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       if (runDir) appendJsonLine(path.join(runDir, "task-plan.jsonl"), { type: "task_plan_updated", taskPlan });
       appendEvent({ type: "task_plan_updated", taskPlan, timestamp: new Date().toISOString() });
       persistAllInternal();
+    },
+
+    // ── Swarm / subagent ledger (Campaign 1) ─────────────────────
+
+    recordSubagentStarted(task: SubagentTaskRecord): void {
+      if (!state) return;
+      // Cross-run guard: a stale dispatch from an earlier run must not write
+      // into the current run's ledger (C1-ADV-003).
+      if (task.runId !== state.runId) {
+        logDebug("state", `recordSubagentStarted ignored for task ${task.taskId}: dispatch runId ${task.runId} != current runId ${state.runId}`);
+        return;
+      }
+      state.swarm.backend = task.backend;
+      state.swarm.detectedBackend = task.detectedBackend;
+      state.swarm.tasks.push(task);
+      appendEvent({
+        type: "subagent_started",
+        task,
+        backend: task.backend,
+        detectedBackend: task.detectedBackend,
+        timestamp: task.startedAt,
+      });
+    },
+
+    recordSubagentFinished(
+      taskId: string,
+      finish: { runId: string; status: SubagentTaskStatus; usage?: SubagentUsageCounters | null; error?: string | null },
+    ): void {
+      if (!state) return;
+      if (finish.runId !== state.runId) {
+        logDebug("state", `recordSubagentFinished ignored for task ${taskId}: dispatch runId ${finish.runId} != current runId ${state.runId}`);
+        return;
+      }
+      const finishedAt = new Date().toISOString();
+      const task = state.swarm.tasks.find((item) => item.taskId === taskId);
+      if (task) {
+        task.status = finish.status;
+        task.finishedAt = finishedAt;
+        task.usage = finish.usage ?? null;
+        task.error = finish.error ?? null;
+      }
+      appendEvent({
+        type: "subagent_finished",
+        taskId,
+        status: finish.status,
+        usage: finish.usage ?? null,
+        error: finish.error ?? null,
+        timestamp: finishedAt,
+      });
     },
 
     updateDlpState(dlp: CyberDlpState): void {
@@ -1186,6 +1289,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           if (replayed) {
             state = migrateState(replayed);
             ensureRunDirs();
+            reconcileRunningSubagents();
             persistToDisk();
             updateLatestMd();
             return state;
@@ -1198,6 +1302,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
               if (envelope.state) {
                 state = migrateState(envelope.state);
                 ensureRunDirs();
+                reconcileRunningSubagents();
                 return state;
               }
             } catch { /* corrupted, ignore */ }
@@ -1215,6 +1320,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             if (replayed) {
               state = migrateState(replayed);
               ensureRunDirs();
+              reconcileRunningSubagents();
               persistToDisk();
               updateLatestMd();
               return state;
@@ -1228,6 +1334,8 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
               if (envelope.state) {
                 state = migrateState(envelope.state);
                 runDir = path.join(runsDir, runId);
+                ensureRunDirs();
+                reconcileRunningSubagents();
                 return state;
               }
             } catch { /* continue */ }
@@ -1248,6 +1356,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           stateDir = path.join(ctx.cwd, ".pi", "iterative-goal");
           if (state.runId) {
             ensureRunDirs();
+            reconcileRunningSubagents();
             persistToDisk();
             updateLatestMd();
           }
