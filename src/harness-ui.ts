@@ -17,6 +17,7 @@ import {
   ZAI_GLM_5_2_MODEL,
   ZAI_PROVIDER,
 } from "./zai.js";
+import { requireModelRoute, resolveModelRoute } from "./domain/model-roster.js";
 
 const HARNESS_STATUS_KEY = "iterative-goal-harness";
 const HARNESS_WIDGET_KEY = "iterative-goal-startup";
@@ -60,6 +61,7 @@ export function registerHarnessUi(
     envFiles: [],
     lastUpdatedAt: new Date().toISOString(),
   };
+  let revertingUnlistedModel = false;
 
   // Goal/phase content is owned by phase-indicator.ts; the header only
   // places the accessor's pre-formatted line (read lazily at render).
@@ -72,7 +74,26 @@ export function registerHarnessUi(
     renderStartupUi(pi, ctx, uiState, goalLine, phaseIndicator);
   });
 
-  pi.on("model_select", async (_event, ctx) => {
+  pi.on("model_select", async (event, ctx) => {
+    const selected = resolveModelRoute({ provider: event.model.provider, model: event.model.id });
+    if (!selected && !revertingUnlistedModel) {
+      revertingUnlistedModel = true;
+      try {
+        const previous = event.previousModel
+          && resolveModelRoute({ provider: event.previousModel.provider, model: event.previousModel.id })
+          ? event.previousModel
+          : ctx.modelRegistry.find(ZAI_PROVIDER, ZAI_GLM_5_2_MODEL);
+        const restored = previous ? await pi.setModel(previous) : false;
+        if (!restored) {
+          stateManager.setStatus("provider_unavailable");
+          ctx.ui.notify(`MODEL POLICY BLOCK: ${event.model.provider}/${event.model.id} is outside the exact nine-profile roster, and no approved model could be restored.`, "error");
+        } else {
+          ctx.ui.notify(`MODEL POLICY BLOCK: ${event.model.provider}/${event.model.id} is outside the exact nine-profile roster; restored an approved model.`, "warning");
+        }
+      } finally {
+        revertingUnlistedModel = false;
+      }
+    }
     uiState.model = modelStatusFromContext(ctx);
     uiState.lastUpdatedAt = new Date().toISOString();
     renderStartupUi(pi, ctx, uiState, goalLine, phaseIndicator);
@@ -196,27 +217,32 @@ async function selectDefaultModel(pi: ExtensionAPI, ctx: ExtensionContext): Prom
   if (process.env.PI_ITERATIVE_GOAL_AUTO_MODEL === "0") {
     return { selected: false, ok: true, message: "auto model disabled" };
   }
-  const model = ctx.modelRegistry.find(ZAI_PROVIDER, ZAI_GLM_5_2_MODEL);
+  const selectedRoute = ctx.model
+    ? resolveModelRoute({ provider: ctx.model.provider, model: ctx.model.id })
+    : null;
+  if (ctx.model && selectedRoute) {
+    pi.setThinkingLevel(selectedRoute.reasoning.piThinkingLevel);
+    return { selected: true, ok: true, message: selectedRoute.piSelection };
+  }
+  const defaultRoute = requireModelRoute("zai_glm_5_2");
+  const model = ctx.modelRegistry.find(defaultRoute.provider, defaultRoute.model);
   if (!model) {
     return { selected: false, ok: false, message: `${ZAI_PROVIDER}/${ZAI_GLM_5_2_MODEL} not registered` };
   }
-  if (ctx.model?.provider === ZAI_PROVIDER && ctx.model.id === ZAI_GLM_5_2_MODEL) {
-    pi.setThinkingLevel("high");
-    return { selected: true, ok: true, message: `${ZAI_PROVIDER}/${ZAI_GLM_5_2_MODEL}` };
-  }
   const ok = await pi.setModel(model);
   if (ok) {
-    pi.setThinkingLevel("high");
-    return { selected: true, ok: true, message: `${ZAI_PROVIDER}/${ZAI_GLM_5_2_MODEL}` };
+    pi.setThinkingLevel(defaultRoute.reasoning.piThinkingLevel);
+    return { selected: true, ok: true, message: defaultRoute.piSelection };
   }
   return { selected: false, ok: false, message: `missing API key for ${ZAI_PROVIDER}/${ZAI_GLM_5_2_MODEL}` };
 }
 
 function modelStatusFromContext(ctx: ExtensionContext): ModelStartupStatus {
   const label = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "none";
+  const route = ctx.model ? resolveModelRoute({ provider: ctx.model.provider, model: ctx.model.id }) : null;
   return {
-    selected: ctx.model?.provider === ZAI_PROVIDER && ctx.model.id === ZAI_GLM_5_2_MODEL,
-    ok: Boolean(ctx.model),
+    selected: route !== null,
+    ok: route !== null,
     message: label,
   };
 }

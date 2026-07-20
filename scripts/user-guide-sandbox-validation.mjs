@@ -74,7 +74,7 @@ function fakePi() {
     },
     sendUserMessage() {},
     appendEntry() {},
-    async setModel() {},
+    async setModel() { return true; },
     async exec(command, args, options = {}) {
       const result = spawnSync(command, args, {
         cwd: options.cwd ?? repoRoot,

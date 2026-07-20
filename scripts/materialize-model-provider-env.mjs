@@ -13,24 +13,11 @@ const DEFAULT_CONTROL_AWS_ACCOUNT = "371292405073";
 const DEFAULT_PROJECT_AWS_PROFILE = "api-admin";
 const DEFAULT_PROJECT_AWS_ACCOUNT = "138881449763";
 const PROVIDER_KEYS = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
-  "GEMINI_API_KEY",
-  "MISTRAL_API_KEY",
-  "XAI_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "GROQ_API_KEY",
-  "PINECONE_API_KEY",
-  "LANGCHAIN_API_KEY",
-  "LANGSMITH_API_KEY",
+  "FIREWORKS_API_KEY",
+  "CEREBRAS_API_KEY",
   "ZAI_API_KEY",
   "Z_AI_API_KEY",
-  "ZAI_API_BASE_URL",
-  "Z_AI_API_BASE_URL",
-  "ZAI_DEFAULT_MODEL",
-  "ZAI_DEFAULT_VISION_MODEL",
-  "GLM_API_KEY",
 ];
 
 const args = new Set(process.argv.slice(2));
@@ -77,34 +64,22 @@ if (externalSourcesEnabled) {
   loadPiModels();
   loadPiAuth();
   loadEnvFile(sources.projectsEnv, [
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
-    "GEMINI_API_KEY",
-    "MISTRAL_API_KEY",
-    "XAI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GROQ_API_KEY",
-    "PINECONE_API_KEY",
-    "LANGCHAIN_API_KEY",
-    "LANGSMITH_API_KEY",
+    "FIREWORKS_API_KEY",
+    "CEREBRAS_API_KEY",
   ]);
   loadEnvFile(sources.unifyLocalEnv, [
     "ZAI_API_KEY",
-    "ZAI_API_BASE_URL",
-    "ZAI_DEFAULT_MODEL",
-    "ZAI_DEFAULT_VISION_MODEL",
+    "Z_AI_API_KEY",
   ]);
   loadEnvFile(sources.zaiEnv, [
     "ZAI_API_KEY",
-    "ZAI_API_BASE_URL",
-    "ZAI_DEFAULT_MODEL",
-    "ZAI_DEFAULT_VISION_MODEL",
+    "Z_AI_API_KEY",
   ]);
 }
 
-if (!values.ZAI_DEFAULT_MODEL) values.ZAI_DEFAULT_MODEL = "glm-5.2";
-if (!values.ZAI_API_BASE_URL) values.ZAI_API_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+if (!values.ZAI_API_KEY && values.Z_AI_API_KEY) values.ZAI_API_KEY = values.Z_AI_API_KEY;
+delete values.Z_AI_API_KEY;
 values.PI_AWS_SECRET_SCOPE = awsScope;
 values.PI_AWS_CONTROL_PROFILE = controlAwsProfile;
 values.PI_AWS_CONTROL_ACCOUNT_ID = expectedControlAwsAccount;
@@ -189,20 +164,14 @@ function loadPiModels() {
   const models = JSON.parse(fs.readFileSync(sources.piModels, "utf8"));
   const providers = models.providers ?? {};
   const map = {
-    anthropic: "ANTHROPIC_API_KEY",
-    google: "GEMINI_API_KEY",
-    openai: "OPENAI_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
-    xai: "XAI_API_KEY",
+    fireworks: "FIREWORKS_API_KEY",
+    cerebras: "CEREBRAS_API_KEY",
     zai: "ZAI_API_KEY",
-    mistral: "MISTRAL_API_KEY",
-    deepseek: "DEEPSEEK_API_KEY",
-    groq: "GROQ_API_KEY",
   };
   for (const [provider, key] of Object.entries(map)) {
     setValue(key, providers[provider]?.apiKey, sources.piModels);
   }
-  if (providers.zai?.baseUrl) setValue("ZAI_API_BASE_URL", providers.zai.baseUrl, sources.piModels);
 }
 
 function loadPiAuth() {

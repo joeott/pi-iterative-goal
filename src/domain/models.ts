@@ -1,5 +1,34 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import {
+  MODEL_ROSTER,
+  getRouteProfiles,
+  resolveModelRoute,
+  resolveProfileId,
+  type ModelProfile,
+} from "./model-roster.js";
+
+export {
+  MODEL_PROFILE_IDS,
+  MODEL_PROFILE_ENDPOINTS,
+  MODEL_ROSTER,
+  computeModelRosterHash,
+  getRouteProfiles,
+  loadModelRoster,
+  requireModelRoute,
+  resolveModelRoute,
+  resolveProfileId,
+} from "./model-roster.js";
+export type {
+  LoadedModelRoster,
+  ModelPriceSnapshot,
+  ModelProfile,
+  ModelProfileId,
+  ModelRosterFile,
+  ModelRouteName,
+  PiThinkingLevel,
+  ResolvedModelRoute,
+} from "./model-roster.js";
 
 export const AllowedModelSchema = Type.Object({
   provider: Type.String(),
@@ -9,69 +38,53 @@ export const AllowedModelSchema = Type.Object({
 
 export type AllowedModel = Static<typeof AllowedModelSchema>;
 
-export const ALLOWED_MODELS: readonly AllowedModel[] = [
-  { provider: "openrouter", model: "deepseek/deepseek-v4-flash", role: "primary" },
-  { provider: "openrouter", model: "xiaomi/mimo-v2.5", role: "fallback" },
-  { provider: "openrouter", model: "minimax/minimax-m3", role: "fallback" },
-  { provider: "openrouter", model: "tencent/hy3-preview", role: "fallback" },
-  { provider: "openrouter", model: "openrouter/owl-alpha", role: "fallback" },
-  { provider: "openrouter", model: "deepseek/deepseek-v4-pro", role: "evaluator" },
-  { provider: "openrouter", model: "anthropic/claude-opus-4.7", role: "reviewer" },
-  { provider: "openrouter", model: "anthropic/claude-opus-4.8", role: "reviewer" },
-  { provider: "openrouter", model: "anthropic/claude-sonnet-4.6", role: "reviewer" },
-  { provider: "openrouter", model: "z-ai/glm-5.2", role: "fallback" },
-  { provider: "zai", model: "glm-5.2", role: "primary" },
-  { provider: "openrouter", model: "openrouter/fusion", role: "router" },
-  { provider: "openrouter", model: "openrouter/pareto-code", role: "router" },
-  { provider: "openrouter", model: "openrouter/auto", role: "router" },
-] as const;
+type ModelRole = NonNullable<AllowedModel["role"]>;
 
-export const DEFAULT_PRIMARY_MODEL = { provider: "zai", model: "glm-5.2" } as const;
+function allowedRole(profile: ModelProfile): ModelRole {
+  if (profile.id === MODEL_ROSTER.routing.coordinator[0]) return "primary";
+  if (profile.id === "openrouter_claude_fable_5") return "evaluator";
+  if (profile.eligibleRoles.includes("reviewer")) return "reviewer";
+  return "fallback";
+}
 
-export const DEFAULT_FALLBACK_MODELS = [
-  { provider: "openrouter", model: "z-ai/glm-5.2" },
-  { provider: "openrouter", model: "deepseek/deepseek-v4-pro" },
-  { provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
-  { provider: "openrouter", model: "openrouter/fusion" },
-] as const;
+/** The exact nine-profile allowlist, derived from the validated tracked catalog. */
+export const ALLOWED_MODELS: readonly AllowedModel[] = Object.freeze(
+  MODEL_ROSTER.profiles.map((profile) => Object.freeze({
+    provider: profile.provider,
+    model: profile.model,
+    role: allowedRole(profile),
+  })),
+);
+
+const DEFAULT_PRIMARY_ROUTE = getRouteProfiles("coordinator")[0];
+
+export const DEFAULT_PRIMARY_MODEL = Object.freeze({
+  provider: DEFAULT_PRIMARY_ROUTE.provider,
+  model: DEFAULT_PRIMARY_ROUTE.model,
+});
+
+export const DEFAULT_FALLBACK_MODELS: readonly { provider: string; model: string }[] = Object.freeze(
+  getRouteProfiles("coordinator").slice(1).map((route) => Object.freeze({
+    provider: route.provider,
+    model: route.model,
+  })),
+);
 
 export function modelKey(model: { provider: string; model: string }): string {
   return `${model.provider}/${model.model}`;
 }
 
 /**
- * Provider-namespace aliases that route the SAME weights (C4-ADV-008): the
- * judge-independence rule is about model identity, not registry-entry
- * inequality — `zai/glm-5.2`, `z-ai/glm-5.2`, and `openrouter/z-ai/glm-5.2`
- * are one model reached through different providers and must compare EQUAL.
- */
-const MODEL_NAMESPACE_ALIASES: Record<string, string> = {
-  "z-ai": "z-ai",
-  zai: "z-ai",
-};
-
-/**
- * Canonical identity for independence comparisons: a model id carrying a
- * known namespace prefix (e.g. openrouter's `z-ai/glm-5.2`) folds the
- * namespace into the provider; provider aliases then collapse (zai → z-ai).
- * Unknown providers/namespaces pass through unchanged.
+ * Canonical identity for judge-independence comparisons. Profiles serving the
+ * same weights across providers share a roster familyId; unknown endpoints do
+ * not gain aliases or fallback behavior.
  */
 export function canonicalModelKey(model: { provider: string; model: string }): string {
-  let provider = model.provider.toLowerCase();
-  let modelId = model.model;
-  for (const namespace of Object.keys(MODEL_NAMESPACE_ALIASES)) {
-    if (modelId.startsWith(`${namespace}/`)) {
-      provider = namespace;
-      modelId = modelId.slice(namespace.length + 1);
-      break;
-    }
-  }
-  provider = MODEL_NAMESPACE_ALIASES[provider] ?? provider;
-  return `${provider}/${modelId}`;
+  return resolveModelRoute(model)?.familyId ?? `${model.provider.toLowerCase()}/${model.model.toLowerCase()}`;
 }
 
 export function isAllowedModel(provider: string, model: string): boolean {
-  return ALLOWED_MODELS.some((entry) => entry.provider === provider && entry.model === model);
+  return resolveProfileId({ provider, model }) !== null;
 }
 
 export function filterAllowedModels<T extends { provider: string; model: string }>(models: T[]): T[] {
@@ -82,6 +95,8 @@ export function normalizeConfiguredModel(
   model: { provider: string; model: string } | undefined,
   fallback: { provider: string; model: string } = DEFAULT_PRIMARY_MODEL,
 ): { provider: string; model: string } {
-  if (model && isAllowedModel(model.provider, model.model)) return model;
-  return { ...fallback };
+  const selected = model ? resolveModelRoute(model) : null;
+  if (selected !== null) return { provider: selected.provider, model: selected.model };
+  const safeFallback = resolveModelRoute(fallback) ?? DEFAULT_PRIMARY_ROUTE;
+  return { provider: safeFallback.provider, model: safeFallback.model };
 }
