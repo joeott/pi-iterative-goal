@@ -6,6 +6,40 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAssistantMessageEventStream, registerApiProvider } from "@earendil-works/pi-ai";
+
+const HEADLESS_EXACT_API = "pi-iterative-goal-headless-exact";
+
+function headlessExactStream(model) {
+  const stream = createAssistantMessageEventStream();
+  const message = {
+    role: "assistant",
+    content: [{ type: "text", text: "OK" }],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    responseModel: model.id,
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+  stream.push({ type: "done", reason: "stop", message });
+  stream.end();
+  return stream;
+}
+
+registerApiProvider({
+  api: HEADLESS_EXACT_API,
+  stream: headlessExactStream,
+  streamSimple: headlessExactStream,
+}, "pi-iterative-goal-headless-evidence");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -355,13 +389,13 @@ function fakePi() {
         provider,
         id: model,
         model,
-        api: "openai-completions",
+        api: HEADLESS_EXACT_API,
         name: `${provider}/${model}`,
         baseUrl: providerConfigs.get(provider)?.baseUrl,
       };
     },
     async getApiKeyAndHeaders() {
-      return { ok: false, apiKey: null, headers: {}, error: "headless evidence runner intentionally does not expose provider keys" };
+      return { ok: true, apiKey: "headless-in-memory-test-key", headers: {} };
     },
   };
 
