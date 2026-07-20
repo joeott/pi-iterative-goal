@@ -17,6 +17,7 @@ export interface ZaiProbeResult {
   ok: boolean;
   status: number | null;
   model: string;
+  responseModel: string | null;
   baseUrl: string;
   latencyMs: number;
   text: string;
@@ -139,6 +140,7 @@ export async function probeZaiGlm52(params: {
       ok: false,
       status: null,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel: null,
       baseUrl,
       latencyMs: Date.now() - started,
       text: "",
@@ -170,20 +172,32 @@ export async function probeZaiGlm52(params: {
     });
     const body = await response.text();
     let text = body.slice(0, 500);
+    let responseModel: string | null = null;
     try {
       const parsed = JSON.parse(body);
       text = parsed?.choices?.[0]?.message?.content ?? text;
+      responseModel = typeof parsed?.model === "string" ? parsed.model : null;
     } catch {
       // Keep raw snippet.
     }
+    const identityError = responseModel === null
+      ? "response_model_identity_missing"
+      : responseModel === ZAI_GLM_5_2_MODEL
+        ? null
+        : "response_model_identity_mismatch";
     return {
-      ok: response.ok && (/\bOK\b/i.test(text) || statusLooksResponsive(response.status, text)),
+      ok: response.ok && identityError === null && (/\bOK\b/i.test(text) || statusLooksResponsive(response.status, text)),
       status: response.status,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel,
       baseUrl,
       latencyMs: Date.now() - started,
       text,
-      error: response.ok ? null : `HTTP ${response.status}: ${text.slice(0, 200)}`,
+      error: !response.ok
+        ? `HTTP ${response.status}: ${text.slice(0, 200)}`
+        : identityError === null
+          ? null
+          : `Exact Z.ai response identity failed closed: ${identityError}`,
       envFiles,
     };
   } catch (err) {
@@ -191,6 +205,7 @@ export async function probeZaiGlm52(params: {
       ok: false,
       status: null,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel: null,
       baseUrl,
       latencyMs: Date.now() - started,
       text: "",
