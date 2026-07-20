@@ -40,8 +40,11 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-trusted-security-")
 try {
   const repo = path.join(scratch, "repo");
   const external = path.join(scratch, "external");
+  const cacheTrap = path.join(external, "cache-trap");
   fs.mkdirSync(path.join(repo, "sub"), { recursive: true });
   fs.mkdirSync(external, { recursive: true });
+  fs.mkdirSync(cacheTrap, { recursive: true });
+  fs.writeFileSync(path.join(cacheTrap, "sentinel.txt"), "cache-trap-unchanged\n");
   fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked\n");
   fs.writeFileSync(path.join(repo, "sub", "sentinel.txt"), "sentinel\n");
   fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "trusted-fixture", version: "1.0.0" }, null, 2));
@@ -84,7 +87,14 @@ try {
   };
   const cycleDir = path.join(repo, ".pi", "iterative-goal", "runs", state.runId, "cycles", "1");
   const phaseDir = path.join(cycleDir, "validate");
+  const runDir = path.join(repo, ".pi", "iterative-goal", "runs", state.runId);
   const manager = {
+    getRunDir() { return runDir; },
+    getRunDir() {
+      const directory = path.join(repo, ".pi", "iterative-goal", "runs", state.runId);
+      fs.mkdirSync(directory, { recursive: true });
+      return fs.realpathSync(directory);
+    },
     getPhaseDir(_cycle, phase) {
       const directory = path.join(cycleDir, phase);
       fs.mkdirSync(directory, { recursive: true });
@@ -97,6 +107,23 @@ try {
     },
     recordAttestation(attestation) { state.attestations.push(attestation); },
   };
+
+  // These predictable legacy paths are intentionally hostile. The verifier
+  // must neither reuse the source cache nor follow fixed artifact symlinks.
+  const legacyManagedDir = path.join(repo, ".pi", "iterative-goal", "managed");
+  fs.mkdirSync(legacyManagedDir, { recursive: true });
+  const legacyCachePath = path.join(legacyManagedDir, "verification-npm-cache");
+  fs.symlinkSync(cacheTrap, legacyCachePath);
+  fs.mkdirSync(phaseDir, { recursive: true });
+  const receiptTrap = path.join(external, "receipt-trap.json");
+  const resultTrap = path.join(external, "result-trap.txt");
+  const resultsListTrap = path.join(external, "results-list-trap.jsonl");
+  fs.writeFileSync(receiptTrap, "receipt-trap-unchanged\n");
+  fs.writeFileSync(resultTrap, "result-trap-unchanged\n");
+  fs.writeFileSync(resultsListTrap, "results-list-trap-unchanged\n");
+  fs.symlinkSync(receiptTrap, path.join(phaseDir, "trusted-verification-receipt.json"));
+  fs.symlinkSync(resultTrap, path.join(phaseDir, "trusted-cwd-check.txt"));
+  fs.symlinkSync(resultsListTrap, path.join(phaseDir, "trusted-verification-results.jsonl"));
 
   const sandboxBackend = detectTrustedVerificationSandboxBackend();
   if (!sandboxBackend) {
@@ -138,6 +165,15 @@ try {
   writeSettings(repo, config);
   const receipt = runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config });
   assert.equal(receipt.ok, true);
+  assert.equal(fs.lstatSync(path.join(phaseDir, "trusted-verification-receipt.json")).isSymbolicLink(), false);
+  assert.equal(fs.readFileSync(receiptTrap, "utf8"), "receipt-trap-unchanged\n");
+  assert.equal(fs.readFileSync(resultTrap, "utf8"), "result-trap-unchanged\n");
+  assert.equal(fs.readFileSync(resultsListTrap, "utf8"), "results-list-trap-unchanged\n");
+  assert.equal(fs.lstatSync(legacyCachePath).isSymbolicLink(), true);
+  assert.deepEqual(fs.readdirSync(cacheTrap), ["sentinel.txt"], "source-tree cache symlink must never be used");
+  assert.match(receipt.dependencyBootstrap?.name ?? "", /fresh offline cache/);
+  assert.match(receipt.results[0].artifact, /trusted-attempt-/);
+  assert.equal(fs.statSync(path.dirname(receipt.results[0].artifact)).mode & 0o077, 0, "artifact attempt directory is private");
   assert.deepEqual(receipt.sandbox, sandboxBackend);
   assert.equal(receipt.results.find((result) => result.id === "sandbox-escape")?.status, "PASS");
   assert.equal(fs.existsSync(path.join(external, "sandbox-escape.txt")), false);
@@ -156,6 +192,14 @@ try {
   fs.appendFileSync(artifactPath, "tamper\n");
   assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "artifact tamper must invalidate receipt");
   fs.writeFileSync(artifactPath, artifactBytes);
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  const artifactBackup = `${artifactPath}.backup`;
+  fs.renameSync(artifactPath, artifactBackup);
+  fs.symlinkSync(resultTrap, artifactPath);
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "artifact symlink substitution must invalidate receipt");
+  fs.unlinkSync(artifactPath);
+  fs.renameSync(artifactBackup, artifactPath);
   assert.ok(readTrustedVerificationReceipt(repo, state, manager));
 
   const modifiedReceipt = JSON.parse(receiptBytes);
@@ -262,6 +306,91 @@ try {
   const downgradedRelease = await runLocalReleaseGate(state, manager, repo);
   assert.ok(downgradedRelease.reasons.some((reason) => /pinned trusted-verification policy/.test(reason)));
   writeSettings(repo, failedOptionalConfig);
+
+  // A lockfile that needs a remote tarball cannot use ambient/global npm
+  // caches or the network. The fresh per-attempt offline cache must make the
+  // dependency bootstrap fail, and that failure must prevent certification.
+  const offlineRepo = path.join(scratch, "offline-bootstrap-repo");
+  fs.mkdirSync(offlineRepo);
+  fs.writeFileSync(path.join(offlineRepo, "package.json"), JSON.stringify({
+    name: "offline-bootstrap-fixture",
+    version: "1.0.0",
+    dependencies: { "pi-ig-intentionally-uncached": "1.0.0" },
+  }, null, 2));
+  fs.writeFileSync(path.join(offlineRepo, "package-lock.json"), JSON.stringify({
+    name: "offline-bootstrap-fixture",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": {
+        name: "offline-bootstrap-fixture",
+        version: "1.0.0",
+        dependencies: { "pi-ig-intentionally-uncached": "1.0.0" },
+      },
+      "node_modules/pi-ig-intentionally-uncached": {
+        version: "1.0.0",
+        resolved: "https://example.invalid/pi-ig-intentionally-uncached-1.0.0.tgz",
+      },
+    },
+  }, null, 2));
+  git(offlineRepo, "init", "-q");
+  git(offlineRepo, "config", "user.email", "trusted-security@example.invalid");
+  git(offlineRepo, "config", "user.name", "Trusted Security Test");
+  git(offlineRepo, "add", "package.json", "package-lock.json");
+  git(offlineRepo, "commit", "-qm", "offline bootstrap fixture");
+  const offlineState = {
+    runId: "ig-offline-bootstrap",
+    cycle: 1,
+    signing: createSigningState("ig-offline-bootstrap"),
+    sandbox: { profile: "local_build" },
+    attestations: [],
+  };
+  const offlineRunDir = path.join(offlineRepo, ".pi", "iterative-goal", "runs", offlineState.runId);
+  const offlineManager = {
+    getRunDir() { return offlineRunDir; },
+    getPhaseDir(_cycle, phase) {
+      const directory = path.join(offlineRunDir, "cycles", "1", phase);
+      fs.mkdirSync(directory, { recursive: true });
+      return directory;
+    },
+    getArtifactPath(_cycle, phase, filename) {
+      return path.join(this.getPhaseDir(1, phase), filename);
+    },
+    recordAttestation(attestation) { offlineState.attestations.push(attestation); },
+  };
+  const offlineConfig = {
+    enabled: true,
+    checks: [{
+      id: "local-check",
+      name: "local check still runs",
+      required: true,
+      command: { executable: process.execPath, argv: ["-e", "process.exit(0)"], timeoutMs: 10_000 },
+    }],
+  };
+  writeSettings(offlineRepo, offlineConfig);
+  const offlineReceipt = runTrustedVerification({
+    cwd: offlineRepo,
+    state: offlineState,
+    stateManager: offlineManager,
+    config: offlineConfig,
+  });
+  assert.equal(offlineReceipt.dependencyBootstrap?.status, "FAIL");
+  assert.equal(offlineReceipt.ok, false, "an empty offline cache miss must fail closed");
+  assert.equal(readTrustedVerificationReceipt(offlineRepo, offlineState, offlineManager), null);
+
+  const phaseBackup = `${phaseDir}.real`;
+  const phaseSymlinkTrap = path.join(external, "phase-symlink-trap");
+  fs.mkdirSync(phaseSymlinkTrap);
+  fs.renameSync(phaseDir, phaseBackup);
+  fs.symlinkSync(phaseSymlinkTrap, phaseDir);
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config: failedOptionalConfig }),
+    /artifact path contains a symbolic link/,
+  );
+  assert.deepEqual(fs.readdirSync(phaseSymlinkTrap), [], "a symlinked artifact directory must receive no writes");
+  fs.unlinkSync(phaseDir);
+  fs.renameSync(phaseBackup, phaseDir);
   sandboxServer.close();
   }
 

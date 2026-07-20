@@ -42,7 +42,7 @@
  *   node scripts/smoke-goal-harness.mjs
  */
 
-import { ok, strictEqual as eq, deepStrictEqual } from "node:assert";
+import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -171,7 +171,7 @@ import path from "node:path";
 // ── Test 4: Diff allowlist detection ────────────────────────────────
 
 {
-  const { extractPathScopesFromPlanText, pathInScopes } = await import("../dist/domain/path-scope.js");
+  const { extractPathScopesFromPlanText, parsePathScope, pathInScopes } = await import("../dist/domain/path-scope.js");
   const { extractAcceptedAmendmentScopes } = await import("../dist/domain/plan.js");
 
   const plan = [
@@ -192,6 +192,9 @@ import path from "node:path";
   eq(pathInScopes("src/components/Button.tsx.bak", planned), false);
   eq(pathInScopes("Dockerfile", planned), true);
   eq(pathInScopes("scripts/deploy", planned), true);
+  eq(pathInScopes("src/direct.ts", [parsePathScope("src/*.ts")]), true);
+  eq(pathInScopes("src/admin/secret.ts", [parsePathScope("src/*.ts")]), false, "single-star scopes never cross a path segment");
+  eq(pathInScopes("src/admin/secret.ts", [parsePathScope("src/**/*.ts")]), true, "globstar explicitly authorizes nested segments");
 
   const amendedPlan = [
     plan,
@@ -693,26 +696,35 @@ import path from "node:path";
     ALLOWED_MODELS,
     DEFAULT_PRIMARY_MODEL,
     DEFAULT_FALLBACK_MODELS,
+    MODEL_ROSTER,
     isAllowedModel,
     filterAllowedModels,
+    resolveModelRoute,
   } = await import("../dist/domain/models.js");
 
-  ok(ALLOWED_MODELS.length >= 13, "model allowlist includes screenshot plus fusion/router models");
+  eq(ALLOWED_MODELS.length, 9, "model allowlist contains the exact tracked nine-profile roster");
+  eq(MODEL_ROSTER.profiles.length, 9);
+  ok(/^[a-f0-9]{64}$/.test(MODEL_ROSTER.catalogHash));
   deepStrictEqual(DEFAULT_PRIMARY_MODEL, { provider: "zai", model: "glm-5.2" });
-  ok(DEFAULT_FALLBACK_MODELS.some((m) => m.model === "openrouter/fusion"), "fusion fallback configured");
-  ok(DEFAULT_FALLBACK_MODELS.some((m) => m.provider === "openrouter" && m.model === "z-ai/glm-5.2"), "OpenRouter Z.ai GLM 5.2 fallback configured");
-  eq(isAllowedModel("openrouter", "deepseek/deepseek-v4-flash"), true);
+  deepStrictEqual(DEFAULT_FALLBACK_MODELS, [
+    { provider: "fireworks", model: "accounts/fireworks/models/glm-5p2" },
+    { provider: "openrouter", model: "moonshotai/kimi-k3" },
+  ]);
   eq(isAllowedModel("zai", "glm-5.2"), true);
+  eq(isAllowedModel("fireworks", "accounts/fireworks/routers/glm-5p2-fast"), true);
+  eq(isAllowedModel("cerebras", "zai-glm-4.7"), true);
   eq(isAllowedModel("openrouter", "openai/o3-mini"), false);
+  eq(resolveModelRoute("openrouter_kimi_k3").piSelection, "openrouter/moonshotai/kimi-k3");
+  eq(resolveModelRoute("openrouter/moonshotai/kimi-k3:latest"), null);
   deepStrictEqual(
     filterAllowedModels([
-      { provider: "openrouter", model: "deepseek/deepseek-v4-flash" },
+      { provider: "cerebras", model: "gpt-oss-120b" },
       { provider: "openrouter", model: "openai/o3-mini" },
     ]),
-    [{ provider: "openrouter", model: "deepseek/deepseek-v4-flash" }],
+    [{ provider: "cerebras", model: "gpt-oss-120b" }],
   );
 
-  console.log("✓ Test 14: Model allowlist restricts stale/unapproved models");
+  console.log("✓ Test 14: Exact model roster resolves approved profiles and rejects stale/unapproved selectors");
 }
 
 // ── Test 15: Central policy engine ──────────────────────────────────
@@ -1808,12 +1820,14 @@ import path from "node:path";
   delete process.env.ZAI_API_BASE_URL;
   const loaded = loadZaiLocalEnv(tmp, [envPath]);
   ok(loaded[0].loadedKeys.includes("ZAI_API_KEY"));
+  ok(!loaded[0].loadedKeys.includes("ZAI_API_BASE_URL"), "ambient env files cannot override the exact provider route");
 
   const model = zaiGlm52Model();
   eq(model.id, ZAI_GLM_5_2_MODEL);
   eq(model.baseUrl, ZAI_CODING_BASE_URL);
   eq(model.compat.thinkingFormat, "zai");
   eq(model.contextWindow, 1_000_000);
+  eq(model.maxTokens, 32_768, "direct registration matches roster-generated output bounds");
 
   const registered = [];
   registerZaiGlm52Provider({
@@ -1843,7 +1857,7 @@ import path from "node:path";
   eq(probe.ok, true);
   eq(probe.text, "OK");
 
-  delete process.env.ZAI_API_KEY;
+  process.env.ZAI_API_KEY = "fake-zai-key";
   delete process.env.ZAI_API_BASE_URL;
   console.log("✓ Test 25: Z.ai GLM 5.2 provider metadata and probe behavior are valid");
 }
@@ -1884,7 +1898,7 @@ if (args[0] === "secretsmanager" && (args[1] === "create-secret" || args[1] === 
   }
   const payloadPath = secretString.slice("file://".length);
   const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-  if (!payload.OPENROUTER_API_KEY || !payload.ZAI_API_KEY) {
+  if (!payload.OPENROUTER_API_KEY || !payload.ZAI_API_KEY || !payload.FIREWORKS_API_KEY || !payload.CEREBRAS_API_KEY) {
     process.stderr.write("provider payload missing expected keys");
     process.exit(4);
   }
@@ -1899,6 +1913,8 @@ process.exit(2);
   const fixtureEnv = [
     ["OPENROUTER_API_KEY", "openrouter-secret-value"],
     ["ZAI_API_KEY", "zai-secret-value"],
+    ["FIREWORKS_API_KEY", "fireworks-secret-value"],
+    ["CEREBRAS_API_KEY", "cerebras-secret-value"],
     ["ZAI_API_BASE_URL", "https://api.z.ai/api/coding/paas/v4"],
     ["PI_AWS_SECRET_SCOPE", "control"],
     ["PI_AWS_CONTROL_PROFILE", "control-profile"],
@@ -1932,12 +1948,19 @@ process.exit(2);
   ok(result.stdout.includes("aws_control_secret_write: PASS"));
   ok(!result.stdout.includes("openrouter-secret-value"));
   ok(!result.stdout.includes("zai-secret-value"));
+  ok(!result.stdout.includes("fireworks-secret-value"));
+  ok(!result.stdout.includes("cerebras-secret-value"));
 
   const commands = fs.readFileSync(commandLog, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line).args);
   ok(commands.some((args) => args.includes("get-caller-identity") && args.includes("control-profile")));
   ok(commands.some((args) => args.includes("create-secret") && args.includes("control-profile")));
   ok(!commands.some((args) => args.includes("project-profile")), "control-scope write must not use project sub-account");
-  ok(!commands.some((args) => args.some((part) => part.includes("openrouter-secret-value") || part.includes("zai-secret-value"))));
+  ok(!commands.some((args) => args.some((part) => [
+    "openrouter-secret-value",
+    "zai-secret-value",
+    "fireworks-secret-value",
+    "cerebras-secret-value",
+  ].some((secret) => part.includes(secret)))));
 
   console.log("✓ Test 26: Provider env materializer gates Secrets Manager writes to the approved control account without printing secrets");
 }
@@ -2016,7 +2039,8 @@ process.exit(2);
   const models = await import("../dist/domain/models.js");
   eq(models.DEFAULT_PRIMARY_MODEL.provider, "zai");
   eq(models.DEFAULT_PRIMARY_MODEL.model, "glm-5.2");
-  ok(models.DEFAULT_FALLBACK_MODELS.some((model) => model.provider === "openrouter" && model.model === "z-ai/glm-5.2"));
+  ok(models.DEFAULT_FALLBACK_MODELS.some((model) => model.provider === "fireworks" && model.model === "accounts/fireworks/models/glm-5p2"));
+  ok(models.DEFAULT_FALLBACK_MODELS.some((model) => model.provider === "openrouter" && model.model === "moonshotai/kimi-k3"));
 
   const { registerZaiGlm52ProviderWithPi } = await import("../dist/zai.js");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-zai-provider-"));
@@ -2040,7 +2064,8 @@ process.exit(2);
   eq(calls[0].config.baseUrl, "https://api.z.ai/api/coding/paas/v4");
   eq(calls[0].config.models[0].id, "glm-5.2");
   eq(calls[0].config.models[0].compat.maxTokensField, "max_tokens");
-  ok(loaded.some((file) => file.path === path.join(tmp, ".env") && file.loadedKeys.includes("ZAI_API_KEY")));
+  eq(calls[0].config.models[0].maxTokens, 32_768);
+  deepStrictEqual(loaded, [], "runtime registration never rescans ambient env files");
   if (previousKey === undefined) delete process.env.ZAI_API_KEY;
   else process.env.ZAI_API_KEY = previousKey;
   if (previousBase === undefined) delete process.env.ZAI_API_BASE_URL;
@@ -2055,6 +2080,9 @@ process.exit(2);
   const { registerHarnessUi } = await import("../dist/harness-ui.js");
   const commands = [];
   const events = [];
+  const selectedModels = [];
+  const runStatuses = [];
+  let policyContext;
   const pi = {
     on(event, handler) {
       events.push({ event, handler });
@@ -2079,10 +2107,16 @@ process.exit(2);
         sourceInfo: { path: "dist/pi-iterative-goal.js", source: "extension", scope: "project", origin: "top-level" },
       }));
     },
+    async setModel(model) {
+      selectedModels.push(`${model.provider}/${model.id}`);
+      if (policyContext) policyContext.model = model;
+      return true;
+    },
   };
   const stateManager = {
     getState() { return null; },
     restore() { return null; },
+    setStatus(status) { runStatuses.push(status); },
   };
   const phaseIndicator = {
     tickOnce() {},
@@ -2099,7 +2133,24 @@ process.exit(2);
   ok(events.some((event) => event.event === "session_start"));
   ok(events.some((event) => event.event === "model_select"));
 
-  console.log("✓ Test 29: Harness startup dashboard, doctor, mode, and security-review commands register");
+  const modelHandler = events.find((event) => event.event === "model_select").handler;
+  const approvedPrevious = { provider: "zai", id: "glm-5.2" };
+  policyContext = {
+    hasUI: false,
+    model: { provider: "anthropic", id: "not-on-roster" },
+    modelRegistry: { find: () => approvedPrevious },
+    ui: { notify() {} },
+  };
+  await modelHandler({
+    type: "model_select",
+    model: policyContext.model,
+    previousModel: approvedPrevious,
+    source: "set",
+  }, policyContext);
+  deepStrictEqual(selectedModels, ["zai/glm-5.2"], "unlisted interactive model is immediately restored to an approved route");
+  deepStrictEqual(runStatuses, [], "successful policy restoration does not poison run status");
+
+  console.log("✓ Test 29: Harness commands register and interactive model selection enforces the exact roster");
 }
 
 // ── Test 30: C0 change feed — phase_changed reaches chrome within one tick ──
@@ -2373,6 +2424,7 @@ process.exit(2);
     "src/ui/phase-indicator.ts",
     "src/state.ts",
     "src/logging.ts",
+    "src/trusted-verification.ts",
     "src/ui/goal-commands.ts",
   ]);
   const bareUsers = tsFiles
@@ -2562,11 +2614,20 @@ const c1 = await (async () => {
     return JSON.stringify(outputs[role] ?? outputs.Scout);
   }
 
-  function usageMessageLine(prompt) {
+  function requestedModel(args) {
+    const index = args.indexOf("--model");
+    const selection = index >= 0 ? String(args[index + 1] ?? "") : "";
+    const separator = selection.indexOf("/");
+    return separator >= 0 ? selection.slice(separator + 1) : selection;
+  }
+
+  function usageMessageLine(prompt, model) {
     return JSON.stringify({
       type: "message_end",
       message: {
         role: "assistant",
+        model,
+        responseModel: model,
         content: [{ type: "text", text: fakeOutputForPrompt(prompt) }],
         usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.003 } },
       },
@@ -2583,14 +2644,18 @@ const c1 = await (async () => {
       proc.stdout = new EventEmitter();
       proc.stderr = new EventEmitter();
       proc.killed = false;
-      proc.kill = () => { proc.killed = true; };
+      proc.signals = [];
+      proc.kill = (signal) => { proc.killed = true; proc.signals.push(signal); };
       spawns.push({ cmd, args, opts, proc });
       setTimeout(() => {
         const text = outputForPrompt ? String(outputForPrompt(args.at(-1))) : fakeOutputForPrompt(args.at(-1));
+        const model = requestedModel(args);
         const line = JSON.stringify({
           type: "message_end",
           message: {
             role: "assistant",
+            model,
+            responseModel: model,
             content: [{ type: "text", text }],
             usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.003 } },
           },
@@ -2612,9 +2677,10 @@ const c1 = await (async () => {
       proc.stdout = new EventEmitter();
       proc.stderr = new EventEmitter();
       proc.killed = false;
-      proc.kill = () => { proc.killed = true; };
+      proc.signals = [];
+      proc.kill = (signal) => { proc.killed = true; proc.signals.push(signal); };
       proc.finish = (code = 0) => {
-        proc.stdout.emit("data", Buffer.from(usageMessageLine(args.at(-1)) + "\n"));
+        proc.stdout.emit("data", Buffer.from(usageMessageLine(args.at(-1), requestedModel(args)) + "\n"));
         proc.emit("close", code);
       };
       pending.push(proc);
@@ -2829,7 +2895,7 @@ const c1 = await (async () => {
 
   const repo = c1.makeGitRepo("pi-ig-c1-crosscall-");
   const spawnImpl = c1.makeManualSpawn();
-  const pool = new PiSubprocessAgentPool(repo, { spawnImpl });
+  const pool = new PiSubprocessAgentPool(repo, { spawnImpl, killGraceMs: 10 });
   const writerA = buildAgentTaskFromProfile({ role: "Implementer", task: "edit a", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
   const writerB = buildAgentTaskFromProfile({ role: "Implementer", task: "edit a too", allowedPaths: ["src/a.ts"], inputArtifactIds: [] }).task;
 
@@ -2864,9 +2930,16 @@ const c1 = await (async () => {
   const entryA2 = getRunAgentPool("run-a", repo, { poolFactory: () => fakePoolA });
   eq(entryA1, entryA2, "same pool instance across calls within a run");
   const fakePoolB = { async submit() {}, async map() {}, async cancel() { return "unknown"; }, down: false, async shutdown() { this.down = true; } };
+  throws(
+    () => getRunAgentPool("run-b", repo, { poolFactory: () => fakePoolB }),
+    /prior run pool run-a is still registered/,
+    "a new run fails closed until the previous pool shutdown is awaited",
+  );
+  eq(fakePoolA.down, false, "failed admission does not detach or erase the prior pool");
+  await shutdownRunAgentPools();
+  eq(fakePoolA.down, true, "explicit run-boundary shutdown waits for the prior pool");
   const entryB = getRunAgentPool("run-b", repo, { poolFactory: () => fakePoolB });
   ok(entryB !== entryA1, "a new run gets a new pool");
-  eq(fakePoolA.down, true, "previous run's pool is shut down at the run boundary");
   await shutdownRunAgentPools();
 
   console.log("✓ Test 41: C1 cross-call write-scope registry rejects collisions and survives call boundaries");
@@ -2911,7 +2984,11 @@ const c1 = await (async () => {
   eq(started.length, 2);
   eq(finished.length, 2);
   ok(started.every((event) => event.task.role === "Scout" && event.task.mode === "parallel"
-    && event.backend === "pi-subprocess" && event.detectedBackend === "none"));
+    && event.backend === "pi-subprocess" && event.detectedBackend === "none"
+    && event.task.routeId === "cerebras_gpt_oss_120b"
+    && event.task.provider === "cerebras"
+    && event.task.requestedModel === "gpt-oss-120b"
+    && event.task.familyId === "openai/gpt-oss-120b"));
   for (const event of finished) {
     eq(event.status, "completed");
     ok(event.usage && event.usage.input === 120 && event.usage.output === 40 && event.usage.turns === 1,
@@ -3063,7 +3140,9 @@ const c1 = await (async () => {
   const { buildAgentTaskFromProfile } = await import("../dist/subagents.js");
 
   const repo = c1.makeGitRepo("pi-ig-c1-bench-");
-  const latencyMs = 25;
+  // Keep injected work large relative to Git/worktree setup jitter so the
+  // speedup assertion measures dispatch overlap instead of host load.
+  const latencyMs = 200;
   const corpus = [
     { role: "Scout", task: "scout the event ledger" },
     { role: "Scout", task: "scout the policy engine" },
@@ -3368,21 +3447,26 @@ const c1 = await (async () => {
 
   // Pool exists, id unknown → reports not found as a warning.
   const spawnImpl = c1.makeManualSpawn();
-  const pool = new PiSubprocessAgentPool(repo, { spawnImpl });
+  const pool = new PiSubprocessAgentPool(repo, { spawnImpl, killGraceMs: 10 });
   getRunAgentPool(run.runId, repo, { poolFactory: () => pool });
   await cancelCommand.handler("ghost-2", ctx);
   ok(notifications.at(-1).message.includes("No in-flight subagent task found with id: ghost-2"));
   eq(notifications.at(-1).level, "warning");
 
   // Running task → cancelled truthfully, task marked cancelled on the pool.
-  const scoutTask = buildAgentTaskFromProfile({ id: "live-1", role: "Scout", task: "scout", allowedPaths: [], inputArtifactIds: [] }).task;
+  const scoutTask = buildAgentTaskFromProfile({ id: "live-1", role: "Implementer", task: "edit", allowedPaths: ["src/live.ts"], inputArtifactIds: [] }).task;
   const running = pool.submit(scoutTask);
   await cancelCommand.handler("live-1", ctx);
   ok(notifications.at(-1).message.includes("was running"));
   eq(notifications.at(-1).level, "info");
   eq(pool.wasCancelled("live-1"), true);
+  eq(pool.getActiveWriteScopes().has("live-1"), true, "writer lease remains held after TERM while child is alive");
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  deepStrictEqual(spawnImpl.pending[0].signals, ["SIGTERM", "SIGKILL"], "slow child receives bounded exact TERM→KILL escalation");
+  eq(pool.getActiveWriteScopes().has("live-1"), true, "writer lease remains held through KILL until close");
   spawnImpl.pending[0].finish(143);
   await running;
+  eq(pool.getActiveWriteScopes().has("live-1"), false, "writer lease releases only after close");
   await shutdownRunAgentPools();
 
   console.log("✓ Test 51: C1 /goal-swarm-cancel reports unknown ids truthfully and cancels running tasks");
@@ -3440,6 +3524,11 @@ const c1 = await (async () => {
   const managerA = createStateManager({ appendEntry() {} });
   eq(managerA.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
   const run = managerA.createRun("Crash reconcile", "Running tasks reconcile on restore");
+  const signingPublicKey = run.signing.runPublicKey;
+  const signingKeyPath = path.join(managerA.getRunDir(), ".signing-private.pem");
+  ok(fs.existsSync(signingKeyPath), "run signer is persisted outside state/event payloads for restart continuity");
+  eq(fs.statSync(signingKeyPath).mode & 0o077, 0, "run signer is owner-only");
+  ok(!fs.readFileSync(path.join(managerA.getRunDir(), "state.json"), "utf8").includes("PRIVATE KEY"));
   managerA.recordSubagentStarted({
     taskId: "ghost-1", batchId: "b1", runId: run.runId, role: "Scout", mode: "parallel",
     backend: "pi-subprocess", detectedBackend: "none", workspace: "read_only_snapshot",
@@ -3461,6 +3550,9 @@ const c1 = await (async () => {
   eq(restored.swarm.tasks[0].status, "failed", "orphaned running task reconciled to failed");
   eq(restored.swarm.tasks[0].error, "process_restart");
   ok(restored.swarm.tasks[0].finishedAt);
+  eq(restored.signing.runPublicKey, signingPublicKey, "restart keeps the originally pinned public key");
+  eq(restored.signing.available, true, "secure run-owned signer is restored after restart");
+  ok(restored.signing.privateKeyPem?.includes("PRIVATE KEY"));
 
   const events = fs.readFileSync(managerB.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
   const reconciled = events.filter((event) => event.type === "subagent_finished" && event.taskId === "ghost-1");
@@ -3468,7 +3560,13 @@ const c1 = await (async () => {
   eq(reconciled[0].error, "process_restart");
   ok(managerB.replayActiveState(), "hash chain still verifies after reconciliation");
 
-  console.log("✓ Test 53: C1 crash reconciliation fails orphaned running tasks with process_restart");
+  fs.chmodSync(signingKeyPath, 0o644);
+  const managerC = createStateManager({ appendEntry() {} });
+  const unsafeKeyRestore = managerC.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } });
+  eq(unsafeKeyRestore.signing.available, false, "over-broad signer permissions fail closed on restart");
+  eq(unsafeKeyRestore.signing.privateKeyPem, undefined);
+
+  console.log("✓ Test 53: C1 crash reconciliation and secure run-signer restart continuity");
 }
 
 // ── Test 54: C1 chain binding truncates large artifacts and surfaces unresolved ids ──
@@ -3587,8 +3685,8 @@ const c2 = await (async () => {
       hasAgentTool: false,
       hasMcpTool: false,
       mcpServers: [],
-      model: "deepseek/deepseek-v4-pro",
-      provider: "openrouter",
+      model: "glm-5.2",
+      provider: "zai",
       awsCli: null,
       gitFinalization: null,
       hasFilesystem: true,
@@ -3620,12 +3718,14 @@ const c2 = await (async () => {
       on(event, handler) { handlers.set(event, handler); },
       sendUserMessage(message) { sent.push(String(message)); },
       sendMessage() {},
-      async setModel() {},
+      async setModel() { return true; },
     };
     const stateManager = createStateManager(pi);
     const ctx = {
       cwd: repo,
-      modelRegistry: { find: () => undefined },
+      modelRegistry: {
+        find(provider, model) { return { provider, id: model }; },
+      },
       ui: { notify() {} },
       sessionManager: { getEntries: () => [] },
     };
@@ -5358,7 +5458,7 @@ const c4 = await (async () => {
     });
   }
 
-  const injectedConfig = { enabled: true, integrationBranch: null, testCommand: "injected", testTimeoutMs: 1000 };
+  const injectedConfig = { enabled: true, promoteToSource: false, integrationBranch: null, testCommand: "injected", testTimeoutMs: 1000 };
   const okTests = () => ({ ok: true, output: "ok" });
 
   return { makeMergeRepo, twoShardPlan, claimCompleted, capturePatch, injectedConfig, okTests };
@@ -5384,9 +5484,11 @@ const c4 = await (async () => {
   const report = await mergeShardPlan(plan, [{ shardId: "shard-a", patch }], {
     stateManager,
     cwd: repo,
-    config: { enabled: false, integrationBranch: null, testCommand: "npm test", testTimeoutMs: 1000 },
+    config: { enabled: false, promoteToSource: false, integrationBranch: null, testCommand: "npm test", testTimeoutMs: 1000 },
   });
   eq(report.enabled, false);
+  eq(report.promotionStatus, "disabled", "source promotion remains independently default-off");
+  eq(report.deliveredSha, null, "flag-off path never advances source HEAD");
   ok(report.reason.includes("[ISOLATED_WORKTREE_PATCH]"), "rollback reason names the manual patch channel");
   eq(report.verified.length + report.rejected.length, 0, "no shard transitions under rollback");
   const eventsAfter = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").length;
@@ -5486,6 +5588,112 @@ const c4 = await (async () => {
   ok(bridge.includes("gamma") && !bridge.includes("delta"), "the rejected patch never touched the integration branch");
 
   console.log("✓ Test 82: C4 conflict rejection returns shard-d to claimed with taskId:null; branch keeps only verified work");
+}
+
+// ── Test 83: source promotion is exact, opt-in, and fail-closed ──────────
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { loadMergeBackConfig, mergeShardPlan } = await import("../dist/workspace/worktrees.js");
+  const { execFileSync } = await import("node:child_process");
+
+  const head = (repo) => execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+  const promotionConfig = { ...c4.injectedConfig, promoteToSource: true };
+
+  async function fixture(prefix) {
+    const repo = c4.makeMergeRepo(prefix);
+    eq(loadMergeBackConfig(repo).promoteToSource, false, "source delivery flag defaults off when absent");
+    const stateManager = createStateManager({ appendEntry() {} });
+    eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+    const run = stateManager.createRun("C4 delivered HEAD", "verified integration reaches source only through exact promotion");
+    const plan = c4.twoShardPlan(run.runId);
+    stateManager.recordShardPlan(plan);
+    c4.claimCompleted(stateManager, plan, "shard-a", 500);
+    c4.claimCompleted(stateManager, plan, "shard-b", 100);
+    const patchA = await c4.capturePatch(repo, `${prefix}-a`, "src/a.mjs", "export const a = 42;\n");
+    const patchB = await c4.capturePatch(repo, `${prefix}-b`, "src/b.mjs", "export const b = 1337;\n");
+    return { repo, stateManager, plan, patchA, patchB };
+  }
+
+  // Happy path: exact integration tip is delivered to the unchanged, clean
+  // source worktree using a fast-forward only.
+  {
+    const f = await fixture("pi-ig-c4-promote-");
+    const sourceBefore = head(f.repo);
+    const report = await mergeShardPlan(f.plan, [
+      { shardId: "shard-a", patch: f.patchA },
+      { shardId: "shard-b", patch: f.patchB },
+    ], { stateManager: f.stateManager, cwd: f.repo, config: promotionConfig, runTests: c4.okTests });
+    eq(report.sourceHeadBefore, sourceBefore, "report binds promotion to the source HEAD observed at start");
+    eq(report.promotionStatus, "promoted");
+    eq(report.deliveredSha, report.integrationHead, "delivered SHA is exactly the verified integration tip");
+    eq(head(f.repo), report.deliveredSha, "source HEAD visibly advances to the delivered SHA");
+    ok(execFileSync("git", ["show", "HEAD:src/a.mjs"], { cwd: f.repo, encoding: "utf8" }).includes("42"));
+    ok(execFileSync("git", ["show", "HEAD:src/b.mjs"], { cwd: f.repo, encoding: "utf8" }).includes("1337"));
+  }
+
+  // Missing verdict: even a clean source and a green first shard cannot be
+  // promoted until every planned shard has a merge_verified ledger verdict.
+  {
+    const f = await fixture("pi-ig-c4-promote-partial-");
+    const sourceBefore = head(f.repo);
+    const report = await mergeShardPlan(f.plan, [
+      { shardId: "shard-a", patch: f.patchA },
+    ], { stateManager: f.stateManager, cwd: f.repo, config: promotionConfig, runTests: c4.okTests });
+    eq(report.promotionStatus, "blocked");
+    ok(report.promotionReason.includes("not every planned shard is merge_verified"));
+    eq(report.deliveredSha, null);
+    eq(head(f.repo), sourceBefore, "partial verification leaves source HEAD untouched");
+  }
+
+  // Tracked dirt is preserved and blocks the source update; the verified
+  // integration branch remains available as the durable handoff.
+  {
+    const f = await fixture("pi-ig-c4-promote-dirty-");
+    const sourceBefore = head(f.repo);
+    fs.writeFileSync(path.join(f.repo, "src", "bridge.mjs"), "export const seam = \"user-dirty\";\n");
+    const report = await mergeShardPlan(f.plan, [
+      { shardId: "shard-a", patch: f.patchA },
+      { shardId: "shard-b", patch: f.patchB },
+    ], { stateManager: f.stateManager, cwd: f.repo, config: promotionConfig, runTests: c4.okTests });
+    eq(report.promotionStatus, "blocked");
+    ok(report.promotionReason.includes("tracked changes"));
+    eq(head(f.repo), sourceBefore, "dirty source HEAD is not advanced");
+    ok(fs.readFileSync(path.join(f.repo, "src", "bridge.mjs"), "utf8").includes("user-dirty"), "user tracked change is preserved");
+    ok(report.integrationHead, "verified integration tip remains available after blocked delivery");
+  }
+
+  // Source drift during gate execution is a compare-and-swap failure even
+  // when the new source commit is clean by promotion time.
+  {
+    const f = await fixture("pi-ig-c4-promote-drift-");
+    const sourceBefore = head(f.repo);
+    let advanced = false;
+    const report = await mergeShardPlan(f.plan, [
+      { shardId: "shard-a", patch: f.patchA },
+      { shardId: "shard-b", patch: f.patchB },
+    ], {
+      stateManager: f.stateManager,
+      cwd: f.repo,
+      config: promotionConfig,
+      runTests: () => {
+        if (!advanced) {
+          advanced = true;
+          fs.writeFileSync(path.join(f.repo, "source-drift.txt"), "concurrent source commit\n");
+          execFileSync("git", ["add", "source-drift.txt"], { cwd: f.repo });
+          execFileSync("git", ["commit", "-qm", "concurrent source advance"], { cwd: f.repo });
+        }
+        return { ok: true, output: "ok" };
+      },
+    });
+    eq(report.sourceHeadBefore, sourceBefore);
+    eq(report.promotionStatus, "blocked");
+    ok(report.promotionReason.includes("source HEAD moved"));
+    eq(report.deliveredSha, null);
+    ok(head(f.repo) !== sourceBefore, "concurrent source commit remains current and is never overwritten");
+  }
+
+  console.log("✓ Test 83: source promotion is opt-in, exact, all-shards-gated, and fail-closed on dirt or HEAD drift");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

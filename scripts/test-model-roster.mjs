@@ -149,6 +149,11 @@ const wrongEndpointPath = writeFixture("wrong-endpoint.json", (fixture) => {
 });
 throws(() => loadModelRoster(wrongEndpointPath), /must use exact endpoint/);
 
+const credentialExpansionPath = writeFixture("credential-expansion.json", (fixture) => {
+  fixture.profiles[0].credential.environment.push("AWS_SECRET_ACCESS_KEY");
+});
+throws(() => loadModelRoster(credentialExpansionPath), /exact pinned zai environment variables/);
+
 const tenthPath = writeFixture("tenth.json", (fixture) => {
   fixture.profiles.push({ ...fixture.profiles.at(-1), id: "unlisted_tenth_profile" });
 });

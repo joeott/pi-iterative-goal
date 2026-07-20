@@ -59,11 +59,29 @@ function nearestExistingPath(target: string): string {
 }
 
 function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${escaped}$`);
+  let expression = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character !== "*") {
+      expression += /[.+?^${}()|[\]\\]/.test(character) ? `\\${character}` : character;
+      continue;
+    }
+    const globstar = pattern[index + 1] === "*";
+    if (!globstar) {
+      // A single star is segment-local. It must never authorize a nested
+      // directory that was absent from the declared write scope.
+      expression += "[^/]*";
+      continue;
+    }
+    index += 1;
+    if (pattern[index + 1] === "/") {
+      index += 1;
+      expression += "(?:.*/)?";
+    } else {
+      expression += ".*";
+    }
+  }
+  return new RegExp(`^${expression}$`);
 }
 
 export function pathMatchesScope(repoRelativePath: string, scope: PathScope): boolean {

@@ -11,6 +11,8 @@ interface ActiveTurn {
   firstTokenMs: number | null;
   requestDigest: string | null;
   cwd: string;
+  responseIdentity: "pending" | "valid" | "invalid";
+  responseIdentityError: "response_model_identity_missing" | "response_model_mismatch" | null;
 }
 
 function digest(value: unknown): string {
@@ -50,8 +52,8 @@ function terminationFor(stopReason: string | undefined): ModelTermination {
   return "success";
 }
 
-function responseMatchesRoute(route: ResolvedModelRoute, responseModel: string | undefined): boolean | null {
-  if (!responseModel) return null;
+function responseMatchesRoute(route: ResolvedModelRoute, responseModel: string | undefined): boolean {
+  if (!responseModel) return false;
   if (responseModel === route.model) return true;
   // Fireworks' exact fast router reports the fixed backing GLM 5.2 model in
   // responses; the live probe verifies that one intentional mapping.
@@ -102,6 +104,8 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
       firstTokenMs: null,
       requestDigest: null,
       cwd: ctx.cwd,
+      responseIdentity: "pending",
+      responseIdentityError: null,
     };
   });
 
@@ -115,7 +119,16 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
       return { model: "__PI_ITERATIVE_GOAL_BLOCKED__", messages: [] };
     }
     if (!activeTurn) {
-      activeTurn = { turnIndex: 0, route, startedMs: Date.now(), firstTokenMs: null, requestDigest: null, cwd: ctx.cwd };
+      activeTurn = {
+        turnIndex: 0,
+        route,
+        startedMs: Date.now(),
+        firstTokenMs: null,
+        requestDigest: null,
+        cwd: ctx.cwd,
+        responseIdentity: "pending",
+        responseIdentityError: null,
+      };
     }
     const exactPayload = exactRequestPayload(event.payload, route);
     if (!exactPayload) {
@@ -133,6 +146,27 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
     if (activeTurn && activeTurn.firstTokenMs === null) activeTurn.firstTokenMs = Date.now();
   });
 
+  pi.on("message_end", (event, ctx) => {
+    if (event.message.role !== "assistant" || !activeTurn) return;
+    const responseModel = event.message.responseModel;
+    const identityMatch = event.message.model === activeTurn.route.model
+      && responseMatchesRoute(activeTurn.route, responseModel);
+    activeTurn.responseIdentity = identityMatch ? "valid" : "invalid";
+    activeTurn.responseIdentityError = identityMatch
+      ? null
+      : responseModel
+        ? "response_model_mismatch"
+        : "response_model_identity_missing";
+    if (!identityMatch) {
+      stateManager.setStatus("provider_unavailable");
+      ctx.abort();
+    }
+  });
+
+  pi.on("tool_call", () => activeTurn?.responseIdentity === "valid"
+    ? undefined
+    : { block: true, reason: "coordinator response model identity was not positively validated" });
+
   pi.on("turn_end", (event, ctx) => {
     if (event.message.role !== "assistant") return;
     const turn = activeTurn;
@@ -143,9 +177,14 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
     const usage = event.message.usage;
     const toolCallCount = event.message.content.filter((part) => part.type === "toolCall").length;
     const toolErrorCount = event.toolResults.filter((result) => result.isError).length;
-    const identityMatch = responseMatchesRoute(turn.route, event.message.responseModel);
-    const termination = identityMatch === false ? "provider_error" : terminationFor(event.message.stopReason);
-    if (identityMatch === false) {
+    const identityMatch = event.message.model === turn.route.model
+      && responseMatchesRoute(turn.route, event.message.responseModel);
+    const identityError = identityMatch
+      ? null
+      : turn.responseIdentityError
+        ?? (event.message.responseModel ? "response_model_mismatch" : "response_model_identity_missing");
+    const termination = !identityMatch ? "provider_error" : terminationFor(event.message.stopReason);
+    if (!identityMatch && turn.responseIdentity !== "invalid") {
       stateManager.setStatus("provider_unavailable");
       ctx.abort();
     }
@@ -191,9 +230,9 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
         toolCallCount,
         toolErrorCount,
         termination,
-        gateStatus: identityMatch === false ? "FAIL" : "NOT_RUN",
-        errorCode: identityMatch === false
-          ? "response_model_mismatch"
+        gateStatus: !identityMatch ? "FAIL" : "NOT_RUN",
+        errorCode: !identityMatch
+          ? identityError
           : event.message.errorMessage ? digest(event.message.errorMessage).slice(0, 16) : null,
         requestDigest: turn.requestDigest,
         resultDigest: digest(event.message),

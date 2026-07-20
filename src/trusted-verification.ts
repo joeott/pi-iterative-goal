@@ -388,9 +388,6 @@ function macSandboxProfile(params: {
     // -e` capability probe. This does not grant filesystem, IPC, or network
     // access; those remain controlled by the explicit deny/allow rules.
     "(allow dynamic-code-generation)",
-    // Node/libuv performs Mach service lookups during startup. This grants
-    // IPC name resolution only; filesystem and network remain deny-default.
-    "(allow mach-lookup)",
     `(allow file-read* ${readRules})`,
     `(allow file-read-metadata ${metadataRules})`,
     `(allow file-write* ${writeRules} (literal \"/dev/null\"))`,
@@ -580,7 +577,7 @@ export function diagnoseTrustedVerificationSandboxBackend(platform: NodeJS.Platf
   return { backend: selection.backend, available: probe.ok, reason: probe.reason };
 }
 
-function validationEnvironment(sourceRoot: string, validationRoot: string): NodeJS.ProcessEnv {
+function validationEnvironment(validationRoot: string, cacheRoot: string): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of ["LANG", "LC_ALL", "LC_CTYPE", "TERM", "NO_COLOR"] as const) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
@@ -593,15 +590,161 @@ function validationEnvironment(sourceRoot: string, validationRoot: string): Node
   environment.GIT_TERMINAL_PROMPT = "0";
   environment.TMPDIR = path.join(validationRoot, ".verification-tmp");
   environment.HOME = path.join(validationRoot, ".verification-home");
-  environment.NPM_CONFIG_CACHE = path.join(sourceRoot, ".pi", "iterative-goal", "managed", "verification-npm-cache");
+  // The cache is deliberately fresh and lives beside the disposable checkout.
+  // Reusing a source-tree cache would make a predictable, attacker-replaceable
+  // path writable by the untrusted validation process. Offline bootstrap can
+  // therefore fail when the lockfile needs packages that are not self-contained;
+  // that is a fail-closed limitation, not grounds to widen the sandbox.
+  environment.NPM_CONFIG_CACHE = cacheRoot;
   environment.NPM_CONFIG_USERCONFIG = path.join(validationRoot, ".verification-npmrc");
   environment.NPM_CONFIG_OFFLINE = "true";
   environment.NPM_CONFIG_UPDATE_NOTIFIER = "false";
   fs.mkdirSync(environment.TMPDIR, { recursive: true, mode: 0o700 });
   fs.mkdirSync(environment.HOME, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(environment.NPM_CONFIG_CACHE, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(environment.NPM_CONFIG_USERCONFIG, "", { mode: 0o600 });
+  writeExclusiveNoFollow(environment.NPM_CONFIG_USERCONFIG, "");
   return environment;
+}
+
+function pathError(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function ensureDirectoryTreeNoSymlinks(root: string, candidate: string): string {
+  const canonicalRoot = fs.realpathSync(root);
+  const absoluteCandidate = path.resolve(candidate);
+  const relative = path.relative(canonicalRoot, absoluteCandidate);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`trusted verification artifact directory escapes source repository: ${candidate}`);
+  }
+
+  let current = canonicalRoot;
+  for (const component of relative.split(path.sep)) {
+    current = path.join(current, component);
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`trusted verification artifact path contains a symbolic link: ${current}`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`trusted verification artifact path component is not a directory: ${current}`);
+      }
+    } catch (error) {
+      if (!pathError(error, "ENOENT")) throw error;
+      try {
+        fs.mkdirSync(current, { mode: 0o700 });
+      } catch (mkdirError) {
+        if (!pathError(mkdirError, "EEXIST")) throw mkdirError;
+      }
+      const created = fs.lstatSync(current);
+      if (created.isSymbolicLink() || !created.isDirectory()) {
+        throw new Error(`trusted verification artifact path was replaced during creation: ${current}`);
+      }
+    }
+  }
+
+  const canonicalCandidate = fs.realpathSync(absoluteCandidate);
+  if (canonicalCandidate !== absoluteCandidate) {
+    throw new Error(`trusted verification artifact directory is not canonical: ${candidate}`);
+  }
+  return canonicalCandidate;
+}
+
+function trustedArtifactDirectory(
+  sourceRoot: string,
+  state: IterativeGoalState,
+  stateManager: StateManagerAPI,
+): string {
+  const runDir = path.resolve(stateManager.getRunDir());
+  return ensureDirectoryTreeNoSymlinks(
+    sourceRoot,
+    path.join(runDir, "cycles", String(state.cycle), "validate"),
+  );
+}
+
+function assertPrivateDirectory(directory: string): void {
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`trusted verification private directory is not a real directory: ${directory}`);
+  }
+  fs.chmodSync(directory, 0o700);
+  if ((fs.statSync(directory).mode & 0o077) !== 0) {
+    throw new Error(`trusted verification private directory permissions are too broad: ${directory}`);
+  }
+}
+
+function openExclusiveNoFollow(filePath: string): number {
+  return fs.openSync(
+    filePath,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+}
+
+function writeExclusiveNoFollow(filePath: string, bytes: string | Buffer): void {
+  const descriptor = openExclusiveNoFollow(filePath);
+  let completed = false;
+  try {
+    fs.writeFileSync(descriptor, bytes);
+    fs.fsyncSync(descriptor);
+    completed = true;
+  } finally {
+    fs.closeSync(descriptor);
+    if (!completed) {
+      try { fs.unlinkSync(filePath); } catch { /* preserve the original write error */ }
+    }
+  }
+}
+
+function invalidateFixedReceipt(receiptPath: string): void {
+  try {
+    const stat = fs.lstatSync(receiptPath);
+    if (stat.isDirectory()) {
+      throw new Error(`trusted verification receipt path is a directory: ${receiptPath}`);
+    }
+    // unlink removes a symlink itself; it never follows the link target.
+    fs.unlinkSync(receiptPath);
+  } catch (error) {
+    if (!pathError(error, "ENOENT")) throw error;
+  }
+}
+
+function atomicallyReplaceReceipt(receiptPath: string, bytes: string): void {
+  const directory = path.dirname(receiptPath);
+  const temporaryPath = path.join(directory, `.trusted-receipt-${crypto.randomBytes(16).toString("hex")}.tmp`);
+  writeExclusiveNoFollow(temporaryPath, bytes);
+  try {
+    try {
+      const existing = fs.lstatSync(receiptPath);
+      if (existing.isDirectory()) throw new Error(`trusted verification receipt path is a directory: ${receiptPath}`);
+    } catch (error) {
+      if (!pathError(error, "ENOENT")) throw error;
+    }
+    // POSIX rename replaces a symlink rather than following it, so publication
+    // is both atomic and safe if a stale leaf is raced into place.
+    fs.renameSync(temporaryPath, receiptPath);
+  } finally {
+    try { fs.unlinkSync(temporaryPath); } catch (error) {
+      if (!pathError(error, "ENOENT")) throw error;
+    }
+  }
+}
+
+function createPrivateVerificationAttempt(runId: string, cycle: number): {
+  root: string;
+  validationRoot: string;
+  cacheRoot: string;
+} {
+  const temporaryRoot = fs.realpathSync(os.tmpdir());
+  const runToken = sha256(runId).slice(0, 16);
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(temporaryRoot, `pi-ig-verify-${runToken}-c${cycle}-`)));
+  assertPrivateDirectory(root);
+  const validationRoot = path.join(root, "checkout");
+  const cacheRoot = path.join(root, "npm-cache");
+  fs.mkdirSync(validationRoot, { mode: 0o700 });
+  fs.mkdirSync(cacheRoot, { mode: 0o700 });
+  assertPrivateDirectory(validationRoot);
+  assertPrivateDirectory(cacheRoot);
+  return { root, validationRoot, cacheRoot };
 }
 
 function writeProcessResult(params: {
@@ -635,7 +778,7 @@ function writeProcessResult(params: {
     "STDERR:",
     (params.outcome.stderr ?? params.outcome.error?.message ?? "").slice(0, 2_000_000),
   ].join("\n");
-  fs.writeFileSync(params.artifact, artifactBytes, { mode: 0o600 });
+  writeExclusiveNoFollow(params.artifact, artifactBytes);
   return {
     id: params.id,
     name: params.name,
@@ -694,14 +837,11 @@ export function runTrustedVerification(params: {
 
   const startedAt = new Date().toISOString();
   const sourceSha = git(sourceRoot, ["rev-parse", "HEAD"]);
-  const artifactDir = params.stateManager.getPhaseDir(params.state.cycle, "validate");
-  fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+  const artifactDir = trustedArtifactDirectory(sourceRoot, params.state, params.stateManager);
   const receiptPath = path.join(artifactDir, "trusted-verification-receipt.json");
   // A new verifier attempt supersedes any older receipt for this cycle. If
   // this attempt crashes before signing, the prior PASS cannot survive it.
-  try { fs.unlinkSync(receiptPath); } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
+  invalidateFixedReceipt(receiptPath);
   const sandboxSelection = selectTrustedVerificationSandbox();
   if (!sandboxSelection) {
     throw new Error("trusted verification requires an enforceable OS sandbox (macOS sandbox-exec or Linux bubblewrap); no backend passed the capability probe");
@@ -710,12 +850,14 @@ export function runTrustedVerification(params: {
   if (!sourceTrackedTreeCleanBefore) {
     throw new Error("trusted verification requires a clean tracked source tree at current HEAD");
   }
-  const worktreeParent = path.join(sourceRoot, ".pi", "iterative-goal", "managed", "verification-worktrees");
-  fs.mkdirSync(worktreeParent, { recursive: true, mode: 0o700 });
-  const validationRoot = fs.mkdtempSync(path.join(worktreeParent, `c${params.state.cycle}-`));
+  const privateAttempt = createPrivateVerificationAttempt(params.state.runId, params.state.cycle);
+  const validationRoot = privateAttempt.validationRoot;
+  const cacheRoot = privateAttempt.cacheRoot;
+  const artifactAttemptDir = fs.mkdtempSync(path.join(artifactDir, "trusted-attempt-"));
+  assertPrivateDirectory(artifactAttemptDir);
   const results: TrustedVerificationResult[] = [];
-  const resultsPath = path.join(artifactDir, "trusted-verification-results.jsonl");
-  fs.writeFileSync(resultsPath, "", { mode: 0o600 });
+  const resultsPath = path.join(artifactAttemptDir, "trusted-verification-results.jsonl");
+  const resultsDescriptor = openExclusiveNoFollow(resultsPath);
   let validationSha = "";
   let validationShaAfter = "";
   let validationTrackedTreeClean = false;
@@ -724,7 +866,7 @@ export function runTrustedVerification(params: {
   try {
     createDetachedValidationCheckout(sourceRoot, validationRoot, sourceSha);
     validationSha = git(validationRoot, ["rev-parse", "HEAD"]);
-    const env = validationEnvironment(sourceRoot, validationRoot);
+    const env = validationEnvironment(validationRoot, cacheRoot);
 
     const hasNpmLock = fs.existsSync(path.join(validationRoot, "package-lock.json"))
       || fs.existsSync(path.join(validationRoot, "npm-shrinkwrap.json"));
@@ -740,18 +882,18 @@ export function runTrustedVerification(params: {
         argv,
         cwd: validationRoot,
         validationRoot,
-        cacheRoot: env.NPM_CONFIG_CACHE!,
+        cacheRoot,
         env,
         timeout: 600_000,
       });
       dependencyBootstrap = writeProcessResult({
         id: "dependency-bootstrap",
-        name: "Lockfile dependency bootstrap (lifecycle scripts disabled)",
+        name: "Lockfile dependency bootstrap (fresh offline cache; lifecycle scripts disabled)",
         executable,
         argv,
         configuredCwd: ".",
         validationSha,
-        artifact: path.join(artifactDir, "trusted-dependency-bootstrap.txt"),
+        artifact: path.join(artifactAttemptDir, "trusted-dependency-bootstrap.txt"),
         startedAt: bootstrapStartedAt,
         outcome,
       });
@@ -759,7 +901,7 @@ export function runTrustedVerification(params: {
 
     for (const check of config.checks) {
       const command = check.command;
-      const artifact = path.join(artifactDir, `trusted-${check.id}.txt`);
+      const artifact = path.join(artifactAttemptDir, `trusted-${check.id}.txt`);
       const checkStartedAt = new Date().toISOString();
       const checkCwd = resolveCheckCwd(validationRoot, command?.cwd);
       assertCheckExecutableScoped(validationRoot, checkCwd, command!.executable);
@@ -771,7 +913,7 @@ export function runTrustedVerification(params: {
         argv: command.argv,
         cwd: checkCwd,
         validationRoot,
-        cacheRoot: env.NPM_CONFIG_CACHE!,
+        cacheRoot,
         env,
         timeout: command.timeoutMs ?? 120_000,
       }) : null;
@@ -801,7 +943,7 @@ export function runTrustedVerification(params: {
         "STDERR:",
         (outcome?.stderr ?? outcome?.error?.message ?? "").slice(0, 2_000_000),
       ].join("\n");
-      fs.writeFileSync(artifact, artifactBytes, { mode: 0o600 });
+      writeExclusiveNoFollow(artifact, artifactBytes);
       const result: TrustedVerificationResult = {
         id: check.id,
         name: check.name,
@@ -814,13 +956,18 @@ export function runTrustedVerification(params: {
         timedOut,
         signal: outcome?.signal ?? null,
       };
-      fs.appendFileSync(resultsPath, `${JSON.stringify(result)}\n`);
+      fs.writeSync(resultsDescriptor, `${JSON.stringify(result)}\n`);
+      fs.fsyncSync(resultsDescriptor);
       results.push(result);
     }
     validationShaAfter = git(validationRoot, ["rev-parse", "HEAD"]);
     validationTrackedTreeClean = trackedTreeClean(validationRoot);
   } finally {
-    removeValidationCheckout(validationRoot);
+    try {
+      fs.closeSync(resultsDescriptor);
+    } finally {
+      removeValidationCheckout(privateAttempt.root);
+    }
   }
 
   const sourceShaAfter = git(sourceRoot, ["rev-parse", "HEAD"]);
@@ -854,7 +1001,7 @@ export function runTrustedVerification(params: {
       && allTreesClean,
   };
   const receiptBytes = JSON.stringify(receipt, null, 2);
-  fs.writeFileSync(receiptPath, receiptBytes, { mode: 0o600 });
+  atomicallyReplaceReceipt(receiptPath, receiptBytes);
   const attestation = attestAction({
     runId: params.state.runId,
     cycle: params.state.cycle,
@@ -893,11 +1040,37 @@ function isWithin(root: string, candidate: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+function readFileNoFollowWithin(root: string, candidate: string): Buffer {
+  const canonicalRoot = fs.realpathSync(root);
+  const absoluteCandidate = path.resolve(candidate);
+  if (!isWithin(canonicalRoot, absoluteCandidate)) {
+    throw new Error(`trusted verification artifact escapes its phase directory: ${candidate}`);
+  }
+  let current = canonicalRoot;
+  for (const component of path.relative(canonicalRoot, absoluteCandidate).split(path.sep)) {
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`trusted verification artifact path contains a symbolic link: ${current}`);
+    }
+  }
+  const descriptor = fs.openSync(absoluteCandidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error(`trusted verification artifact is not a regular file: ${candidate}`);
+    }
+    return fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoalState, stateManager: StateManagerAPI): TrustedVerificationReceiptV1 | null {
-  const receiptPath = stateManager.getArtifactPath(state.cycle, "validate", "trusted-verification-receipt.json");
   try {
     const repositoryRoot = resolveRepositoryRoot(cwd);
-    const receiptBytes = fs.readFileSync(receiptPath, "utf8");
+    const artifactRoot = trustedArtifactDirectory(repositoryRoot, state, stateManager);
+    const receiptPath = path.join(artifactRoot, "trusted-verification-receipt.json");
+    const receiptBytes = readFileNoFollowWithin(artifactRoot, receiptPath).toString("utf8");
     const receipt = JSON.parse(receiptBytes) as TrustedVerificationReceiptV1;
     if (receipt.schema !== TRUSTED_VERIFICATION_SCHEMA || receipt.runId !== state.runId || receipt.cycle !== state.cycle) return null;
     if (!receipt.sandbox
@@ -927,10 +1100,7 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
       || fs.existsSync(path.join(repositoryRoot, "npm-shrinkwrap.json"));
     if (expectsDependencyBootstrap !== Boolean(receipt.dependencyBootstrap)) return null;
     if (receipt.dependencyBootstrap) {
-      const bootstrapArtifact = fs.realpathSync(receipt.dependencyBootstrap.artifact);
-      const bootstrapArtifactRoot = fs.realpathSync(stateManager.getPhaseDir(state.cycle, "validate"));
-      if (!isWithin(bootstrapArtifactRoot, bootstrapArtifact)) return null;
-      if (sha256(fs.readFileSync(bootstrapArtifact)) !== receipt.dependencyBootstrap.artifactSha256) return null;
+      if (sha256(readFileNoFollowWithin(artifactRoot, receipt.dependencyBootstrap.artifact)) !== receipt.dependencyBootstrap.artifactSha256) return null;
     }
     const bootstrapPassed = !receipt.dependencyBootstrap || receipt.dependencyBootstrap.status === "PASS";
     const recomputedOk = bootstrapPassed && !requiredFailed
@@ -940,12 +1110,9 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
       && receipt.trackedTreeClean;
     if (receipt.ok !== recomputedOk || !receipt.ok) return null;
     if (sha256(receipt.results.map((result) => JSON.stringify(result)).join("\n")) !== receipt.resultsHash) return null;
-    const artifactRoot = fs.realpathSync(stateManager.getPhaseDir(state.cycle, "validate"));
     for (const result of receipt.results) {
       if (typeof result.artifact !== "string" || typeof result.artifactSha256 !== "string") return null;
-      const artifact = fs.realpathSync(result.artifact);
-      if (!isWithin(artifactRoot, artifact)) return null;
-      if (sha256(fs.readFileSync(artifact)) !== result.artifactSha256) return null;
+      if (sha256(readFileNoFollowWithin(artifactRoot, result.artifact)) !== result.artifactSha256) return null;
     }
     const absoluteReceiptPath = path.resolve(receiptPath);
     const attestation = state.attestations.find((item) => path.resolve(item.path) === absoluteReceiptPath && item.sha256 === sha256(receiptBytes));

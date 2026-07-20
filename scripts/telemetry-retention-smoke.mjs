@@ -177,8 +177,7 @@ try {
   runtimeEvents.get("turn_start")({ turnIndex: 0, timestamp: Date.now() - 50 }, runtimeCtx);
   runtimeEvents.get("before_provider_request")({ payload: { messages: [{ content: requestOnlySecret }] } }, runtimeCtx);
   runtimeEvents.get("message_update")({}, runtimeCtx);
-  runtimeEvents.get("turn_end")({
-    message: {
+  const coordinatorMessage = {
       role: "assistant",
       provider: "zai",
       model: "glm-5.2",
@@ -187,7 +186,11 @@ try {
       usage: { input: 21, output: 7, cacheRead: 2, cacheWrite: 0, totalTokens: 30, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "toolUse",
       timestamp: Date.now(),
-    },
+  };
+  runtimeEvents.get("message_end")({ message: coordinatorMessage }, runtimeCtx);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, runtimeCtx), undefined);
+  runtimeEvents.get("turn_end")({
+    message: coordinatorMessage,
     toolResults: [{ isError: false }],
   }, runtimeCtx);
   const coordinatorTelemetry = telemetry.loadModelInvocations(root, "run-coordinator");
@@ -222,8 +225,7 @@ try {
   assert.equal(openRouterPayload.model, "moonshotai/kimi-k3", "request model is rewritten to the exact roster id");
   assert.equal(openRouterPayload.provider.allow_fallbacks, false, "OpenRouter provider fallback is disabled in Pi payloads");
   let mismatchAbortCount = 0;
-  runtimeEvents.get("turn_end")({
-    message: {
+  const mismatchMessage = {
       role: "assistant",
       provider: "openrouter",
       model: "moonshotai/kimi-k3",
@@ -231,14 +233,37 @@ try {
       content: [{ type: "text", text: "mismatch" }],
       usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
       stopReason: "stop",
-    },
+  };
+  const mismatchCtx = { ...openRouterCtx, abort() { mismatchAbortCount += 1; } };
+  runtimeEvents.get("message_end")({ message: mismatchMessage }, mismatchCtx);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, mismatchCtx).block, true);
+  runtimeEvents.get("turn_end")({
+    message: mismatchMessage,
     toolResults: [],
-  }, { ...openRouterCtx, abort() { mismatchAbortCount += 1; } });
-  assert.equal(mismatchAbortCount, 1, "response-model substitution fails closed");
+  }, mismatchCtx);
+  assert.equal(mismatchAbortCount, 1, "response-model substitution fails before tool execution");
   const mismatchTelemetry = telemetry.loadModelInvocations(root, "run-coordinator").at(-1);
   assert.equal(mismatchTelemetry.termination, "provider_error");
   assert.equal(mismatchTelemetry.gateStatus, "FAIL");
   assert.equal(mismatchTelemetry.errorCode, "response_model_mismatch");
+
+  runtimeEvents.get("turn_start")({ turnIndex: 2, timestamp: Date.now() }, openRouterCtx);
+  runtimeEvents.get("before_provider_request")({ payload: { messages: [] } }, openRouterCtx);
+  let missingIdentityAbortCount = 0;
+  const missingIdentityMessage = {
+    role: "assistant",
+    provider: "openrouter",
+    model: "moonshotai/kimi-k3",
+    content: [{ type: "toolCall", id: "missing-id", name: "read", arguments: {} }],
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    stopReason: "toolUse",
+  };
+  const missingIdentityCtx = { ...openRouterCtx, abort() { missingIdentityAbortCount += 1; } };
+  runtimeEvents.get("message_end")({ message: missingIdentityMessage }, missingIdentityCtx);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, missingIdentityCtx).block, true);
+  runtimeEvents.get("turn_end")({ message: missingIdentityMessage, toolResults: [] }, missingIdentityCtx);
+  assert.equal(missingIdentityAbortCount, 1, "missing response identity fails before tool execution");
+  assert.equal(telemetry.loadModelInvocations(root, "run-coordinator").at(-1).errorCode, "response_model_identity_missing");
 
   // The real dispatch boundary resolves the exact roster route before its
   // ledger start and writes metadata-only terminal telemetry. Unique prompt
@@ -343,6 +368,25 @@ try {
   );
   assert(!dispatchTelemetryBytes.includes(uniquePrompt), "prompt content is absent from telemetry");
   assert(!dispatchTelemetryBytes.includes(uniqueOutput), "result content is absent from telemetry");
+
+  const missingWorkerIdentityTask = pool.createAgentTask("Scout", "missing response identity", {
+    id: "dispatch-missing-identity",
+  });
+  const missingWorkerIdentityPool = {
+    ...successPool,
+    async submit() {
+      return { ...successResult, taskId: missingWorkerIdentityTask.id, responseModel: null };
+    },
+  };
+  const missingWorkerIdentity = await runPool.dispatchAgentTask(
+    { ...dispatchDeps, pool: missingWorkerIdentityPool },
+    missingWorkerIdentityTask,
+  );
+  assert.equal(missingWorkerIdentity.ok, false, "controller requires a positive worker response identity");
+  assert.equal(
+    telemetry.loadModelInvocations(root, "run-dispatch").find((item) => item.taskId === missingWorkerIdentityTask.id)?.errorCode,
+    "response_model_identity_missing",
+  );
 
   // Cancellation before pool admission is represented as a zero-token
   // terminal record and never calls submit.

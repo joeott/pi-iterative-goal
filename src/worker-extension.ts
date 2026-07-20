@@ -19,6 +19,7 @@ import {
   type ModelProfileId,
   type ResolvedModelRoute,
 } from "./domain/model-roster.js";
+import { defaultDlpState, dlpScrubText } from "./cyber-runtime.js";
 
 export const WORKER_ENV = Object.freeze({
   root: "PI_ITERATIVE_GOAL_WORKER_ROOT",
@@ -52,7 +53,10 @@ const MAX_SCAN_FILES = 5_000;
 const MAX_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_RESULTS = 500;
 const SKIPPED_SCAN_DIRS = new Set([".git", ".pi", "dist", "node_modules"]);
-const BLOCKED_READ_BASENAMES = new Set([".npmrc", ".netrc", "auth.json"]);
+const BLOCKED_READ_BASENAMES = new Set([
+  ".npmrc", ".netrc", ".pypirc", ".git-credentials", "auth.json",
+  "credentials.json", "service-account.json", "id_rsa", "id_ed25519",
+]);
 
 const PROVIDER_RUNTIME: Readonly<Record<string, {
   name: string;
@@ -246,6 +250,7 @@ export function registerWorkerExtension(
   controls: WorkerExtensionControls = {},
 ): WorkerConfig {
   const config = loadWorkerConfig(env);
+  let responseIdentityValidated = false;
   const failProcess = controls.failProcess ?? ((reason: string) => {
     process.exitCode = 78;
     console.error(`pi_worker_policy_failure:${reason}`);
@@ -273,15 +278,30 @@ export function registerWorkerExtension(
     return payload;
   });
 
-  pi.on("turn_end", (event, ctx) => {
+  pi.on("turn_start", () => {
+    responseIdentityValidated = false;
+  });
+
+  // Pi emits assistant message_end before dispatching any tool calls. Validate
+  // the upstream identity at that boundary so a substituted/missing model can
+  // never exercise even the scoped worker tools.
+  pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant") return;
-    if (
+    responseIdentityValidated = (
       event.message.model !== config.route.model
-      || !workerResponseMatchesRoute(config.route, event.message.responseModel)
-    ) {
-      failClosed(ctx, "response_model_identity_mismatch");
+      ? false
+      : workerResponseMatchesRoute(config.route, event.message.responseModel)
+    );
+    if (!responseIdentityValidated) {
+      failClosed(ctx, event.message.responseModel
+        ? "response_model_identity_mismatch"
+        : "response_model_identity_missing");
     }
   });
+
+  pi.on("tool_call", () => responseIdentityValidated
+    ? undefined
+    : { block: true, reason: "worker response model identity was not positively validated" });
 
   registerReadTools(pi, config);
   if (config.mode === "isolated_worktree") registerWriteTools(pi, config);
@@ -305,7 +325,7 @@ function registerReadTools(pi: ExtensionAPI, config: WorkerConfig): void {
       const start = Math.max(0, Math.floor(params.offset ?? 1) - 1);
       const end = Math.min(lines.length, start + Math.min(Math.floor(params.limit ?? MAX_READ_LINES), MAX_READ_LINES));
       const limited = truncateUtf8(lines.slice(start, end).join("\n"), MAX_READ_BYTES);
-      return toolResult(limited.text, {
+      return toolResult(scrubWorkerText(limited.text), {
         path: normalized,
         bytes: limited.bytes,
         truncated: limited.truncated || end < lines.length,
@@ -345,7 +365,7 @@ function registerReadTools(pi: ExtensionAPI, config: WorkerConfig): void {
         }
       }
       const limited = truncateUtf8(matches.join("\n"), MAX_READ_BYTES);
-      return toolResult(limited.text, {
+      return toolResult(scrubWorkerText(limited.text), {
         path: startPath,
         matches: matches.length,
         scannedFiles: files.length,
@@ -487,7 +507,13 @@ function isSensitiveReadPath(relative: string): boolean {
   if (normalized === ".pi/iterative-goal/managed" || normalized.startsWith(".pi/iterative-goal/managed/")) return true;
   if (normalized === ".pi/iterative-goal/runtime" || normalized.startsWith(".pi/iterative-goal/runtime/")) return true;
   if (BLOCKED_READ_BASENAMES.has(base)) return true;
+  if (/\.(?:pem|key|p12|pfx)$/i.test(base)) return true;
+  if (/(?:^|[-_.])(?:private[-_.]?key|service[-_.]?account)(?:[-_.]|$)/i.test(base)) return true;
   return /^\.env(?:\..+)?$/.test(base) && base !== ".env.example";
+}
+
+function scrubWorkerText(text: string): string {
+  return dlpScrubText(text, defaultDlpState()).text;
 }
 
 function assertWritablePath(config: WorkerConfig, raw: string): string {

@@ -253,8 +253,8 @@ function outputTokensPerSecond(result: AgentResult | null): number | null {
     : null;
 }
 
-function responseModelMatches(route: ResolvedModelRoute, responseModel: string | null | undefined): boolean | null {
-  if (!responseModel) return null;
+function responseModelMatches(route: ResolvedModelRoute, responseModel: string | null | undefined): boolean {
+  if (!responseModel) return false;
   if (responseModel === route.model) return true;
   return route.profileId === "fireworks_glm_5_2_fast"
     && responseModel === "accounts/fireworks/models/glm-5p2";
@@ -449,7 +449,8 @@ export async function dispatchAgentTask(
   const result = brokered.output;
   const cancelled = pool.wasCancelled?.(agentTask.id) === true;
   const responseIdentity = responseModelMatches(route, result.responseModel);
-  const responseMismatch = responseIdentity === false;
+  const responseMismatch = !responseIdentity;
+  const responseIdentityError = result.responseModel ? "response_model_mismatch" : "response_model_identity_missing";
   const status = cancelled ? "cancelled" : result.ok && !responseMismatch ? "completed" : "failed";
   const termination: ModelTermination = result.budgetExhausted
     ? "budget_exhausted"
@@ -477,7 +478,7 @@ export async function dispatchAgentTask(
         : cancelled
         ? "cancelled_during_execution"
         : responseMismatch
-          ? "response_model_mismatch"
+          ? responseIdentityError
         : result.degraded
           ? "structured_output_schema_error"
           : result.ok
@@ -502,7 +503,7 @@ export async function dispatchAgentTask(
     status,
     usage: result.usage,
     error: responseMismatch
-      ? `response_model_mismatch:${result.responseModel}`
+      ? `${responseIdentityError}:${result.responseModel ?? "missing"}`
       : result.ok ? null : result.stderr || `exit code ${result.exitCode ?? "unknown"}`,
   });
   return { task: agentTask, ok: status === "completed" && result.ok, status, result, policyDecision: brokered.decision };

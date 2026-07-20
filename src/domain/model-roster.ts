@@ -33,6 +33,18 @@ export const MODEL_PROFILE_ENDPOINTS: Readonly<Record<ModelProfileId, {
   openrouter_claude_fable_5: { provider: "openrouter", model: "anthropic/claude-fable-5", familyId: "anthropic/claude-fable-5" },
 });
 
+/** Credential variable names are capability-bearing and therefore part of
+ * the immutable route contract, not operator-editable roster metadata. */
+export const MODEL_PROVIDER_CREDENTIALS: Readonly<Record<string, {
+  readonly primaryEnv: string;
+  readonly environment: readonly string[];
+}>> = deepFreeze({
+  zai: { primaryEnv: "ZAI_API_KEY", environment: ["ZAI_API_KEY", "Z_AI_API_KEY"] },
+  fireworks: { primaryEnv: "FIREWORKS_API_KEY", environment: ["FIREWORKS_API_KEY"] },
+  openrouter: { primaryEnv: "OPENROUTER_API_KEY", environment: ["OPENROUTER_API_KEY"] },
+  cerebras: { primaryEnv: "CEREBRAS_API_KEY", environment: ["CEREBRAS_API_KEY"] },
+});
+
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ModelRouteName =
   | "coordinator"
@@ -186,6 +198,12 @@ function validateRoster(value: unknown): asserts value is ModelRosterFile {
       throw new Error(`${id}.credential contains an invalid environment variable name`);
     }
     if (!environment.includes(primaryEnv)) throw new Error(`${id}.credential.environment must include primaryEnv`);
+    const expectedCredential = MODEL_PROVIDER_CREDENTIALS[provider];
+    if (!expectedCredential
+      || primaryEnv !== expectedCredential.primaryEnv
+      || JSON.stringify(environment) !== JSON.stringify(expectedCredential.environment)) {
+      throw new Error(`${id}.credential must use the exact pinned ${provider} environment variables`);
+    }
 
     assertRecord(raw.capabilities, `${id}.capabilities`);
     for (const name of ["tools", "structuredOutput", "images", "reasoning"] as const) {

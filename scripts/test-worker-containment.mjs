@@ -44,7 +44,10 @@ try {
   fs.mkdirSync(path.join(scratch, "src"));
   fs.writeFileSync(path.join(scratch, "src", "allowed.txt"), "alpha\nneedle\n");
   fs.writeFileSync(path.join(scratch, "src", "other.txt"), "other\n");
+  fs.writeFileSync(path.join(scratch, "src", "credential.txt"), `token ghp_${"A".repeat(40)}\n`);
   fs.writeFileSync(path.join(scratch, ".env"), "CEREBRAS_API_KEY=must-not-read\n");
+  fs.writeFileSync(path.join(scratch, ".git-credentials"), "https://user:secret@example.invalid\n");
+  fs.writeFileSync(path.join(scratch, "private.pem"), "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n");
   fs.writeFileSync(path.join(outside, "secret.txt"), "outside secret\n");
   fs.symlinkSync(path.join(outside, "secret.txt"), path.join(scratch, "src", "escape-link"));
   fs.symlinkSync(outside, path.join(scratch, "src", "escape-dir"));
@@ -72,8 +75,19 @@ try {
 
   const read = await fake.tools.get("read").execute("read", { path: "src/allowed.txt" }, signal, undefined, ctx);
   assert.match(read.content[0].text, /needle/);
+  const scrubbed = await fake.tools.get("read").execute("read-secret-pattern", { path: "src/credential.txt" }, signal, undefined, ctx);
+  assert.doesNotMatch(scrubbed.content[0].text, /ghp_/);
+  assert.match(scrubbed.content[0].text, /REDACTED_SECRET_REF/);
   await assert.rejects(
     fake.tools.get("read").execute("read-env", { path: ".env" }, signal, undefined, ctx),
+    /Sensitive control\/credential path/,
+  );
+  await assert.rejects(
+    fake.tools.get("read").execute("read-git-credential", { path: ".git-credentials" }, signal, undefined, ctx),
+    /Sensitive control\/credential path/,
+  );
+  await assert.rejects(
+    fake.tools.get("read").execute("read-private-key", { path: "private.pem" }, signal, undefined, ctx),
     /Sensitive control\/credential path/,
   );
   await assert.rejects(
@@ -125,11 +139,27 @@ try {
   const exactPayload = fake.hooks.get("before_provider_request")({ payload: { model: "substitute", messages: [] } }, providerCtx);
   assert.equal(exactPayload.model, route.model);
   assert.equal(aborted, false);
-  fake.hooks.get("turn_end")({
+  fake.hooks.get("turn_start")({ turnIndex: 0, timestamp: Date.now() }, providerCtx);
+  fake.hooks.get("message_end")({
     message: { role: "assistant", model: route.model, responseModel: "wrong-model" },
   }, providerCtx);
   assert.equal(aborted, true, "response substitution aborts the worker");
   assert.deepEqual(failures, ["response_model_identity_mismatch"]);
+  assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx).block, true);
+
+  aborted = false;
+  fake.hooks.get("turn_start")({ turnIndex: 1, timestamp: Date.now() }, providerCtx);
+  fake.hooks.get("message_end")({ message: { role: "assistant", model: route.model } }, providerCtx);
+  assert.equal(aborted, true, "missing response identity aborts before worker tool dispatch");
+  assert.deepEqual(failures, ["response_model_identity_mismatch", "response_model_identity_missing"]);
+
+  aborted = false;
+  fake.hooks.get("turn_start")({ turnIndex: 2, timestamp: Date.now() }, providerCtx);
+  fake.hooks.get("message_end")({
+    message: { role: "assistant", model: route.model, responseModel: route.model },
+  }, providerCtx);
+  assert.equal(aborted, false);
+  assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx), undefined);
 
   const openRouter = roster.requireModelRoute("openrouter_kimi_k3");
   const openRouterPayload = worker.exactWorkerRequestPayload({ model: "other", provider: { order: ["x"] } }, openRouter);
