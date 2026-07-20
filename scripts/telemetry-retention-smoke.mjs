@@ -70,8 +70,20 @@ try {
 
   const concurrentRoot = path.join(root, "concurrent-repository");
   const workerScript = path.resolve("scripts/logging-concurrency-worker.mjs");
-  await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerScript, concurrentRoot, "concurrent", "100"], {
+  const concurrentWorkers = 12;
+  const eventsPerWorker = 60;
+  // Give every child time to load before a shared cold-start deadline. This
+  // deliberately exercises both legitimate directory-creation contention and
+  // the lock release-versus-lstat window on every smoke run.
+  const concurrentStartAt = Date.now() + 1_500;
+  await Promise.all(Array.from({ length: concurrentWorkers }, () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      workerScript,
+      concurrentRoot,
+      "concurrent",
+      String(eventsPerWorker),
+      String(concurrentStartAt),
+    ], {
       cwd: path.resolve("."),
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -82,12 +94,13 @@ try {
   })));
   const concurrentPath = path.join(concurrentRoot, ".pi", "iterative-goal", "managed", "logs", "concurrent.jsonl");
   const concurrentRows = fs.readFileSync(concurrentPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
-  assert.equal(concurrentRows.length, 400);
+  const expectedConcurrentEvents = concurrentWorkers * eventsPerWorker;
+  assert.equal(concurrentRows.length, expectedConcurrentEvents);
   for (let index = 0; index < concurrentRows.length; index += 1) {
     assert.equal(concurrentRows[index].sequence, index + 1, "multiprocess sequence is gapless and unique");
     assert.equal(concurrentRows[index].previousHash, index === 0 ? null : concurrentRows[index - 1].hash, "multiprocess hash link is intact");
   }
-  assert.equal(JSON.parse(fs.readFileSync(`${concurrentPath}.head.json`, "utf8")).sequence, 400);
+  assert.equal(JSON.parse(fs.readFileSync(`${concurrentPath}.head.json`, "utf8")).sequence, expectedConcurrentEvents);
 
   const baseInvocation = {
     invocationId: "invocation",
@@ -260,12 +273,12 @@ try {
   };
   const nativeShapeCtx = { ...openRouterCtx, abort() { nativeShapeAbortCount += 1; } };
   runtimeEvents.get("message_end")({ message: nativeShapeMessage }, nativeShapeCtx);
-  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, nativeShapeCtx), undefined);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, nativeShapeCtx).block, true);
   runtimeEvents.get("turn_end")({ message: nativeShapeMessage, toolResults: [] }, nativeShapeCtx);
-  assert.equal(nativeShapeAbortCount, 0, "Pi's native provider/model identity works without optional responseModel");
+  assert.equal(nativeShapeAbortCount, 1, "missing upstream model identity fails before coordinator tool execution");
   const nativeShapeTelemetry = telemetry.loadModelInvocations(root, "run-coordinator").at(-1);
-  assert.equal(nativeShapeTelemetry.responseModel, "moonshotai/kimi-k3");
-  assert.equal(nativeShapeTelemetry.errorCode, null);
+  assert.equal(nativeShapeTelemetry.responseModel, null);
+  assert.equal(nativeShapeTelemetry.errorCode, "response_model_identity_missing");
 
   runtimeEvents.get("turn_start")({ turnIndex: 3, timestamp: Date.now() }, openRouterCtx);
   runtimeEvents.get("before_provider_request")({ payload: { messages: [] } }, openRouterCtx);
@@ -485,13 +498,29 @@ try {
   const expiredAt = new Date(Date.now() - retention.TELEMETRY_TTL_MS - 60_000);
   fs.utimesSync(expiredTelemetry, expiredAt, expiredAt);
   const future = Date.now() + retention.SUCCESS_RAW_TTL_MS + 1;
+  const orphanRaw = path.join(managed, "runs", "crashed-run", "raw", "rpc-events.jsonl");
+  fs.mkdirSync(path.dirname(orphanRaw), { recursive: true });
+  fs.writeFileSync(orphanRaw, "orphaned active-name bytes\n");
+  fs.utimesSync(orphanRaw, expiredAt, expiredAt);
+  const liveRaw = path.join(managed, "runs", "live-run", "raw", "rpc-events.jsonl");
+  const liveMarker = path.join(managed, "runs", "live-run", "ACTIVE");
+  fs.mkdirSync(path.dirname(liveRaw), { recursive: true });
+  fs.writeFileSync(liveRaw, "live active-name bytes\n");
+  fs.writeFileSync(liveMarker, "owned\n");
+  fs.utimesSync(liveRaw, expiredAt, expiredAt);
+  fs.utimesSync(liveMarker, new Date(future), new Date(future));
   const retentionReport = retention.runManagedLogRetention(root, future);
   assert.equal(fs.existsSync(stale), false, "owned expired raw log is purged");
   assert.equal(fs.existsSync(protectedEvidence), true, "evidence is retained");
   assert.equal(fs.existsSync(outside), true, "symlink target outside managed root is untouched");
   assert.equal(fs.existsSync(expiredTelemetry), false, "inactive run telemetry expires even when it never reached rotation size");
   assert.equal(fs.existsSync(`${expiredTelemetry}.head.json`), false, "expired telemetry chain head is removed with its bytes");
+  assert.equal(fs.existsSync(orphanRaw), false, "a crashed run's active-name raw JSONL cannot evade retention");
+  assert.equal(fs.existsSync(liveRaw), true, "a fresh owned ACTIVE marker protects a live run's raw JSONL");
   assert(retentionReport.bytesDeleted >= 5);
+  fs.unlinkSync(liveMarker);
+  retention.runManagedLogRetention(root, future + retention.RETENTION_INTERVAL_MS * 2 + 1);
+  assert.equal(fs.existsSync(liveRaw), false, "completed/stale runs re-enter raw TTL and cap accounting");
 
   const protectedPressure = path.join(managed, "evidence", "protected-pressure.bin");
   fs.writeFileSync(protectedPressure, "");

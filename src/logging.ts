@@ -263,8 +263,24 @@ function ensureManagedTarget(root: string, filePath: string): void {
   let cursor = root;
   for (const segment of parentRelative.split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, segment);
-    if (!fs.existsSync(cursor)) fs.mkdirSync(cursor, { mode: 0o700 });
-    const stat = fs.lstatSync(cursor);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(cursor);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      try {
+        fs.mkdirSync(cursor, { mode: 0o700 });
+      } catch (mkdirError) {
+        // Another writer can create this shared log directory after our
+        // lstat and before mkdir. EEXIST is ordinary contention; every other
+        // error remains fail-closed. The lstat below still rejects a symlink
+        // or non-directory installed by a competing/untrusted process.
+        if (!(mkdirError instanceof Error && "code" in mkdirError && mkdirError.code === "EEXIST")) {
+          throw mkdirError;
+        }
+      }
+      stat = fs.lstatSync(cursor);
+    }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new Error(`Managed log parent is not a real directory: ${cursor}`);
     }
@@ -275,8 +291,17 @@ function ensureManagedTarget(root: string, filePath: string): void {
     throw new Error(`Managed log parent resolves outside the owned root: ${parent}`);
   }
   for (const target of [filePath, `${filePath}.head.json`, `${filePath}.lock`]) {
-    if (!fs.existsSync(target)) continue;
-    const stat = fs.lstatSync(target);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(target);
+    } catch (error) {
+      // In particular, a healthy lock owner may release the lock between a
+      // prior observation and this lstat. Absence is valid for every target
+      // here because append/atomic-sidecar/lock creation all create their own
+      // regular file; any other lstat failure is a real safety failure.
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+      throw error;
+    }
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new Error(`Managed log target is not a real file: ${target}`);
     }

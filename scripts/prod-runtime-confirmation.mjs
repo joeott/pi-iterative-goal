@@ -40,8 +40,10 @@
  *     pin all model traffic to z.ai). The reviewer subagent is instructed to use
  *     model "zai/glm-5.2" for its subprocess as well.
  *
- * Bounds: max 2 goal cycles, wall-clock cap (default 18 min), model calls are
- * counted and reported (main-session turns + judge verdicts + subagent turns).
+ * Bounds: max 2 goal cycles, wall-clock cap (default 18 min), and a final
+ * aggregate ceiling of 60 model responses (main-session turns + judge verdicts
+ * + subagent turns). Crossing the ceiling fails the receipt; main-session
+ * turns are also stopped as soon as they alone consume the full allowance.
  * Writes: the disposable temp repo (removed afterwards) and this repo's .pi/
  * dir (evidence bundle). Never pushes, never creates a real PR, never touches
  * AWS, never edits pi settings.
@@ -54,31 +56,117 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  appendManagedLog,
+  ensureManagedRoot,
+  redactLogText,
+} from "../dist/logging.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const PI_BIN = path.join(repoRoot, "node_modules", ".bin", "pi");
 const EXT_PATH = path.join(repoRoot, "dist", "pi-iterative-goal.js");
-const EVIDENCE_ROOT = path.join(repoRoot, ".pi", "prod-runtime-confirmation");
 
 // ── CLI options ───────────────────────────────────────────────────────
-const opts = { maxMinutes: 18, maxCycles: 2, keepTemp: false, nudgeAfterMs: 7000 };
+const opts = {
+  maxMinutes: 18,
+  maxCycles: 2,
+  maxModelCalls: 60,
+  keepTemp: false,
+  nudgeAfterMs: 7000,
+};
 for (let i = 2; i < process.argv.length; i += 1) {
   if (process.argv[i] === "--max-minutes" && process.argv[i + 1]) { opts.maxMinutes = Number(process.argv[i + 1]); i += 1; }
   else if (process.argv[i] === "--max-cycles" && process.argv[i + 1]) { opts.maxCycles = Number(process.argv[i + 1]); i += 1; }
+  else if (process.argv[i] === "--max-model-calls" && process.argv[i + 1]) { opts.maxModelCalls = Number(process.argv[i + 1]); i += 1; }
   else if (process.argv[i] === "--keep-temp") opts.keepTemp = true;
+  else throw new Error(`unknown or incomplete option: ${process.argv[i]}`);
+}
+if (!Number.isFinite(opts.maxMinutes) || opts.maxMinutes <= 0 || opts.maxMinutes > 60) {
+  throw new Error("--max-minutes must be greater than 0 and at most 60");
+}
+if (!Number.isSafeInteger(opts.maxCycles) || opts.maxCycles < 1 || opts.maxCycles > 10) {
+  throw new Error("--max-cycles must be an integer from 1 through 10");
+}
+if (!Number.isSafeInteger(opts.maxModelCalls) || opts.maxModelCalls < 1 || opts.maxModelCalls > 240) {
+  throw new Error("--max-model-calls must be an integer from 1 through 240");
 }
 const DEADLINE = Date.now() + opts.maxMinutes * 60_000;
 
 // ── Small utilities ───────────────────────────────────────────────────
 const startedAt = new Date().toISOString();
-const evidenceDir = path.join(EVIDENCE_ROOT, `run-${startedAt.replace(/[:.]/g, "-")}`);
-fs.mkdirSync(evidenceDir, { recursive: true });
+const harnessRunId = `prod-runtime-${startedAt.replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}`;
+const managedRoot = ensureManagedRoot(repoRoot);
+const evidenceDir = path.join(managedRoot, "evidence", "prod-runtime-confirmation", harnessRunId);
+const rawDir = path.join(managedRoot, "runs", harnessRunId, "raw");
+fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+fs.mkdirSync(rawDir, { recursive: true, mode: 0o700 });
+const rawActiveMarker = path.join(path.dirname(rawDir), "ACTIVE");
+fs.writeFileSync(rawActiveMarker, `${process.pid}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+const rawLogPaths = {
+  script: path.join(rawDir, "script.jsonl"),
+  rpc: path.join(rawDir, "rpc-events.jsonl"),
+  stderr: path.join(rawDir, "stderr.jsonl"),
+};
+let rawLogsCompleted = false;
+
+function appendRawLog(stream, message, metadata = undefined, level = "debug") {
+  try {
+    const stat = fs.lstatSync(rawActiveMarker);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("managed raw ACTIVE marker is not a regular file");
+    const now = new Date();
+    fs.utimesSync(rawActiveMarker, now, now);
+  } catch (error) {
+    throw new Error(`managed raw ACTIVE marker is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  appendManagedLog(stream, "prod-runtime-confirmation", message, {
+    cwd: repoRoot,
+    runId: harnessRunId,
+    level,
+    metadata,
+    required: true,
+    path: rawLogPaths[stream],
+    rotateBytes: 10 * 1024 * 1024,
+    rotations: 3,
+  });
+}
+
+function completeRawLogs() {
+  if (rawLogsCompleted) return;
+  rawLogsCompleted = true;
+  for (const source of Object.values(rawLogPaths)) {
+    try {
+      const stat = fs.lstatSync(source);
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`raw log is not a regular file: ${source}`);
+      const completed = source.replace(/\.jsonl$/, ".completed.jsonl");
+      fs.renameSync(source, completed);
+      const sourceHead = `${source}.head.json`;
+      try {
+        const headStat = fs.lstatSync(sourceHead);
+        if (headStat.isSymbolicLink() || !headStat.isFile()) throw new Error(`raw chain head is not a regular file: ${sourceHead}`);
+        fs.renameSync(sourceHead, `${completed}.head.json`);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        console.error(`raw-log completion warning: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  try { fs.unlinkSync(rawActiveMarker); } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      console.error(`raw ACTIVE marker cleanup warning: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+process.once("exit", completeRawLogs);
 
 function logLine(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
+  const safe = redactLogText(String(msg));
+  const line = `[${new Date().toISOString()}] ${safe}`;
   console.log(line);
-  fs.appendFileSync(path.join(evidenceDir, "script.log"), line + "\n");
+  appendRawLog("script", safe);
 }
 function sha256File(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -88,7 +176,8 @@ function listRecursive(dir, base = dir) {
   if (!fs.existsSync(dir)) return found;
   for (const name of fs.readdirSync(dir)) {
     const filePath = path.join(dir, name);
-    const stat = fs.statSync(filePath);
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) found.push(...listRecursive(filePath, base));
     else if (stat.isFile()) found.push(path.relative(base, filePath));
   }
@@ -187,7 +276,13 @@ logLine(`pi home snapshot: ${Object.keys(piHomeBefore).length} config files, ${O
 // ── Disposable repo ───────────────────────────────────────────────────
 const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), "pi-prod-confirm-"));
 const repoDir = path.join(tempParent, "repo");
+const isolatedHome = path.join(tempParent, "home");
+const isolatedPiDir = path.join(tempParent, "pi-agent");
+const isolatedTmp = path.join(tempParent, "tmp");
 fs.mkdirSync(repoDir, { recursive: true });
+fs.mkdirSync(isolatedHome, { recursive: true, mode: 0o700 });
+fs.mkdirSync(isolatedPiDir, { recursive: true, mode: 0o700 });
+fs.mkdirSync(isolatedTmp, { recursive: true, mode: 0o700 });
 const parentBefore = snapshotTree(tempParent);
 fs.writeFileSync(path.join(repoDir, "README.md"), "# prod-runtime-confirmation seed\n\nTiny disposable repo for the iterative-goal production runtime confirmation.\n");
 fs.writeFileSync(path.join(repoDir, ".gitignore"), ".pi/\n");
@@ -235,13 +330,27 @@ const counters = {
 };
 let agentRunning = false;
 const toolCallArgs = new Map(); // toolCallId → args JSON (from tool_execution_start)
-const stdoutLogPath = path.join(evidenceDir, "pi-stdout.jsonl");
+const rpcEventStats = { events: 0, bytes: 0, omittedHighFrequency: 0, byType: {} };
+const MAX_RPC_LINE_BYTES = 32 * 1024 * 1024;
 
-const childEnv = { ...process.env, ...zaiEnv };
-for (const key of Object.keys(childEnv)) {
-  if (/^(OPENROUTER|ANTHROPIC|OPENAI|CEREBRAS|GOOGLE|GEMINI|MISTRAL|GROQ|XAI|DEEPSEEK)_/i.test(key)) delete childEnv[key];
-}
-childEnv.PATH = `${path.join(repoRoot, "node_modules", ".bin")}:${childEnv.PATH}`;
+// Start the production runtime with an explicit, minimal environment. The
+// model/extension under test never receives ambient cloud, GitHub, SSH-agent,
+// package-registry, or unrelated provider credentials.
+const childEnv = {
+  PATH: `${path.join(repoRoot, "node_modules", ".bin")}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+  HOME: isolatedHome,
+  TMPDIR: isolatedTmp,
+  PI_CODING_AGENT_DIR: isolatedPiDir,
+  PI_TELEMETRY: "0",
+  PI_ITERATIVE_GOAL_ROOT: repoRoot,
+  CI: "1",
+  NO_COLOR: "1",
+  ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+  ...(process.env.LC_ALL ? { LC_ALL: process.env.LC_ALL } : {}),
+  ...(process.env.LC_CTYPE ? { LC_CTYPE: process.env.LC_CTYPE } : {}),
+  ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
+  ...zaiEnv,
+};
 
 const piProc = spawn(PI_BIN, [
   "--mode", "rpc",
@@ -254,6 +363,7 @@ const piProc = spawn(PI_BIN, [
   "--thinking", "minimal",
 ], { cwd: repoDir, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
 logLine(`pi spawned pid=${piProc.pid}`);
+const piExited = new Promise((resolve) => piProc.once("exit", (code, signal) => resolve({ code, signal })));
 
 const pendingResponses = new Map();
 let rpcId = 0;
@@ -262,31 +372,73 @@ let stdoutBuf = "";
 function sendRpc(obj) {
   const id = obj.id ?? `rpc-${++rpcId}`;
   piProc.stdin.write(JSON.stringify({ ...obj, id }) + "\n");
-  return new Promise((resolve) => pendingResponses.set(id, resolve));
+  return new Promise((resolve) => pendingResponses.set(id, { resolve, requestType: obj.type }));
+}
+
+function recordRpcEvent(line, ev) {
+  const bytes = Buffer.byteLength(line);
+  const type = typeof ev?.type === "string" ? ev.type : "non_json";
+  rpcEventStats.events += 1;
+  rpcEventStats.bytes += bytes;
+  rpcEventStats.byType[type] = (rpcEventStats.byType[type] ?? 0) + 1;
+  const pending = type === "response" ? pendingResponses.get(ev.id) : null;
+  if (type === "message_update" || (type === "response" && pending?.requestType === "get_state")) {
+    rpcEventStats.omittedHighFrequency += 1;
+    return;
+  }
+  appendRawLog("rpc", "rpc_event", {
+    type,
+    bytes,
+    sha256: crypto.createHash("sha256").update(line).digest("hex"),
+    ...(typeof ev?.id === "string" ? { id: ev.id.slice(0, 128) } : {}),
+    ...(pending?.requestType ? { requestType: pending.requestType } : {}),
+    ...(typeof ev?.success === "boolean" ? { success: ev.success } : {}),
+    ...(typeof ev?.toolName === "string" ? { toolName: ev.toolName.slice(0, 128) } : {}),
+    ...(typeof ev?.isError === "boolean" ? { isError: ev.isError } : {}),
+    ...(typeof ev?.method === "string" ? { method: ev.method.slice(0, 128) } : {}),
+  });
 }
 
 piProc.stdout.on("data", (chunk) => {
   stdoutBuf += chunk.toString("utf8");
+  if (Buffer.byteLength(stdoutBuf) > MAX_RPC_LINE_BYTES && !stdoutBuf.includes("\n")) {
+    runtimeLoggingViolation = true;
+    appendRawLog("rpc", "rpc_line_limit_exceeded", {
+      maximumBytes: MAX_RPC_LINE_BYTES,
+      observedBytes: Buffer.byteLength(stdoutBuf),
+      sha256Prefix: crypto.createHash("sha256").update(stdoutBuf.slice(0, 1024 * 1024)).digest("hex"),
+    }, "error");
+    try { piProc.kill("SIGTERM"); } catch { /* already exited */ }
+    stdoutBuf = "";
+    return;
+  }
   let idx;
   while ((idx = stdoutBuf.indexOf("\n")) >= 0) {
     const line = stdoutBuf.slice(0, idx).replace(/\r$/, "");
     stdoutBuf = stdoutBuf.slice(idx + 1);
     if (!line.trim()) continue;
-    fs.appendFileSync(stdoutLogPath, line + "\n");
     let ev = null;
-    try { ev = JSON.parse(line); } catch { continue; }
+    try { ev = JSON.parse(line); } catch {
+      recordRpcEvent(line, null);
+      continue;
+    }
+    recordRpcEvent(line, ev);
     handleRpcEvent(ev);
   }
 });
 piProc.stderr.on("data", (chunk) => {
-  fs.appendFileSync(path.join(evidenceDir, "pi-stderr.log"), chunk.toString("utf8"));
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  appendRawLog("stderr", "pi_stderr_chunk", {
+    bytes: bytes.length,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  }, "warn");
 });
 piProc.on("exit", (code) => logLine(`pi exited code=${code}`));
 
 function handleRpcEvent(ev) {
   if (ev.type === "response") {
     const pending = pendingResponses.get(ev.id);
-    if (pending) { pendingResponses.delete(ev.id); pending(ev); }
+    if (pending) { pendingResponses.delete(ev.id); pending.resolve(ev); }
     return;
   }
   switch (ev.type) {
@@ -295,7 +447,7 @@ function handleRpcEvent(ev) {
     case "turn_end": counters.mainTurns += 1; break;
     case "tool_execution_start": {
       // args live ONLY on the start event; end events carry result (no args).
-      toolCallArgs.set(ev.toolCallId, JSON.stringify(ev.args ?? {}).slice(0, 500));
+      toolCallArgs.set(ev.toolCallId, redactLogText(JSON.stringify(ev.args ?? {})).slice(0, 500));
       break;
     }
     case "tool_execution_end": {
@@ -304,23 +456,26 @@ function handleRpcEvent(ev) {
         name: ev.toolName,
         isError: !!ev.isError,
         args: toolCallArgs.get(ev.toolCallId) ?? "{}",
-        resultSnippet: text.slice(0, 500),
-        details: ev.result?.details ? JSON.stringify(ev.result.details).slice(0, 700) : null,
+        resultSnippet: redactLogText(text).slice(0, 500),
+        details: ev.result?.details ? redactLogText(JSON.stringify(ev.result.details)).slice(0, 700) : null,
       });
       break;
     }
-    case "extension_error":
-      counters.extensionErrors.push(JSON.stringify(ev).slice(0, 500));
-      logLine(`extension_error: ${JSON.stringify(ev).slice(0, 300)}`);
+    case "extension_error": {
+      const safeError = redactLogText(JSON.stringify(ev));
+      counters.extensionErrors.push(safeError.slice(0, 500));
+      logLine(`extension_error: ${safeError.slice(0, 300)}`);
       break;
+    }
     case "extension_ui_request": {
       if (ev.method === "notify") {
-        counters.notifications.push(String(ev.message ?? ""));
-        logLine(`notify: ${String(ev.message ?? "").split("\n")[0].slice(0, 220)}`);
+        const safeMessage = redactLogText(String(ev.message ?? ""));
+        counters.notifications.push(safeMessage);
+        logLine(`notify: ${safeMessage.split("\n")[0].slice(0, 220)}`);
       } else if (["confirm", "select", "input", "editor"].includes(ev.method)) {
         // Dialog methods block until answered. Safe default: decline/cancel.
-        counters.dialogs.push(JSON.stringify(ev).slice(0, 300));
-        logLine(`DIALOG (auto-declined): ${ev.method} ${String(ev.title ?? "").slice(0, 120)}`);
+        counters.dialogs.push(redactLogText(JSON.stringify(ev)).slice(0, 300));
+        logLine(`DIALOG (auto-declined): ${ev.method} ${redactLogText(String(ev.title ?? "")).slice(0, 120)}`);
         const response = { type: "extension_ui_response", id: ev.id };
         if (ev.method === "confirm") response.confirmed = false;
         else response.cancelled = true;
@@ -457,6 +612,8 @@ let midRunAttempted = false; // one-shot guard for the mid-run authorize attempt
 let preFixupRefusal = null; // denial before the commit/regen fix-ups (branch B)
 let releaseAuth = null;
 let branch = "unknown";
+let aggregateBudgetExceeded = false;
+let runtimeLoggingViolation = false;
 
 async function main() {
   // 0. Extension inventory in the real runtime.
@@ -511,6 +668,13 @@ async function main() {
           note("s6", `mid-run authorize unexpectedly succeeded: ${midRunRefusal.split("\n")[0]}`);
         } else note("s6", "mid-run authorize produced no notify within 10s");
       }
+    }
+    if (counters.mainTurns >= opts.maxModelCalls) {
+      aggregateBudgetExceeded = true;
+      driveDone = `active run exhausted the main-session response ceiling ${opts.maxModelCalls}`;
+      logLine(`${driveDone}; terminating the exact owned Pi process`);
+      try { piProc.kill("SIGTERM"); } catch { /* already exited */ }
+      break;
     }
     if (agentRunning) {
       idleSince = null;
@@ -807,6 +971,7 @@ function saveEvidence() {
 
 function printResults() {
   const totalModelCalls = counters.mainTurns + counters.judgeVerdicts + counters.subagentTurns;
+  if (totalModelCalls > opts.maxModelCalls) aggregateBudgetExceeded = true;
   console.log("\n================ SCENARIO RESULTS ================");
   for (const s of scenarios.values()) {
     console.log(`${s.status === "PASS" ? "PASS" : s.status === "FAIL" ? "FAIL" : "PEND"} ${s.id} ${s.name}`);
@@ -815,21 +980,35 @@ function printResults() {
   }
   console.log("==================================================");
   console.log(`branch: ${branch}`);
-  console.log(`model calls: main-session turns=${counters.mainTurns} (nudge turns=${counters.nudges}) + judge verdicts=${counters.judgeVerdicts} + subagent turns=${counters.subagentTurns} = ${totalModelCalls} total (bound: <30)`);
+  console.log(`model calls: main-session turns=${counters.mainTurns} (nudge turns=${counters.nudges}) + judge verdicts=${counters.judgeVerdicts} + subagent turns=${counters.subagentTurns} = ${totalModelCalls} total (ceiling: ${opts.maxModelCalls}; ${aggregateBudgetExceeded ? "FAIL" : "PASS"})`);
   console.log(`tool calls observed: ${counters.toolCalls.length}; extension errors: ${counters.extensionErrors.length}; dialogs auto-declined: ${counters.dialogs.length}`);
   const failed = [...scenarios.values()].filter((s) => s.status !== "PASS");
-  console.log(failed.length === 0 ? "OVERALL: PASS" : `OVERALL: FAIL (${failed.map((s) => s.id).join(", ")})`);
+  if (aggregateBudgetExceeded) console.log("BUDGET: FAIL (aggregate model-response ceiling exceeded)");
+  if (runtimeLoggingViolation) console.log("LOGGING: FAIL (RPC line exceeded the bounded parser limit)");
+  const overallOk = failed.length === 0 && !aggregateBudgetExceeded && !runtimeLoggingViolation;
+  const failureLabels = [
+    ...failed.map((scenarioResult) => scenarioResult.id),
+    ...(aggregateBudgetExceeded ? ["budget"] : []),
+    ...(runtimeLoggingViolation ? ["logging"] : []),
+  ];
+  console.log(overallOk ? "OVERALL: PASS" : `OVERALL: FAIL (${failureLabels.join(", ")})`);
   console.log(`evidence: ${evidenceDir}`);
-  return failed.length === 0;
+  return overallOk;
 }
 
 async function shutdown() {
-  try { piProc.kill("SIGTERM"); } catch { /* already dead */ }
-  await sleep(2500);
-  try { piProc.kill("SIGKILL"); } catch { /* already dead */ }
-  // Kill any stray subagent subprocess (pi --mode json -p --no-session ...) the
-  // reviewer dispatch may have left behind, so it cannot keep burning tokens.
-  spawnSync("pkill", ["-f", "pi --mode json -p --no-session"], { encoding: "utf8" });
+  // Signal only the exact RPC process we spawned. Pi's SIGTERM handler owns
+  // shutdown of its tracked detached children and awaits extension teardown;
+  // a broad process-name kill here could terminate workers from another repo
+  // or operator session.
+  if (piProc.exitCode === null && piProc.signalCode === null) {
+    try { piProc.kill("SIGTERM"); } catch { /* already exited */ }
+    await Promise.race([piExited, sleep(12_000)]);
+  }
+  if (piProc.exitCode === null && piProc.signalCode === null) {
+    try { piProc.kill("SIGKILL"); } catch { /* already exited */ }
+    await Promise.race([piExited, sleep(2_000)]);
+  }
   if (!opts.keepTemp) {
     try { fs.rmSync(tempParent, { recursive: true, force: true }); logLine(`temp repo removed: ${tempParent}`); }
     catch (err) { logLine(`temp cleanup warning: ${err instanceof Error ? err.message : String(err)}`); }
@@ -854,9 +1033,24 @@ fs.writeFileSync(path.join(evidenceDir, "results.json"), JSON.stringify({
   branch,
   scenarios: [...scenarios.values()],
   counters: { mainTurns: counters.mainTurns, nudges: counters.nudges, judgeVerdicts: counters.judgeVerdicts, subagentTurns: counters.subagentTurns },
+  modelCallBudget: {
+    ceiling: opts.maxModelCalls,
+    observed: counters.mainTurns + counters.judgeVerdicts + counters.subagentTurns,
+    status: aggregateBudgetExceeded ? "FAIL" : "PASS",
+  },
+  logging: {
+    status: runtimeLoggingViolation ? "FAIL" : "PASS",
+    rawRunPath: path.relative(repoRoot, rawDir),
+    rotationBytes: 10 * 1024 * 1024,
+    rotations: 3,
+    maximumRpcLineBytes: MAX_RPC_LINE_BYTES,
+    rpcEventStats,
+  },
+  launchEnvironmentKeys: Object.keys(childEnv).sort(),
   toolCalls: counters.toolCalls,
   notifications: counters.notifications,
   extensionErrors: counters.extensionErrors,
   overall: exitOk ? "PASS" : "FAIL",
 }, null, 2));
+completeRawLogs();
 process.exit(exitOk ? 0 : 1);

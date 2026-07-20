@@ -60,9 +60,13 @@ function readCandidates(root: string): Candidate[] {
       if (relative === "owner.json" || relative.endsWith(".head.json") || /retention\.journal\.jsonl(?:\.\d+\.gz)?$/.test(relative)) continue;
       // Rotated/completed files are candidates. Run-scoped invocation JSONL
       // also becomes a candidate after its telemetry TTL; otherwise thousands
-      // of small, never-rotated run files could evade the aggregate cap.
+      // of small, never-rotated run files could evade the aggregate cap. Raw
+      // run JSONL is included too so a SIGKILL cannot leave an active-name file
+      // outside TTL/cap accounting forever; a fresh run ACTIVE marker protects
+      // live writers below.
       const inactiveTelemetryJsonl = /(?:^|\/)telemetry\/invocations\/[^/]+\.jsonl$/.test(relative);
-      if (!/\.gz$|\.completed\./.test(entry.name) && !inactiveTelemetryJsonl) continue;
+      const runRawJsonl = /(?:^|\/)runs\/[^/]+\/raw\/[^/]+\.jsonl$/.test(relative);
+      if (!/\.gz$|\.completed\./.test(entry.name) && !inactiveTelemetryJsonl && !runRawJsonl) continue;
       if (/(?:^|\/)(?:evidence|state|receipts|aggregates)(?:\/|$)/.test(relative)) continue;
       let ttlMs: number | null = null;
       if (/(?:failed|debug|spool)/i.test(relative)) ttlMs = FAILURE_RAW_TTL_MS;
@@ -74,6 +78,30 @@ function readCandidates(root: string): Candidate[] {
   };
   walk(root);
   return candidates;
+}
+
+function liveRunIds(root: string, nowMs: number): Set<string> {
+  const live = new Set<string>();
+  const runsRoot = path.join(root, "runs");
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(runsRoot, { withFileTypes: true }); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return live;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const marker = path.join(runsRoot, entry.name, "ACTIVE");
+    try {
+      const stat = fs.lstatSync(marker);
+      if (!stat.isSymbolicLink() && stat.isFile() && nowMs - stat.mtimeMs < RETENTION_INTERVAL_MS * 2) {
+        live.add(entry.name);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  return live;
 }
 
 function managedBytes(root: string): number {
@@ -112,6 +140,7 @@ export function runManagedLogRetention(cwd = process.cwd(), nowMs = Date.now()):
 
   const deleted: RetentionDeletion[] = [];
   const removed = new Set<string>();
+  const activeRuns = liveRunIds(resolvedRoot, nowMs);
   const unlink = (candidate: Candidate, reason: RetentionDeletion["reason"]): void => {
     if (removed.has(candidate.absolute)) return;
     const resolvedParent = fs.realpathSync(path.dirname(candidate.absolute));
@@ -133,14 +162,19 @@ export function runManagedLogRetention(cwd = process.cwd(), nowMs = Date.now()):
 
   const candidates = readCandidates(resolvedRoot).sort((a, b) => a.mtimeMs - b.mtimeMs || a.relative.localeCompare(b.relative));
   for (const candidate of candidates) {
-    if (candidate.ttlMs !== null && nowMs - candidate.mtimeMs >= candidate.ttlMs) unlink(candidate, "ttl");
+    if (!candidate.runId || !activeRuns.has(candidate.runId)) {
+      if (candidate.ttlMs !== null && nowMs - candidate.mtimeMs >= candidate.ttlMs) unlink(candidate, "ttl");
+    }
   }
 
   const remaining = candidates.filter((candidate) => !removed.has(candidate.absolute));
   // Never capacity-purge a file touched within two sweep cadences. It may be
   // the current writer even if a run lock is briefly unavailable; pressure
   // then blocks new telemetry instead of racing an active append.
-  const capacityCandidates = remaining.filter((candidate) => nowMs - candidate.mtimeMs >= RETENTION_INTERVAL_MS * 2);
+  const capacityCandidates = remaining.filter((candidate) => (
+    nowMs - candidate.mtimeMs >= RETENTION_INTERVAL_MS * 2
+    && (!candidate.runId || !activeRuns.has(candidate.runId))
+  ));
   const byRun = new Map<string, Candidate[]>();
   for (const candidate of capacityCandidates) {
     if (!candidate.runId) continue;
