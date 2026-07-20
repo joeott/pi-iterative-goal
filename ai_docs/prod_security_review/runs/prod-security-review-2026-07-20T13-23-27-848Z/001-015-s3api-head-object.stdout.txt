@@ -1,0 +1,10 @@
+{
+    "AcceptRanges": "bytes",
+    "LastModified": "2026-07-20T10:12:00+00:00",
+    "ContentLength": 41437,
+    "ETag": "\"8e2060d524c53eea2a1145d90211149d\"",
+    "VersionId": "M25kIbH2fQZ5KVL78LbdVkOvJoLNOaRl",
+    "ContentType": "text/x-python",
+    "ServerSideEncryption": "AES256",
+    "Metadata": {}
+}

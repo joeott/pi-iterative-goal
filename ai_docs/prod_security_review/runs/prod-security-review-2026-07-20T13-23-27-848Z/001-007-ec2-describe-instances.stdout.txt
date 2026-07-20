@@ -1,0 +1,199 @@
+{
+    "Reservations": [
+        {
+            "ReservationId": "r-06722841396cdec06",
+            "OwnerId": "371292405073",
+            "RequesterId": "043234062703",
+            "Groups": [],
+            "Instances": [
+                {
+                    "Architecture": "arm64",
+                    "BlockDeviceMappings": [
+                        {
+                            "DeviceName": "/dev/xvda",
+                            "Ebs": {
+                                "AttachTime": "2026-07-19T05:17:32+00:00",
+                                "DeleteOnTermination": true,
+                                "Status": "attached",
+                                "VolumeId": "vol-0e42bcc729a4c6817"
+                            }
+                        }
+                    ],
+                    "ClientToken": "b92c1809-b3a8-bef1-d92a-a3ff3b7337a2",
+                    "EbsOptimized": false,
+                    "EnaSupport": true,
+                    "Hypervisor": "xen",
+                    "IamInstanceProfile": {
+                        "Arn": "arn:aws:iam::371292405073:instance-profile/UnifyOcrCpuStack-PipelineControllerPipelineControllerInstanceInstanceProfile27644C31-UsfPwPKewLvY",
+                        "Id": "AIPAVM4WAPVIQFHLT7G2S"
+                    },
+                    "NetworkInterfaces": [
+                        {
+                            "Association": {
+                                "IpOwnerId": "amazon",
+                                "PublicDnsName": "ec2-32-197-121-222.compute-1.amazonaws.com",
+                                "PublicIp": "32.197.121.222"
+                            },
+                            "Attachment": {
+                                "AttachTime": "2026-07-19T05:17:31+00:00",
+                                "AttachmentId": "eni-attach-0c00a74da9154d2b2",
+                                "DeleteOnTermination": true,
+                                "DeviceIndex": 0,
+                                "Status": "attached",
+                                "NetworkCardIndex": 0
+                            },
+                            "Description": "",
+                            "Groups": [
+                                {
+                                    "GroupId": "sg-0481376bdc6ec6803",
+                                    "GroupName": "UnifyOcrCpuStack-PipelineControllerPipelineControllerSG99359DAC-zOM7kLKnKwKK"
+                                }
+                            ],
+                            "Ipv6Addresses": [],
+                            "MacAddress": "0e:7e:3c:25:2f:1d",
+                            "NetworkInterfaceId": "eni-042381ea24786e6e0",
+                            "OwnerId": "371292405073",
+                            "PrivateDnsName": "ip-172-31-42-208.ec2.internal",
+                            "PrivateIpAddress": "172.31.42.208",
+                            "PrivateIpAddresses": [
+                                {
+                                    "Association": {
+                                        "IpOwnerId": "amazon",
+                                        "PublicDnsName": "ec2-32-197-121-222.compute-1.amazonaws.com",
+                                        "PublicIp": "32.197.121.222"
+                                    },
+                                    "Primary": true,
+                                    "PrivateDnsName": "ip-172-31-42-208.ec2.internal",
+                                    "PrivateIpAddress": "172.31.42.208"
+                                }
+                            ],
+                            "SourceDestCheck": true,
+                            "Status": "in-use",
+                            "SubnetId": "subnet-fbadf4a7",
+                            "VpcId": "vpc-53107829",
+                            "InterfaceType": "interface",
+                            "Operator": {
+                                "Managed": false
+                            }
+                        }
+                    ],
+                    "RootDeviceName": "/dev/xvda",
+                    "RootDeviceType": "ebs",
+                    "SecurityGroups": [
+                        {
+                            "GroupId": "sg-0481376bdc6ec6803",
+                            "GroupName": "UnifyOcrCpuStack-PipelineControllerPipelineControllerSG99359DAC-zOM7kLKnKwKK"
+                        }
+                    ],
+                    "SourceDestCheck": true,
+                    "Tags": [
+                        {
+                            "Key": "Environment",
+                            "Value": "production"
+                        },
+                        {
+                            "Key": "Name",
+                            "Value": "UnifyOcrCpuStack/PipelineController/PipelineControllerInstance"
+                        },
+                        {
+                            "Key": "cost-center",
+                            "Value": "ocr-process"
+                        },
+                        {
+                            "Key": "Domain",
+                            "Value": "OCR-CPU"
+                        },
+                        {
+                            "Key": "aws:cloudformation:stack-name",
+                            "Value": "UnifyOcrCpuStack"
+                        },
+                        {
+                            "Key": "Service",
+                            "Value": "Unify"
+                        },
+                        {
+                            "Key": "aws:cloudformation:stack-id",
+                            "Value": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrCpuStack/8f689290-0bb4-11f1-9a38-0e1e4ff2209d"
+                        },
+                        {
+                            "Key": "Component",
+                            "Value": "PipelineController"
+                        },
+                        {
+                            "Key": "aws:cloudformation:logical-id",
+                            "Value": "PipelineControllerPipelineControllerInstance1EB9B32A68024d0f1b4264b2"
+                        }
+                    ],
+                    "VirtualizationType": "hvm",
+                    "CpuOptions": {
+                        "CoreCount": 2,
+                        "ThreadsPerCore": 1
+                    },
+                    "CapacityReservationSpecification": {
+                        "CapacityReservationPreference": "open"
+                    },
+                    "HibernationOptions": {
+                        "Configured": false
+                    },
+                    "MetadataOptions": {
+                        "State": "applied",
+                        "HttpTokens": "required",
+                        "HttpPutResponseHopLimit": 2,
+                        "HttpEndpoint": "enabled",
+                        "HttpProtocolIpv6": "disabled",
+                        "InstanceMetadataTags": "disabled"
+                    },
+                    "EnclaveOptions": {
+                        "Enabled": false
+                    },
+                    "BootMode": "uefi",
+                    "PlatformDetails": "Linux/UNIX",
+                    "UsageOperation": "RunInstances",
+                    "UsageOperationUpdateTime": "2026-07-19T05:17:31+00:00",
+                    "PrivateDnsNameOptions": {
+                        "HostnameType": "ip-name",
+                        "EnableResourceNameDnsARecord": false,
+                        "EnableResourceNameDnsAAAARecord": false
+                    },
+                    "MaintenanceOptions": {
+                        "AutoRecovery": "default",
+                        "RebootMigration": "default"
+                    },
+                    "CurrentInstanceBootMode": "uefi",
+                    "NetworkPerformanceOptions": {
+                        "BandwidthWeighting": "default"
+                    },
+                    "Operator": {
+                        "Managed": false
+                    },
+                    "InstanceId": "i-0b40f1490c07e3ba1",
+                    "ImageId": "ami-02e447f4c654c7179",
+                    "State": {
+                        "Code": 16,
+                        "Name": "running"
+                    },
+                    "PrivateDnsName": "ip-172-31-42-208.ec2.internal",
+                    "PublicDnsName": "ec2-32-197-121-222.compute-1.amazonaws.com",
+                    "StateTransitionReason": "",
+                    "AmiLaunchIndex": 0,
+                    "ProductCodes": [],
+                    "InstanceType": "t4g.small",
+                    "LaunchTime": "2026-07-19T05:17:31+00:00",
+                    "Placement": {
+                        "AvailabilityZoneId": "use1-az6",
+                        "GroupName": "",
+                        "Tenancy": "default",
+                        "AvailabilityZone": "us-east-1a"
+                    },
+                    "Monitoring": {
+                        "State": "disabled"
+                    },
+                    "SubnetId": "subnet-fbadf4a7",
+                    "VpcId": "vpc-53107829",
+                    "PrivateIpAddress": "172.31.42.208",
+                    "PublicIpAddress": "32.197.121.222"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,119 @@
+{
+    "Stacks": [
+        {
+            "StackId": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrAdapterStack/18d85180-70d9-11f1-a9e5-0eaa1051325b",
+            "StackName": "UnifyOcrAdapterStack",
+            "ChangeSetId": "arn:aws:cloudformation:us-east-1:371292405073:changeSet/cdk-deploy-change-set/c7e4099c-f4c7-438d-bb2c-b4c392f0463e",
+            "Description": "Unify OCR Adapter - containerized nemotron-ocr-adapter /ocr/s3 shim (default OFF) (Production)",
+            "Parameters": [
+                {
+                    "ParameterKey": "BootstrapVersion",
+                    "ParameterValue": "/cdk-bootstrap/hnb659fds/version",
+                    "ResolvedValue": "30"
+                }
+            ],
+            "CreationTime": "2026-06-25T21:01:55.635000+00:00",
+            "LastUpdatedTime": "2026-07-15T03:49:43.855000+00:00",
+            "RollbackConfiguration": {},
+            "StackStatus": "UPDATE_COMPLETE",
+            "DisableRollback": false,
+            "NotificationARNs": [],
+            "Capabilities": [
+                "CAPABILITY_IAM",
+                "CAPABILITY_NAMED_IAM",
+                "CAPABILITY_AUTO_EXPAND"
+            ],
+            "Outputs": [
+                {
+                    "OutputKey": "AdapterServiceSecurityGroupId",
+                    "OutputValue": "sg-02f7afa7fefba100f",
+                    "Description": "Security group fronting the adapter on port 8080"
+                },
+                {
+                    "OutputKey": "AdapterDesiredCount",
+                    "OutputValue": "4",
+                    "Description": "Explicit configured adapter task count (Production deploys require this input)"
+                },
+                {
+                    "OutputKey": "AdapterInternalEndpoint",
+                    "OutputValue": "http://internal-unify-ocr-adapter-production-1509042525.us-east-1.elb.amazonaws.com:8080",
+                    "Description": "Canonical health-aware internal endpoint for PC_OCR_SERVER_URL"
+                },
+                {
+                    "OutputKey": "AdapterCloudMapRollbackEndpoint",
+                    "OutputValue": "http://adapter.ocr-adapter.local:8080",
+                    "Description": "Direct Cloud Map rollback endpoint; do not use as the normal dispatch target"
+                },
+                {
+                    "OutputKey": "AdapterLoadBalancerSecurityGroupId",
+                    "OutputValue": "sg-0b1b4f94f257fbf3e",
+                    "Description": "Security group fronting the internal adapter ALB on port 8080"
+                },
+                {
+                    "OutputKey": "AdapterClusterName",
+                    "OutputValue": "unify-ocr-adapter-production",
+                    "Description": "nemotron-ocr-adapter ECS cluster name"
+                },
+                {
+                    "OutputKey": "AdapterServiceName",
+                    "OutputValue": "nemotron-ocr-adapter-production",
+                    "Description": "nemotron-ocr-adapter ECS Fargate service name"
+                },
+                {
+                    "OutputKey": "AdapterAutoScalingRange",
+                    "OutputValue": "4-16",
+                    "Description": "Adapter ECS target-tracking minimum and maximum task count"
+                }
+            ],
+            "RoleARN": "arn:aws:iam::371292405073:role/cdk-hnb659fds-cfn-exec-role-371292405073-us-east-1",
+            "Tags": [
+                {
+                    "Key": "DeprecationClass",
+                    "Value": "active-canonical"
+                },
+                {
+                    "Key": "DeploymentCohort",
+                    "Value": "cas-ocr-v2"
+                },
+                {
+                    "Key": "MigrationPath",
+                    "Value": "cas-native"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "CasAlignment",
+                    "Value": "canonical-rds-s3"
+                },
+                {
+                    "Key": "OcrRuntime",
+                    "Value": "nemotron-parse-v2-gpuhttp-adapter"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-Adapter"
+                },
+                {
+                    "Key": "Provider",
+                    "Value": "nemotron_parse_2"
+                }
+            ],
+            "EnableTerminationProtection": false,
+            "DriftInformation": {
+                "StackDriftStatus": "NOT_CHECKED"
+            },
+            "LastOperations": [
+                {
+                    "OperationType": "UPDATE_STACK",
+                    "OperationId": "7d09dcc4-4e56-4e8d-a568-bd95d2e1084c"
+                }
+            ]
+        }
+    ]
+}

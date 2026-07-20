@@ -1,0 +1,211 @@
+{
+    "RoleName": "UnifyOcrCpuStack-PipelineControllerPipelineControll-eTBCkPXF2Rhe",
+    "PolicyName": "PipelineControllerPipelineControllerRoleDefaultPolicyA0058FF1",
+    "PolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                    "s3:DeleteObject",
+                    "s3:GetObject",
+                    "s3:HeadObject",
+                    "s3:PutObject"
+                ],
+                "Resource": [
+                    "arn:aws:s3:::unify-training-data/*",
+                    "arn:aws:s3:::ott-legal-evidence-documents/*"
+                ],
+                "Effect": "Allow",
+                "Sid": "S3DocumentsAccess"
+            },
+            {
+                "Action": "s3:ListBucket",
+                "Resource": [
+                    "arn:aws:s3:::unify-training-data",
+                    "arn:aws:s3:::ott-legal-evidence-documents"
+                ],
+                "Effect": "Allow",
+                "Sid": "S3ListBucket"
+            },
+            {
+                "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:Query",
+                    "dynamodb:UpdateItem"
+                ],
+                "Resource": [
+                    "arn:aws:dynamodb:us-east-1:371292405073:table/unify-dropbox-sync-cursors",
+                    "arn:aws:dynamodb:us-east-1:371292405073:table/unify-pipeline-controller-state",
+                    "arn:aws:dynamodb:us-east-1:371292405073:table/unify-sfn-concurrency"
+                ],
+                "Effect": "Allow",
+                "Sid": "DynamoDBAccess"
+            },
+            {
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": [
+                    "arn:aws:secretsmanager:us-east-1:371292405073:secret:rds/app_role/password*",
+                    "arn:aws:secretsmanager:us-east-1:371292405073:secret:sr/aws/redis*",
+                    "arn:aws:secretsmanager:us-east-1:371292405073:secret:unify/dropbox/*"
+                ],
+                "Effect": "Allow",
+                "Sid": "SecretsManagerAccess"
+            },
+            {
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": [
+                    "arn:aws:secretsmanager:us-east-1:371292405073:secret:legal-fact/neo4j-credentials*",
+                    "arn:aws:secretsmanager:us-east-1:371292405073:secret:legal-kg/neo4j-credentials*"
+                ],
+                "Effect": "Allow",
+                "Sid": "Neo4jBoltSecretsAccess"
+            },
+            {
+                "Action": [
+                    "states:DescribeExecution",
+                    "states:DescribeStateMachine",
+                    "states:ListExecutions",
+                    "states:StartExecution"
+                ],
+                "Resource": [
+                    "arn:aws:states:us-east-1:371292405073:execution:*:*",
+                    "arn:aws:states:us-east-1:371292405073:stateMachine:*"
+                ],
+                "Effect": "Allow",
+                "Sid": "StepFunctionsAccess"
+            },
+            {
+                "Action": "states:ListStateMachines",
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "StepFunctionsListAccess"
+            },
+            {
+                "Action": "lambda:ListFunctions",
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "LambdaList"
+            },
+            {
+                "Action": "lambda:InvokeFunction",
+                "Resource": [
+                    "arn:aws:lambda:us-east-1:371292405073:function:UnifyCoreStack-*",
+                    "arn:aws:lambda:us-east-1:371292405073:function:UnifyOcrCpuStack-*"
+                ],
+                "Effect": "Allow",
+                "Sid": "LambdaInvoke"
+            },
+            {
+                "Condition": {
+                    "StringEquals": {
+                        "aws:RequestedRegion": "us-east-1"
+                    }
+                },
+                "Action": [
+                    "ecs:DescribeServices",
+                    "ecs:DescribeTaskDefinition",
+                    "ecs:DescribeTasks",
+                    "ecs:ListTasks",
+                    "ecs:RunTask",
+                    "ecs:UpdateService"
+                ],
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "ECSAccess"
+            },
+            {
+                "Condition": {
+                    "StringEquals": {
+                        "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                    }
+                },
+                "Action": "iam:PassRole",
+                "Resource": "arn:aws:iam::371292405073:role/*",
+                "Effect": "Allow",
+                "Sid": "IAMPassRole"
+            },
+            {
+                "Action": [
+                    "sqs:GetQueueAttributes",
+                    "sqs:GetQueueUrl",
+                    "sqs:ListQueues"
+                ],
+                "Resource": "arn:aws:sqs:us-east-1:371292405073:*",
+                "Effect": "Allow",
+                "Sid": "SQSAccess"
+            },
+            {
+                "Action": [
+                    "sqs:SendMessage",
+                    "sqs:SendMessageBatch"
+                ],
+                "Resource": "arn:aws:sqs:us-east-1:371292405073:UnifyOcrCpuStack-DropboxDownloadQueue-production",
+                "Effect": "Allow",
+                "Sid": "SQSSendMessage"
+            },
+            {
+                "Action": [
+                    "cloudwatch:GetMetricData",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "cloudwatch:PutMetricData"
+                ],
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "CloudWatchMetrics"
+            },
+            {
+                "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                ],
+                "Resource": "arn:aws:logs:us-east-1:371292405073:log-group:/pipeline-controller/*",
+                "Effect": "Allow",
+                "Sid": "CloudWatchLogs"
+            },
+            {
+                "Action": [
+                    "ssm:UpdateInstanceInformation",
+                    "ssmmessages:CreateControlChannel",
+                    "ssmmessages:CreateDataChannel",
+                    "ssmmessages:OpenControlChannel",
+                    "ssmmessages:OpenDataChannel"
+                ],
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "SSMSessionManager"
+            },
+            {
+                "Action": [
+                    "ssm:GetParameter",
+                    "ssm:PutParameter"
+                ],
+                "Resource": "arn:aws:ssm:us-east-1:371292405073:parameter/unify/ocr/target-workers",
+                "Effect": "Allow",
+                "Sid": "SsmConcurrencyParam"
+            },
+            {
+                "Action": [
+                    "autoscaling:DescribeAutoScalingGroups",
+                    "autoscaling:SetDesiredCapacity"
+                ],
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "AsgConcurrencyControl"
+            },
+            {
+                "Condition": {
+                    "StringEquals": {
+                        "aws:RequestedRegion": "us-east-1"
+                    }
+                },
+                "Action": "ec2:DescribeInstances",
+                "Resource": "*",
+                "Effect": "Allow",
+                "Sid": "EC2TagDiscovery"
+            }
+        ]
+    }
+}
