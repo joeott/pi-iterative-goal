@@ -6,6 +6,11 @@ import { assertManagedLoggingHealthy } from "./log-retention.js";
 
 export const MODEL_INVOCATION_SCHEMA = "pi-iterative-goal.model-invocation.v1" as const;
 export const MODEL_COMPARISON_SCHEMA = "pi-iterative-goal.model-comparison.v1" as const;
+export const MAX_TELEMETRY_FILES_PER_LOAD = 256;
+export const MAX_TELEMETRY_FILE_BYTES = 16 * 1024 * 1024;
+export const MAX_TELEMETRY_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
+export const MAX_TELEMETRY_LINE_BYTES = 128 * 1024;
+export const MAX_TELEMETRY_RECORDS_PER_LOAD = 100_000;
 
 export type ModelTermination = "success" | "provider_error" | "timeout" | "cancelled" | "schema_error" | "gate_failure" | "budget_exhausted";
 
@@ -178,28 +183,104 @@ export function compareModelInvocations(invocations: ModelInvocationV1[], minimu
   }).sort((a, b) => a.workloadClass.localeCompare(b.workloadClass) || a.routeId.localeCompare(b.routeId));
 }
 
-function readJsonLines(filePath: string): unknown[] {
-  const bytes = fs.readFileSync(filePath);
-  const content = filePath.endsWith(".gz") ? zlib.gunzipSync(bytes).toString("utf8") : bytes.toString("utf8");
+function readBoundedRegularFile(filePath: string): Buffer {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`Telemetry input is not a regular file: ${filePath}`);
+    if (stat.size > MAX_TELEMETRY_FILE_BYTES) {
+      throw new Error(`Telemetry input exceeds the ${MAX_TELEMETRY_FILE_BYTES}-byte per-file bound: ${filePath}`);
+    }
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    return offset === bytes.length ? bytes : bytes.subarray(0, offset);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readJsonLines(filePath: string, remainingDecompressedBytes: number, remainingRecords: number): {
+  values: unknown[];
+  decompressedBytes: number;
+} {
+  const bytes = readBoundedRegularFile(filePath);
+  let contentBytes: Buffer;
+  if (filePath.endsWith(".gz")) {
+    try {
+      contentBytes = zlib.gunzipSync(bytes, { maxOutputLength: remainingDecompressedBytes });
+    } catch (error) {
+      throw new Error(`Telemetry gzip is invalid or exceeds the remaining decompression bound: ${filePath}`, { cause: error });
+    }
+  } else {
+    if (bytes.length > remainingDecompressedBytes) {
+      throw new Error(`Telemetry inputs exceed the ${MAX_TELEMETRY_DECOMPRESSED_BYTES}-byte load bound`);
+    }
+    contentBytes = bytes;
+  }
+  if (contentBytes.length > remainingDecompressedBytes) {
+    throw new Error(`Telemetry inputs exceed the ${MAX_TELEMETRY_DECOMPRESSED_BYTES}-byte load bound`);
+  }
+  const content = contentBytes.toString("utf8");
   const values: unknown[] = [];
-  for (const line of content.split(/\r?\n/)) {
+  let start = 0;
+  for (let cursor = 0; cursor <= content.length; cursor += 1) {
+    if (cursor < content.length && content.charCodeAt(cursor) !== 10) continue;
+    const rawLine = content.slice(start, cursor);
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    start = cursor + 1;
     if (!line.trim()) continue;
+    if (Buffer.byteLength(line) > MAX_TELEMETRY_LINE_BYTES) {
+      throw new Error(`Telemetry line exceeds the ${MAX_TELEMETRY_LINE_BYTES}-byte bound: ${filePath}`);
+    }
+    if (values.length >= remainingRecords) {
+      throw new Error(`Telemetry inputs exceed the ${MAX_TELEMETRY_RECORDS_PER_LOAD}-record load bound`);
+    }
     try {
       const envelope = JSON.parse(line) as { metadata?: unknown };
       values.push(envelope.metadata ?? envelope);
     } catch { /* malformed telemetry is excluded and remains visible in the source log */ }
   }
-  return values;
+  return { values, decompressedBytes: contentBytes.length };
 }
 
 export function loadModelInvocations(cwd = process.cwd(), runId?: string): ModelInvocationV1[] {
   const directory = path.join(ensureManagedRoot(cwd), "telemetry", "invocations");
   if (!fs.existsSync(directory)) return [];
   const safeRunId = runId?.replace(/[^A-Za-z0-9._-]/g, "-");
-  return fs.readdirSync(directory)
-    .filter((name) => (!safeRunId || name.startsWith(`${safeRunId}.jsonl`)) && /\.jsonl(?:\.\d+\.gz)?$/.test(name))
-    .flatMap((name) => readJsonLines(path.join(directory, name)))
-    .filter((item): item is ModelInvocationV1 => Boolean(item && typeof item === "object" && (item as { schema?: unknown }).schema === MODEL_INVOCATION_SCHEMA));
+  const inputs = fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => (!safeRunId || entry.name.startsWith(`${safeRunId}.jsonl`)) && /\.jsonl(?:\.\d+\.gz)?$/.test(entry.name))
+    .map((entry) => {
+      const filePath = path.join(directory, entry.name);
+      const stat = fs.lstatSync(filePath);
+      if (entry.isSymbolicLink() || stat.isSymbolicLink() || !entry.isFile() || !stat.isFile()) {
+        throw new Error(`Telemetry input is not a real regular file: ${filePath}`);
+      }
+      return { filePath, name: entry.name, mtimeMs: stat.mtimeMs };
+    })
+    .sort((left, right) => left.mtimeMs - right.mtimeMs || left.name.localeCompare(right.name));
+  if (inputs.length > MAX_TELEMETRY_FILES_PER_LOAD) {
+    throw new Error(`Telemetry load selected ${inputs.length} files; maximum is ${MAX_TELEMETRY_FILES_PER_LOAD}. Supply a runId or purge expired logs.`);
+  }
+  let decompressedBytes = 0;
+  const values: unknown[] = [];
+  for (const input of inputs) {
+    const parsed = readJsonLines(
+      input.filePath,
+      MAX_TELEMETRY_DECOMPRESSED_BYTES - decompressedBytes,
+      MAX_TELEMETRY_RECORDS_PER_LOAD - values.length,
+    );
+    decompressedBytes += parsed.decompressedBytes;
+    values.push(...parsed.values);
+  }
+  return values.filter((item): item is ModelInvocationV1 => Boolean(
+    item && typeof item === "object" && (item as { schema?: unknown }).schema === MODEL_INVOCATION_SCHEMA,
+  ));
 }
 
 export function writeModelComparisonReport(cwd = process.cwd(), runId?: string, minimumSamples = 5): string {

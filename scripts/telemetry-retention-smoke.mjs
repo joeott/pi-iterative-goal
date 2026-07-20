@@ -167,6 +167,25 @@ try {
   assert.equal(comparisons[0].medianCostUsd, null, "unknown price never becomes zero");
   assert(fs.existsSync(telemetry.writeModelComparisonReport(root, "run-smoke")));
 
+  const telemetryDirectory = path.join(root, ".pi", "iterative-goal", "managed", "telemetry", "invocations");
+  fs.writeFileSync(
+    path.join(telemetryDirectory, "oversized-line.jsonl"),
+    `${"x".repeat(telemetry.MAX_TELEMETRY_LINE_BYTES + 1)}\n`,
+  );
+  assert.throws(
+    () => telemetry.loadModelInvocations(root, "oversized-line"),
+    /Telemetry line exceeds/,
+    "comparison loading fails closed on an oversized telemetry record",
+  );
+  const telemetryOutside = path.join(root, "outside-telemetry.jsonl");
+  fs.writeFileSync(telemetryOutside, "{}\n");
+  fs.symlinkSync(telemetryOutside, path.join(telemetryDirectory, "linked-run.jsonl"));
+  assert.throws(
+    () => telemetry.loadModelInvocations(root, "linked-run"),
+    /not a real regular file/,
+    "comparison loading never follows a telemetry symlink",
+  );
+
   // Supervisor turns are also measured, and the request-time hook is the
   // final network boundary for the exact-nine model policy.
   const runtimeEvents = new Map();
