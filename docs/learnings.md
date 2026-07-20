@@ -1,5 +1,60 @@
 # pi-iterative-goal Docs Bundle Handoff
 
+## 2026-07-20 — Deployment-plan campaigns C0–C4 implemented and production-validated
+
+Branch: `feat/deployment-plan-c0-c4` (spec: `docs/plan/pi-iterative-goal-deployment-plan_*`).
+Primary new evidence: `ai_docs/prod_runtime_confirmation/run-2026-07-20T16-33-21-328Z-*`
+(real-runtime confirmation, 9/9 PASS).
+
+### What landed (all feature-flag OFF by default)
+
+- **C0** `src/ui/phase-indicator.ts` — single goal/phase renderer; StateManager version counter; 1 Hz ticker.
+- **C1** swarm wiring — `src/agents/roles.ts`, `src/agents/run-pool.ts`, `goal_subagent tasks[]/mode`, shardability gate, `subagent_started/finished` ledger events. Flag: `iterativeGoal.swarm.enabled`.
+- **C2** sharder — `src/kernel/sharder.ts`, `src/domain/shard.ts`, `goal_post_shards`, spectral prior (Jacobi) + mandatory KL refinement, `shard_plan_proposed`/`shard_posted` events. Flag: `iterativeGoal.sharder.enabled`.
+- **C3** scheduler — `src/kernel/scheduler.ts` HEFT ranks + telemetry-calibrated costs (MIN_COST_SAMPLES=2, no-telemetry → conservative fallback), contract-net-style award, `shard_claimed/completed/failed` events, error-cascade monitor, wired at plan→implement. Flag: `iterativeGoal.scheduler.enabled`.
+- **C4** merge-back — `src/workspace/worktrees.ts` (integration branch `pi-ig/integration/<runId>`, scoped crash recovery, repair loop to `claimed`), `merge_proposed`/`merge_verified` events, judge-independence config (`iterativeGoal.judge`), evaluator shard gate. Flag: `iterativeGoal.mergeBack.enabled`.
+- Monitor convention: `scripts/swarm-monitor-trace.mjs` + `ai_docs/swarm-monitor-convention.md` (6-min tracer daemon + 24-min supervisor wake; deterministic journal header).
+
+### Verified this session
+
+- `npm run build && npm run smoke` → 82/82 (29 pre-campaign + 53 new).
+- `npm run evidence:headless` → 13 PASS / 30 coverage PASS; signed manifest `deliveredBytesVerified:true` (87 artifacts, run `headless-2026-07-20T13-16-35-625Z`).
+- Production runtime confirmation (`scripts/prod-runtime-confirmation.mjs`, real `pi` CLI 0.75.5 in `--mode rpc` against a disposable temp repo, z.ai glm-5.2): **9/9 PASS** — goal start, typed plan, brokered shell, gate fail→success, adversarial review via goal_subagent, release-auth refusal before gates, release-auth success after gates, `goal_git create_pr --dryRun` (no real PR), no writes outside temp repo / no Pi settings drift. 48 model calls.
+- `npm run review:prod-security:readonly` → 26/26 read-only commands; 6 findings all repeated (SEC-001..SEC-006, external unify infra, owned elsewhere), 0 new.
+- Per-campaign adversarial + Ousterhout reviews: 3 blocker/high-class and ~30 medium/low findings, all remediated; records in `ai_docs/reviews/c{0..4}-*.json`.
+
+### Newly closed items from the old incompletely-tested list
+
+- Real-runtime `/goal-start → phases → evaluator → /goal-authorize-release` now exercised end-to-end (RPC mode, headless) — see production confirmation s1–s8.
+- `goal_git create_pr` with a real `ReleaseAuthorization` covered in dry-run mode (s8).
+
+### Findings discovered by production confirmation (follow-ups, not regressions)
+
+- **pi 0.75.5 followUp stranding**: a followUp queued by an extension `agent_end` handler is not delivered until a new prompt starts a run (agent-loop drains followUps before firing `agent_end`). Interactive TUI is unaffected (user turns drain); headless/RPC drivers must nudge. The confirmation script works around it with "Continue." nudges.
+- `goal_shell` executable+argv parser struggles with multi-line heredoc scripts from the validate-phase prompt (~20 turns burned on quoting); single `bash -c` commands work.
+- Evaluator judge can return unparseable verdicts against large evidence + default rubric; short rubric + small goals mitigate.
+- `PiSubprocessAgentPool` first-spawn `process_restart` crash, self-heals on retry (seen in both final runs).
+- `capturePatch` is `git diff`-based: untracked new files never appear in shard patches (C5 candidate: `git add -N` before diff).
+
+### Still incompletely tested (carried forward, updated)
+
+- Interactive TUI flow (`/goal-start` in a live human-driven session) — RPC mode covered, TUI rendering of the new phase indicator not human-verified.
+- AWS coverage remains mocked/read-only; SSO profiles and mutating families unverified.
+- Browser/MCP/vision providers fail-closed, contract-checked only.
+- Real GitHub PR creation from a harness run (dry-run only by policy).
+- Swarm modes (`mode:"parallel"`), sharder, scheduler, merge-back flags ship OFF; first flag-on production use needs a real-corpus quality/cost benchmark before defaults flip (§5.3 Agentless lesson, recorded in Test 45's comment).
+- CI status for this branch's PR remains to be observed (`gh pr checks`).
+
+### Next session checklist
+
+1. `gh pr checks <number>` for the C0–C4 PR; merge per repo practice.
+2. Manual TUI sanity pass of the phase indicator (start a goal, watch the 1 Hz status bar/header).
+3. Decide whether to file the pi followUp-stranding quirk upstream (pi-agent-core).
+4. If enabling swarm/scheduler flags: run the real-corpus benchmark first; keep `MIN_COST_SAMPLES` semantics in mind (telemetry accrues from `subagent_finished` usage records).
+5. C5 candidates: untracked-file patch capture (`git add -N`); `PolicyDecision.lease` per-shard write scoping; automatic repair re-dispatch (currently manual-by-design, evaluator blocker text says so).
+
+---
+
 Date: 2026-06-22
 Branch: `refactor/autonomous-kernel-p0-p1`
 Primary artifact: `ai_docs/user_guide/index.html`
