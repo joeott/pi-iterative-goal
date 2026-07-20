@@ -87,8 +87,10 @@ function log(msg: string) {
 
 export interface IsolatedWorkspace {
   path: string;
-  /** The shard worktree's `git diff --binary` capture; "" when nothing changed. THROWS on git error (C4-ADV-011). */
+  /** Complete base→filesystem binary patch, including staged, committed, and untracked work. */
   capturePatch(): string;
+  /** Immutable source commit from which the worker worktree was created. */
+  baseSha: string;
   cleanup(): void;
 }
 
@@ -99,23 +101,77 @@ export interface IsolatedWorkspace {
  * runs, foreign provenance). Untracked, so it never enters a captured patch.
  */
 const WORKTREE_MARKER_FILE = ".pi-ig-worktree.json";
+const WORKTREE_MARKER_SCHEMA = "pi-iterative-goal.worktree-owner.v2";
+const INTEGRATION_LEASE_SCHEMA = "pi-iterative-goal.integration-lease.v1";
 
-function writeWorktreeMarker(worktreePath: string, kind: "shard" | "integration"): void {
+interface WorktreeOwnerRecord {
+  schema: typeof WORKTREE_MARKER_SCHEMA;
+  pid: number;
+  processStartToken: string | null;
+  kind: "shard" | "integration";
+  createdAt: string;
+  branch?: string;
+  leaseNonce?: string;
+}
+
+interface IntegrationLeaseRecord {
+  schema: typeof INTEGRATION_LEASE_SCHEMA;
+  repoRoot: string;
+  branch: string;
+  pid: number;
+  processStartToken: string | null;
+  nonce: string;
+  acquiredAt: string;
+}
+
+interface IntegrationLease {
+  path: string;
+  record: IntegrationLeaseRecord;
+  /** Dead lease atomically displaced during acquisition, if any. */
+  predecessor: IntegrationLeaseRecord | null;
+}
+
+function processStartToken(pid: number): string | null {
   try {
-    fs.writeFileSync(path.join(worktreePath, WORKTREE_MARKER_FILE), JSON.stringify({
+    const value = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 5_000,
+    }).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWorktreeMarker(
+  worktreePath: string,
+  kind: "shard" | "integration",
+  lease?: IntegrationLease,
+  required = false,
+): void {
+  try {
+    const record: WorktreeOwnerRecord = {
+      schema: WORKTREE_MARKER_SCHEMA,
       pid: process.pid,
+      processStartToken: processStartToken(process.pid),
       kind,
       createdAt: new Date().toISOString(),
-    }));
+      ...(lease ? { branch: lease.record.branch, leaseNonce: lease.record.nonce } : {}),
+    };
+    const markerPath = path.join(worktreePath, WORKTREE_MARKER_FILE);
+    const temporary = `${markerPath}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
+    fs.renameSync(temporary, markerPath);
   } catch (err) {
+    if (required) throw err;
     log(`worktree marker write failed for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-function readWorktreeMarker(worktreePath: string): { pid?: unknown } | null {
+function readWorktreeMarker(worktreePath: string): Partial<WorktreeOwnerRecord> | null {
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(path.join(worktreePath, WORKTREE_MARKER_FILE), "utf8"));
-    return parsed && typeof parsed === "object" ? parsed as { pid?: unknown } : null;
+    return parsed && typeof parsed === "object" ? parsed as Partial<WorktreeOwnerRecord> : null;
   } catch {
     return null;
   }
@@ -123,19 +179,52 @@ function readWorktreeMarker(worktreePath: string): { pid?: unknown } | null {
 
 export function prepareIsolatedWorktree(repoRoot: string, taskId: string): IsolatedWorkspace {
   execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: repoRoot, stdio: "ignore" });
+  const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8", timeout: 30_000 }).trim();
   const safeId = taskId.replace(/[^A-Za-z0-9._-]/g, "-");
   const workspacePath = path.join(os.tmpdir(), `pi-ig-agent-${safeId}-${crypto.randomBytes(4).toString("hex")}`);
-  execFileSync("git", ["worktree", "add", "--detach", workspacePath, "HEAD"], { cwd: repoRoot, stdio: "ignore" });
+  execFileSync("git", ["worktree", "add", "--detach", workspacePath, baseSha], { cwd: repoRoot, stdio: "ignore" });
+  const workspaceHead = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspacePath,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
+  if (workspaceHead !== baseSha) {
+    removeWorktree(repoRoot, workspacePath);
+    throw new Error(`isolated worktree HEAD mismatch: expected ${baseSha}, got ${workspaceHead}`);
+  }
   registerWorktreeForCleanup(repoRoot, workspacePath);
   writeWorktreeMarker(workspacePath, "shard");
   return {
     path: workspacePath,
+    baseSha,
     capturePatch() {
-      // C4-ADV-011: a git diff failure must stay distinguishable from "no
-      // changes" ("") — THROW, or merge-back could verify vanished work.
-      // The pool catches this for its best-effort reader path; the merge
-      // layer treats an unavailable patch as a rejection.
-      return execFileSync("git", ["diff", "--binary"], { cwd: workspacePath, encoding: "utf8", timeout: 30_000 }).trim();
+      // A plain `git diff` omits untracked files and every change already
+      // committed by the worker. Build a temporary index from the immutable
+      // source base, stage the filesystem snapshot into that index, remove
+      // the harness marker, and diff the index against the base. The worker's
+      // real index/branch is never modified.
+      const tempIndex = path.join(os.tmpdir(), `pi-ig-index-${safeId}-${crypto.randomBytes(4).toString("hex")}`);
+      const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+      try {
+        execFileSync("git", ["read-tree", baseSha], { cwd: workspacePath, env, stdio: "ignore", timeout: 30_000 });
+        execFileSync("git", ["add", "-A", "--", "."], { cwd: workspacePath, env, stdio: "ignore", timeout: 30_000 });
+        execFileSync("git", ["rm", "--cached", "--ignore-unmatch", "--", WORKTREE_MARKER_FILE], {
+          cwd: workspacePath,
+          env,
+          stdio: "ignore",
+          timeout: 30_000,
+        });
+        return execFileSync("git", ["diff", "--cached", "--binary", "--full-index", baseSha, "--"], {
+          cwd: workspacePath,
+          env,
+          encoding: "utf8",
+          timeout: 30_000,
+          maxBuffer: 100 * 1024 * 1024,
+        }).trim();
+      } finally {
+        try { fs.unlinkSync(tempIndex); } catch {}
+        try { fs.unlinkSync(`${tempIndex}.lock`); } catch {}
+      }
     },
     cleanup() {
       removeWorktree(repoRoot, workspacePath);
@@ -211,6 +300,171 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+type OwnerStatus = "live" | "dead" | "ambiguous";
+
+function ownerStatus(record: { pid?: unknown; processStartToken?: unknown }): OwnerStatus {
+  const pid = typeof record.pid === "number" && Number.isInteger(record.pid) && record.pid > 0
+    ? record.pid
+    : null;
+  if (pid === null) return "ambiguous";
+  if (!pidAlive(pid)) return "dead";
+  const expected = typeof record.processStartToken === "string" && record.processStartToken.length > 0
+    ? record.processStartToken
+    : null;
+  const actual = processStartToken(pid);
+  if (!expected || !actual) return "ambiguous";
+  return expected === actual ? "live" : "dead"; // PID was reused; the recorded owner is gone.
+}
+
+function gitCommonDir(repoRoot: string): string {
+  const configured = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
+  return fs.realpathSync(path.resolve(repoRoot, configured));
+}
+
+function integrationLeaseRoot(repoRoot: string): string {
+  const leaseRoot = path.join(gitCommonDir(repoRoot), "pi-iterative-goal", "integration-leases");
+  fs.mkdirSync(leaseRoot, { recursive: true, mode: 0o700 });
+  return leaseRoot;
+}
+
+function integrationLeasePath(repoRoot: string, branch: string): string {
+  const leaseRoot = integrationLeaseRoot(repoRoot);
+  return path.join(leaseRoot, `${sha256Text(branch)}.json`);
+}
+
+function readIntegrationLease(leasePath: string): IntegrationLeaseRecord | null {
+  try {
+    const stat = fs.lstatSync(leasePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    const parsed = JSON.parse(fs.readFileSync(leasePath, "utf8")) as Partial<IntegrationLeaseRecord>;
+    if (parsed.schema !== INTEGRATION_LEASE_SCHEMA
+      || typeof parsed.repoRoot !== "string"
+      || typeof parsed.branch !== "string"
+      || typeof parsed.pid !== "number"
+      || typeof parsed.nonce !== "string"
+      || typeof parsed.acquiredAt !== "string"
+      || !(typeof parsed.processStartToken === "string" || parsed.processStartToken === null)) return null;
+    return parsed as IntegrationLeaseRecord;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serializes lease create/reclaim/release. A surviving guard is intentionally
+ * fail-closed: it denotes a crash in the tiny ownership transition window and
+ * must never be guessed away while another process could be acquiring.
+ */
+function withIntegrationLeaseGuard<T>(leasePath: string, operation: () => T): T {
+  const guardPath = `${leasePath}.guard`;
+  try {
+    fs.mkdirSync(guardPath, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`integration lease ownership is ambiguous (guard exists): ${leasePath}`);
+    }
+    throw error;
+  }
+  try {
+    return operation();
+  } finally {
+    try { fs.rmdirSync(guardPath); } catch (error) {
+      log(`integration lease guard cleanup failed for ${guardPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function acquireIntegrationLease(repoRoot: string, branch: string): IntegrationLease {
+  const resolvedRepo = fs.realpathSync(repoRoot);
+  const leasePath = integrationLeasePath(resolvedRepo, branch);
+  return withIntegrationLeaseGuard(leasePath, () => {
+    let predecessor: IntegrationLeaseRecord | null = null;
+    if (fs.existsSync(leasePath)) {
+      const existing = readIntegrationLease(leasePath);
+      if (!existing
+        || existing.repoRoot !== resolvedRepo
+        || existing.branch !== branch) {
+        throw new Error(`integration lease ownership is ambiguous: ${leasePath}`);
+      }
+      const status = ownerStatus(existing);
+      if (status !== "dead") {
+        throw new Error(`integration branch ${branch} has a ${status} lease owner (pid ${existing.pid}); refusing concurrent reuse`);
+      }
+      // The branch-scoped guard makes dead-owner replacement atomic across all
+      // harness processes. No contender can unlink a newly-created lease.
+      predecessor = existing;
+      fs.unlinkSync(leasePath);
+    }
+    const record: IntegrationLeaseRecord = {
+      schema: INTEGRATION_LEASE_SCHEMA,
+      repoRoot: resolvedRepo,
+      branch,
+      pid: process.pid,
+      processStartToken: processStartToken(process.pid),
+      nonce: crypto.randomBytes(16).toString("hex"),
+      acquiredAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(leasePath, JSON.stringify(record), { flag: "wx", mode: 0o600 });
+    return { path: leasePath, record, predecessor };
+  });
+}
+
+function releaseIntegrationLease(lease: IntegrationLease, restorePredecessor = false): void {
+  try {
+    withIntegrationLeaseGuard(lease.path, () => {
+      if (!fs.existsSync(lease.path)) return;
+      const current = readIntegrationLease(lease.path);
+      if (!current || current.nonce !== lease.record.nonce) {
+        throw new Error(`integration lease nonce mismatch; refusing to release ${lease.path}`);
+      }
+      fs.unlinkSync(lease.path);
+      if (restorePredecessor && lease.predecessor) {
+        fs.writeFileSync(lease.path, JSON.stringify(lease.predecessor), { flag: "wx", mode: 0o600 });
+      }
+    });
+  } catch (error) {
+    log(`integration lease release failed for ${lease.record.branch}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function matchingIntegrationLease(repoRoot: string, marker: Partial<WorktreeOwnerRecord>): IntegrationLease | null {
+  if (marker.schema !== WORKTREE_MARKER_SCHEMA
+    || marker.kind !== "integration"
+    || typeof marker.branch !== "string"
+    || typeof marker.leaseNonce !== "string") return null;
+  const leasePath = integrationLeasePath(repoRoot, marker.branch);
+  const record = readIntegrationLease(leasePath);
+  if (!record || record.nonce !== marker.leaseNonce || record.branch !== marker.branch) return null;
+  return { path: leasePath, record, predecessor: null };
+}
+
+function recoverDeadIntegrationLeases(repoRoot: string): void {
+  const resolvedRepo = fs.realpathSync(repoRoot);
+  const leaseRoot = integrationLeaseRoot(resolvedRepo);
+  for (const entry of fs.readdirSync(leaseRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
+    const leasePath = path.join(leaseRoot, entry.name);
+    const candidate = readIntegrationLease(leasePath);
+    if (!candidate || candidate.repoRoot !== resolvedRepo || ownerStatus(candidate) !== "dead") continue;
+    try {
+      withIntegrationLeaseGuard(leasePath, () => {
+        const current = readIntegrationLease(leasePath);
+        if (!current
+          || current.nonce !== candidate.nonce
+          || current.repoRoot !== resolvedRepo
+          || ownerStatus(current) !== "dead") return;
+        fs.unlinkSync(leasePath);
+      });
+    } catch (error) {
+      log(`dead integration lease recovery refused for ${leasePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 /**
  * Scoped crash recovery (C4-ADV-004/C4-ADV-010): reclaims only HARNESS-prefixed
  * worktree registrations — never the user's ad-hoc worktrees, never other
@@ -240,17 +494,29 @@ export function recoverWorktrees(repoRoot: string): WorktreeRecoveryReport {
       continue;
     }
     const marker = readWorktreeMarker(entry);
-    const pid = typeof marker?.pid === "number" && Number.isInteger(marker.pid) && marker.pid > 0 ? marker.pid : null;
-    if (pid !== null && !pidAlive(pid)) {
+    const markerStatus = marker ? ownerStatus(marker) : "ambiguous";
+    const integrationLease = marker?.kind === "integration"
+      ? matchingIntegrationLease(repoRoot, marker)
+      : null;
+    const integrationLeaseDead = integrationLease ? ownerStatus(integrationLease.record) === "dead" : false;
+    const reclaimable = markerStatus === "dead"
+      && (marker?.kind !== "integration" || integrationLeaseDead);
+    if (reclaimable) {
       try {
         execFileSync("git", ["worktree", "remove", "--force", entry], { cwd: repoRoot, stdio: "ignore", timeout: 30_000 });
+        if (integrationLease) releaseIntegrationLease(integrationLease);
         reclaimed.push(entry);
       } catch (err) {
         log(`reclaim of ${entry} failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    // Alive creator or unmarked → left alone (concurrent run / foreign).
+    // Live/ambiguous owner or an integration marker without its exact lease →
+    // left alone. Recovery never guesses ownership from a writable path.
   }
+  // A crashed process can lose the worktree directory before Git's stale
+  // registration is pruned. Reclaim its exact dead-owner lease independently;
+  // live and ambiguous lease records remain untouched.
+  recoverDeadIntegrationLeases(repoRoot);
   const after = listWorktreePaths(repoRoot);
   return { before, after, pruned, reclaimed, skippedForeign };
 }
@@ -265,6 +531,13 @@ export interface MergeBackConfig {
    * inert (flag-guarded in src/evaluator.ts → findUnfinishedWork).
    */
   enabled: boolean;
+  /**
+   * Delivery flag: after every shard in the plan is merge_verified, prove the
+   * ledgered commit chain and compare-and-swap the originally attached source
+   * ref to that exact SHA. Disabled by default so integration-only behavior
+   * remains unchanged.
+   */
+  promoteToSource: boolean;
   /**
    * Integration branch override; null → pi-ig/integration/<runId>. Overrides
    * must keep the pi-ig/ harness prefix (C4-ADV-009) — anything else is
@@ -309,6 +582,7 @@ export function loadMergeBackConfig(cwd: string): MergeBackConfig {
   }
   return {
     enabled: config.enabled === true,
+    promoteToSource: config.promoteToSource === true,
     integrationBranch,
     testCommand: typeof config.testCommand === "string" && config.testCommand.trim().length > 0
       ? config.testCommand.trim()
@@ -406,6 +680,18 @@ export interface MergeBackReport {
   integrationBranch: string | null;
   /** Base ref the integration branch was cut from (null when the branch pre-existed). */
   baseSha: string | null;
+  /** Source worktree HEAD captured before merge-back began; the promotion compare-and-swap expectation. */
+  sourceHeadBefore: string | null;
+  /** Attached source branch ref pinned with sourceHeadBefore; null for detached HEAD. */
+  sourceRef: string | null;
+  /** Resolved integration branch tip after the shard gate, whether or not delivery was requested. */
+  integrationHead: string | null;
+  /** Source HEAD after a successful exact fast-forward; null when not delivered. */
+  deliveredSha: string | null;
+  /** Explicit source-delivery outcome. Promotion is independently default-off. */
+  promotionStatus: "disabled" | "blocked" | "promoted";
+  /** Human-readable source-delivery decision or failure evidence. */
+  promotionReason: string;
   /** Shard ids in HEFT merge order (claim-ledgered rank descending; unranked last, ties by posted index). */
   mergeOrder: string[];
   verified: string[];
@@ -420,6 +706,26 @@ export interface MergeBackReport {
 
 function sha256Text(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function resolveCommit(repoRoot: string, ref: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function trackedWorktreeStatus(repoRoot: string): string {
+  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=no"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
 }
 
 const NPM_FAMILY_COMMAND = /^\s*(npm|npx|yarn|pnpm)\b/;
@@ -484,6 +790,172 @@ function assertHarnessOwnedBranch(repoRoot: string, branch: string): void {
   }
 }
 
+function attachedSourceRef(repoRoot: string): string | null {
+  try {
+    const ref = execFileSync("git", ["symbolic-ref", "--quiet", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim();
+    return /^refs\/heads\/[A-Za-z0-9._/-]+$/.test(ref) ? ref : null;
+  } catch {
+    return null;
+  }
+}
+
+function singleCommitParent(repoRoot: string, commitSha: string): string | null {
+  try {
+    const parts = execFileSync("git", ["rev-list", "--parents", "-n", "1", commitSha], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim().split(/\s+/);
+    return parts.length === 2 ? parts[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Prove that applying `patch` to `parentSha` produces exactly commitSha's tree. */
+function patchBuildsCommitTree(repoRoot: string, parentSha: string, commitSha: string, patch: string): boolean {
+  const tempIndex = path.join(os.tmpdir(), `pi-ig-promotion-index-${crypto.randomBytes(8).toString("hex")}`);
+  const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+  try {
+    execFileSync("git", ["read-tree", parentSha], { cwd: repoRoot, env, stdio: "ignore", timeout: 30_000 });
+    execFileSync("git", ["apply", "--cached", "--whitespace=nowarn", "-"], {
+      cwd: repoRoot,
+      env,
+      input: patch.endsWith("\n") ? patch : `${patch}\n`,
+      stdio: ["pipe", "ignore", "pipe"],
+      timeout: 30_000,
+      maxBuffer: 100 * 1024 * 1024,
+    });
+    const reconstructedTree = execFileSync("git", ["write-tree"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim();
+    const committedTree = execFileSync("git", ["rev-parse", `${commitSha}^{tree}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim();
+    return reconstructedTree === committedTree;
+  } catch {
+    return false;
+  } finally {
+    try { fs.unlinkSync(tempIndex); } catch {}
+    try { fs.unlinkSync(`${tempIndex}.lock`); } catch {}
+  }
+}
+
+function verifyPromotionCommitChain(params: {
+  repoRoot: string;
+  branch: string;
+  baseSha: string;
+  integrationHead: string;
+  plan: ShardPlan;
+  merges: ShardMergeRecord[];
+  inputs: ShardMergeInput[];
+}): { ok: true; head: string } | { ok: false; reason: string } {
+  const mergeByShard = new Map(params.merges
+    .filter((merge) => merge.planId === params.plan.id && merge.cycle === params.plan.cycle)
+    .map((merge) => [merge.shardId, merge]));
+  const inputByShard = new Map(params.inputs.map((input) => [input.shardId, input.patch]));
+  const postedIndex = new Map(params.plan.shards.map((shard) => [shard.id, shard.index]));
+  const orderedMerges = params.plan.shards.map((shard) => mergeByShard.get(shard.id) ?? null).sort((a, b) => {
+    const rankA = a?.rank ?? Number.NEGATIVE_INFINITY;
+    const rankB = b?.rank ?? Number.NEGATIVE_INFINITY;
+    if (rankA !== rankB) return rankB - rankA;
+    return (postedIndex.get(a?.shardId ?? "") ?? 0) - (postedIndex.get(b?.shardId ?? "") ?? 0);
+  });
+  let cursor = params.baseSha;
+  for (const merge of orderedMerges) {
+    if (!merge || merge.status !== "verified") {
+      return { ok: false, reason: "verified merge chain is missing a planned shard" };
+    }
+    if (merge.runId !== params.plan.runId || merge.integrationBranch !== params.branch) {
+      return { ok: false, reason: `verified merge ${merge.shardId} is bound to a different run or integration branch` };
+    }
+    const commitSha = merge.integrationCommitSha;
+    if (!commitSha || resolveCommit(params.repoRoot, commitSha) !== commitSha) {
+      return { ok: false, reason: `verified merge ${merge.shardId} has no resolvable immutable integration commit SHA` };
+    }
+    let patch = inputByShard.get(merge.shardId);
+    if (typeof patch !== "string" && merge.patchArtifactPath) {
+      patch = readShardPatchArtifact(params.repoRoot, merge.patchArtifactPath);
+    }
+    if (typeof patch !== "string") {
+      if (merge.patchSha256 === sha256Text("")) patch = "";
+      else return { ok: false, reason: `verified merge ${merge.shardId} has no patch bytes for provenance proof` };
+    }
+    patch = patch.trim();
+    if (sha256Text(patch) !== merge.patchSha256) {
+      return { ok: false, reason: `verified merge ${merge.shardId} patch hash no longer matches its ledger record` };
+    }
+    if (patch.length === 0) {
+      if (commitSha !== cursor) {
+        return { ok: false, reason: `empty verified merge ${merge.shardId} does not bind to its verified predecessor` };
+      }
+      continue;
+    }
+    const parentSha = singleCommitParent(params.repoRoot, commitSha);
+    if (parentSha !== cursor) {
+      return { ok: false, reason: `verified merge ${merge.shardId} is not the next commit in the ordered integration chain` };
+    }
+    if (!patchBuildsCommitTree(params.repoRoot, cursor, commitSha, patch)) {
+      return { ok: false, reason: `verified merge ${merge.shardId} commit tree is not exactly its ledgered patch` };
+    }
+    cursor = commitSha;
+  }
+  if (cursor !== params.integrationHead) {
+    return { ok: false, reason: `integration tip ${params.integrationHead} is not the exact end of the verified commit chain ${cursor}` };
+  }
+  return { ok: true, head: cursor };
+}
+
+function advanceAttachedSourceRef(params: {
+  repoRoot: string;
+  sourceRef: string;
+  expectedOldSha: string;
+  verifiedNewSha: string;
+}): void {
+  execFileSync("git", [
+    "update-ref", "-m", "pi-iterative-goal verified shard promotion",
+    params.sourceRef, params.verifiedNewSha, params.expectedOldSha,
+  ], { cwd: params.repoRoot, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
+  try {
+    if (resolveCommit(params.repoRoot, params.sourceRef) !== params.verifiedNewSha) {
+      throw new Error("source ref moved again immediately after compare-and-swap");
+    }
+    // update-ref intentionally moves only the exact ref. Refresh this clean
+    // attached worktree without `--hard`: --merge refuses to overwrite a
+    // concurrent tracked edit that appeared after the cleanliness check.
+    execFileSync("git", ["reset", "--merge", params.verifiedNewSha], {
+      cwd: params.repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    });
+  } catch (error) {
+    // Roll the ref back only if it is still exactly the SHA this invocation
+    // installed. A concurrent third-party advance is never overwritten.
+    try {
+      execFileSync("git", ["update-ref", params.sourceRef, params.expectedOldSha, params.verifiedNewSha], {
+        cwd: params.repoRoot,
+        stdio: "ignore",
+        timeout: 30_000,
+      });
+      execFileSync("git", ["reset", "--merge", params.expectedOldSha], {
+        cwd: params.repoRoot,
+        stdio: "ignore",
+        timeout: 30_000,
+      });
+    } catch { /* leave exact failure evidence to the caller; never force-reset */ }
+    throw error;
+  }
+}
+
 /**
  * Applies a shard plan's captured patches onto the integration branch in HEFT
  * order, gating each through merge_proposed → (gates) → merge_verified, and
@@ -507,6 +979,14 @@ export async function mergeShardPlan(
     planId: plan.id,
     integrationBranch: null,
     baseSha: null,
+    sourceHeadBefore: null,
+    sourceRef: null,
+    integrationHead: null,
+    deliveredSha: null,
+    promotionStatus: config.promoteToSource ? "blocked" : "disabled",
+    promotionReason: config.promoteToSource
+      ? "source promotion blocked: merge-back is disabled"
+      : "source promotion is disabled (default off)",
     mergeOrder: [],
     verified: [],
     rejected: [],
@@ -525,6 +1005,15 @@ export async function mergeShardPlan(
   if (!state) throw new Error("mergeShardPlan requires an active run");
   const runId = state.runId;
   const branch = config.integrationBranch ?? `pi-ig/integration/${runId.replace(/[^A-Za-z0-9._/-]/g, "-")}`;
+  // This immutable source expectation is checked again immediately before
+  // promotion. A concurrent source advance must never be silently included
+  // in, reset by, or overwritten with the integration result.
+  const sourceHeadAtStart = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: deps.cwd,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
+  const sourceRefAtStart = attachedSourceRef(deps.cwd);
 
   const shardIndex = new Map(plan.shards.map((shard) => [shard.id, shard.index]));
   const claimsByShardId = new Map(
@@ -543,17 +1032,30 @@ export async function mergeShardPlan(
     if (rankA !== rankB) return rankB - rankA;
     return (shardIndex.get(a.shardId) ?? 0) - (shardIndex.get(b.shardId) ?? 0);
   });
-  const report: MergeBackReport = { ...empty, integrationBranch: branch, mergeOrder: ordered.map((input) => input.shardId) };
+  const report: MergeBackReport = {
+    ...empty,
+    integrationBranch: branch,
+    sourceHeadBefore: sourceHeadAtStart,
+    sourceRef: sourceRefAtStart,
+    promotionStatus: config.promoteToSource ? "blocked" : "disabled",
+    promotionReason: config.promoteToSource
+      ? "source promotion has not passed its delivery gates"
+      : "source promotion is disabled (default off)",
+    mergeOrder: ordered.map((input) => input.shardId),
+  };
 
   let worktreePath: string | null = null;
+  let integrationLease: IntegrationLease | null = null;
+  let integrationLeaseAdopted = false;
   try {
     // Lazily create the integration branch + worktree on the first shard that
     // is actually proposed — a fully-skipped batch leaves no git trace.
     let branchReady = false;
     const ensureWorktree = (): string => {
       if (worktreePath) return worktreePath;
+      integrationLease ??= acquireIntegrationLease(deps.cwd, branch);
       if (!branchReady) {
-        const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: deps.cwd, encoding: "utf8" }).trim();
+        const baseSha = sourceHeadAtStart;
         try {
           execFileSync("git", ["rev-parse", "--verify", branch], { cwd: deps.cwd, stdio: "ignore" });
           assertHarnessOwnedBranch(deps.cwd, branch);
@@ -564,27 +1066,40 @@ export async function mergeShardPlan(
         }
         branchReady = true;
       }
-      // C4-ADV-004: a previous run killed mid-merge can leave this branch's
-      // integration worktree behind. Reuse/reset it instead of fataling on
-      // "already used by worktree"; a vanished directory is pruned inline.
+      // A prior crash may leave the branch checked out. Never reset or reuse a
+      // surviving worktree: only an exact v2 marker whose recorded process is
+      // provably dead may be removed while this invocation holds the atomic
+      // branch lease. Live or ambiguous ownership fails closed.
       const existing = findWorktreeForBranch(deps.cwd, branch);
       if (existing && fs.existsSync(existing)) {
-        execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: existing, stdio: "ignore" });
-        execFileSync("git", ["clean", "-fd"], { cwd: existing, stdio: "ignore" });
-        writeWorktreeMarker(existing, "integration");
-        registerWorktreeForCleanup(deps.cwd, existing);
-        worktreePath = existing;
-        return worktreePath;
-      }
-      if (existing) {
-        try { execFileSync("git", ["worktree", "remove", "--force", existing], { cwd: deps.cwd, stdio: "ignore", timeout: 30_000 }); } catch {}
+        const marker = readWorktreeMarker(existing);
+        const status = marker ? ownerStatus(marker) : "ambiguous";
+        const reclaimable = marker?.schema === WORKTREE_MARKER_SCHEMA
+          && marker.kind === "integration"
+          && marker.branch === branch
+          && typeof marker.leaseNonce === "string"
+          && marker.leaseNonce === integrationLease.predecessor?.nonce
+          && status === "dead";
+        if (!reclaimable) {
+          throw new Error(`integration worktree ${existing} has ${status} or unverifiable ownership; refusing reset/reuse`);
+        }
+        removeWorktree(deps.cwd, existing);
+        integrationLeaseAdopted = true;
+      } else if (existing) {
+        execFileSync("git", ["worktree", "remove", "--force", existing], {
+          cwd: deps.cwd,
+          stdio: "ignore",
+          timeout: 30_000,
+        });
+        integrationLeaseAdopted = true;
       }
       const safeRun = runId.replace(/[^A-Za-z0-9._-]/g, "-");
       worktreePath = path.join(os.tmpdir(), `pi-ig-integration-${safeRun}-${crypto.randomBytes(4).toString("hex")}`);
       // Branch-tracked (not --detach): verified commits advance the branch ref.
       execFileSync("git", ["worktree", "add", worktreePath, branch], { cwd: deps.cwd, stdio: "ignore" });
       registerWorktreeForCleanup(deps.cwd, worktreePath);
-      writeWorktreeMarker(worktreePath, "integration");
+      writeWorktreeMarker(worktreePath, "integration", integrationLease, true);
+      integrationLeaseAdopted = true;
       return worktreePath;
     };
 
@@ -617,7 +1132,7 @@ export async function mergeShardPlan(
           try {
             execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: worktreePath, stdio: "ignore" });
             execFileSync("git", ["clean", "-fd"], { cwd: worktreePath, stdio: "ignore" });
-            writeWorktreeMarker(worktreePath, "integration");
+            writeWorktreeMarker(worktreePath, "integration", integrationLease ?? undefined, true);
           } catch (err) {
             log(`integration worktree restore after ${gate} rejection failed: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -669,6 +1184,7 @@ export async function mergeShardPlan(
         patchSha256,
         patchArtifactPath: claim.patchArtifactPath,
         integrationBranch: branch,
+        integrationCommitSha: null,
         rank: effectiveRank(input),
         gate: null,
         error: null,
@@ -742,10 +1258,17 @@ export async function mergeShardPlan(
         }
       }
 
+      const verifiedIntegrationCommitSha = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: tree,
+        encoding: "utf8",
+        timeout: 30_000,
+      }).trim();
+
       deps.stateManager.recordMergeVerified(input.shardId, {
         runId,
         planId: plan.id,
         cycle: plan.cycle,
+        integrationCommitSha: verifiedIntegrationCommitSha,
         gate: {
           allowlistOk: true,
           extraFiles: [],
@@ -761,6 +1284,104 @@ export async function mergeShardPlan(
     }
   } finally {
     if (worktreePath) removeWorktree(deps.cwd, worktreePath);
+    if (integrationLease) releaseIntegrationLease(integrationLease, !integrationLeaseAdopted);
+  }
+
+  report.integrationHead = resolveCommit(deps.cwd, branch);
+  if (config.promoteToSource) {
+    const latestState = deps.stateManager.getState();
+    const unverifiedShards = plan.shards.filter((shard) => {
+      const merge = latestState?.shards.merges.find(
+        (item) => item.planId === plan.id && item.cycle === plan.cycle && item.shardId === shard.id,
+      );
+      return merge?.status !== "verified";
+    }).map((shard) => shard.id);
+    const unsafeSkips = report.skipped.filter((item) => item.reason !== "already merge_verified");
+
+    const verifiedChain = report.integrationHead && latestState
+      ? verifyPromotionCommitChain({
+          repoRoot: deps.cwd,
+          branch,
+          baseSha: sourceHeadAtStart,
+          integrationHead: report.integrationHead,
+          plan,
+          merges: latestState.shards.merges,
+          inputs,
+        })
+      : null;
+
+    if (report.rejected.length > 0) {
+      report.promotionReason = `source promotion blocked: ${report.rejected.length} shard merge gate rejection(s)`;
+    } else if (unsafeSkips.length > 0) {
+      report.promotionReason = `source promotion blocked: ${unsafeSkips.length} shard input(s) skipped without an existing merge_verified verdict`;
+    } else if (unverifiedShards.length > 0) {
+      report.promotionReason = `source promotion blocked: not every planned shard is merge_verified (${unverifiedShards.join(", ")})`;
+    } else if (!report.integrationHead) {
+      report.promotionReason = `source promotion blocked: integration branch ${branch} has no resolvable commit`;
+    } else if (!sourceRefAtStart) {
+      report.promotionReason = "source promotion blocked: source HEAD was detached; an attached branch ref must be pinned at merge start";
+    } else if (attachedSourceRef(deps.cwd) !== sourceRefAtStart) {
+      report.promotionReason = `source promotion blocked: attached source ref changed from ${sourceRefAtStart} to ${attachedSourceRef(deps.cwd) ?? "detached"}`;
+    } else if (!verifiedChain?.ok) {
+      report.promotionReason = `source promotion blocked: ${verifiedChain?.reason ?? "verified commit-chain proof unavailable"}`;
+    } else {
+      const sourceHeadNow = resolveCommit(deps.cwd, "HEAD");
+      const sourceRefHeadNow = resolveCommit(deps.cwd, sourceRefAtStart);
+      if (sourceHeadNow !== sourceHeadAtStart || sourceRefHeadNow !== sourceHeadAtStart) {
+        report.promotionReason = `source promotion blocked: source HEAD moved from ${sourceHeadAtStart} to ${sourceHeadNow ?? "unresolvable"}`;
+      } else {
+        let trackedStatus = "";
+        let cleanlinessChecked = false;
+        try {
+          trackedStatus = trackedWorktreeStatus(deps.cwd);
+          cleanlinessChecked = true;
+        } catch (err) {
+          report.promotionReason = `source promotion blocked: tracked worktree cleanliness check failed (${err instanceof Error ? err.message : String(err)})`;
+        }
+        if (cleanlinessChecked) {
+          if (trackedStatus.length > 0) {
+            report.promotionReason = "source promotion blocked: source worktree has tracked changes";
+          } else {
+            try {
+              // Re-apply ownership on a warm resume, then freeze every mutable
+              // input immediately before the exact-ref CAS. The branch name is
+              // never passed to the delivery command.
+              if (verifiedChain.head !== sourceHeadAtStart) {
+                assertHarnessOwnedBranch(deps.cwd, branch);
+              }
+              if (resolveCommit(deps.cwd, branch) !== verifiedChain.head) {
+                throw new Error(`integration branch moved after proof; expected ${verifiedChain.head}`);
+              }
+              if (attachedSourceRef(deps.cwd) !== sourceRefAtStart
+                || resolveCommit(deps.cwd, sourceRefAtStart) !== sourceHeadAtStart
+                || resolveCommit(deps.cwd, "HEAD") !== sourceHeadAtStart
+                || trackedWorktreeStatus(deps.cwd).length > 0) {
+                throw new Error("source ref, HEAD, or tracked worktree changed after promotion preflight");
+              }
+              advanceAttachedSourceRef({
+                repoRoot: deps.cwd,
+                sourceRef: sourceRefAtStart,
+                expectedOldSha: sourceHeadAtStart,
+                verifiedNewSha: verifiedChain.head,
+              });
+              const deliveredSha = resolveCommit(deps.cwd, "HEAD");
+              const deliveredRefSha = resolveCommit(deps.cwd, sourceRefAtStart);
+              if (!deliveredSha || deliveredSha !== verifiedChain.head || deliveredRefSha !== verifiedChain.head) {
+                report.promotionReason = `source promotion blocked: post-CAS source ref/HEAD does not equal verified tip ${verifiedChain.head}`;
+              } else {
+                report.deliveredSha = deliveredSha;
+                report.promotionStatus = "promoted";
+                report.promotionReason = `source ref ${sourceRefAtStart} compare-and-swapped exactly to verified commit ${verifiedChain.head}`;
+              }
+            } catch (err) {
+              const failure = err as { stderr?: Buffer | string; message?: string };
+              const stderr = typeof failure.stderr === "string" ? failure.stderr : failure.stderr?.toString();
+              report.promotionReason = `source promotion blocked: exact-ref compare-and-swap failed (${(stderr || failure.message || String(err)).trim().slice(-800)})`;
+            }
+          }
+        }
+      }
+    }
   }
 
   report.reason = `merge-back over ${report.mergeOrder.length} shard patch(es) in HEFT order: ${report.verified.length} verified, ${report.rejected.length} rejected, ${report.skipped.length} skipped`;

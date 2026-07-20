@@ -182,6 +182,13 @@ export interface ShardMergeRecord {
   patchArtifactPath: string | null;
   /** Harness-owned integration branch the patch was applied onto. */
   integrationBranch: string;
+  /**
+   * Exact integration commit/tree state that passed the shard gate. For an
+   * empty patch this is the already-verified predecessor commit; for a
+   * non-empty patch it is the one commit created from patchSha256. Promotion
+   * replays this chain and never trusts the mutable integration branch name.
+   */
+  integrationCommitSha: string | null;
   /** HEFT upward rank the merge order was taken from; null when unranked. */
   rank: number | null;
   /**
