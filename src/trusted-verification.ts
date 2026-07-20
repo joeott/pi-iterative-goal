@@ -1,4 +1,9 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import {
+  execFileSync,
+  spawn,
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+} from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -14,10 +19,106 @@ import {
 } from "./trusted-dependencies.js";
 import type { IterativeGoalState } from "./types.js";
 
-export const TRUSTED_VERIFICATION_SCHEMA = "pi-iterative-goal.trusted-verification.v5" as const;
+export const TRUSTED_VERIFICATION_SCHEMA = "pi-iterative-goal.trusted-verification.v6" as const;
 export const TRUSTED_VERIFICATION_CONFIG_SCHEMA = "pi-iterative-goal.trusted-verification-config.v1" as const;
 export const TRUSTED_VERIFICATION_CONFIG_PATH = "config/trusted-verification.json" as const;
 const MAX_TRUSTED_VERIFICATION_CONFIG_BYTES = 128 * 1024;
+const MAX_TRUSTED_VERIFICATION_RECEIPT_BYTES = 2 * 1024 * 1024;
+const MAX_TRUSTED_VERIFICATION_ARTIFACT_BYTES = 5 * 1024 * 1024;
+const MAX_TRUSTED_PROCESS_SUPERVISOR_BYTES = 128 * 1024;
+const MAX_TRUSTED_RUNTIME_EXECUTABLE_BYTES = 1024 * 1024 * 1024;
+export const TRUSTED_PROCESS_SUPERVISOR_SHA256 = "8412d0b564238ea779a33ce308a6542f627b38f562e2634d2a0fd152cefe0f3e" as const;
+export const TRUSTED_PROCESS_SUPERVISOR_PATH = "scripts/trusted-process-supervisor.mjs" as const;
+
+export interface TrustedRuntimeExecutableIdentity {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+interface CapturedRuntimeExecutableIdentity extends TrustedRuntimeExecutableIdentity {
+  device: number;
+  inode: number;
+  mode: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
+function captureRuntimeExecutableIdentity(executablePath: string): CapturedRuntimeExecutableIdentity {
+  const absolutePath = path.resolve(executablePath);
+  const canonicalPath = fs.realpathSync(absolutePath);
+  if (canonicalPath !== absolutePath) throw new Error("trusted runtime executable path must be canonical and symlink-free");
+  const descriptor = fs.openSync(canonicalPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || (before.mode & 0o111) === 0) {
+      throw new Error("trusted runtime executable must be an executable regular file");
+    }
+    if (before.size <= 0 || before.size > MAX_TRUSTED_RUNTIME_EXECUTABLE_BYTES) {
+      throw new Error(`trusted runtime executable exceeds ${MAX_TRUSTED_RUNTIME_EXECUTABLE_BYTES} bytes`);
+    }
+    const digest = crypto.createHash("sha256");
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let total = 0;
+    while (true) {
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      total += count;
+      if (total > MAX_TRUSTED_RUNTIME_EXECUTABLE_BYTES) {
+        throw new Error(`trusted runtime executable grew beyond ${MAX_TRUSTED_RUNTIME_EXECUTABLE_BYTES} bytes`);
+      }
+      digest.update(chunk.subarray(0, count));
+    }
+    const after = fs.fstatSync(descriptor);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+      || before.mode !== after.mode || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs
+      || total !== before.size) {
+      throw new Error("trusted runtime executable changed while it was being authenticated");
+    }
+    return {
+      path: canonicalPath,
+      sha256: digest.digest("hex"),
+      size: total,
+      device: before.dev,
+      inode: before.ino,
+      mode: before.mode,
+      mtimeMs: before.mtimeMs,
+      ctimeMs: before.ctimeMs,
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function sameRuntimeExecutableIdentity(
+  left: CapturedRuntimeExecutableIdentity,
+  right: CapturedRuntimeExecutableIdentity,
+): boolean {
+  return left.path === right.path && left.sha256 === right.sha256 && left.size === right.size
+    && left.device === right.device && left.inode === right.inode && left.mode === right.mode
+    && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+}
+
+function publicRuntimeExecutableIdentity(identity: CapturedRuntimeExecutableIdentity): TrustedRuntimeExecutableIdentity {
+  return { path: identity.path, sha256: identity.sha256, size: identity.size };
+}
+
+function trustedGitEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    PATH: "/usr/bin:/bin",
+    HOME: os.tmpdir(),
+    TMPDIR: os.tmpdir(),
+    LC_ALL: "C",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    ...extra,
+  };
+}
+
+function trustedGitArgs(args: string[]): string[] {
+  return ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args];
+}
 
 export type TrustedVerificationSandboxBackend = "macos-sandbox-exec" | "linux-bwrap";
 
@@ -76,6 +177,10 @@ export interface TrustedVerificationReceiptV1 {
   resultsHash: string;
   /** OS-enforced boundary used for the offline dependency install and every check. */
   sandbox: TrustedVerificationSandboxReceipt;
+  /** Authenticated standalone supervisor blob used for every sandbox launch. */
+  supervisorHelperSha256: typeof TRUSTED_PROCESS_SUPERVISOR_SHA256;
+  /** Exact Node executable used to launch the authenticated supervisor. */
+  supervisorRuntimeExecutable: TrustedRuntimeExecutableIdentity;
   /** Metadata-only proof that every private-cache tarball matched the exact lock. */
   dependencyMaterialization: TrustedNpmMaterializationReceipt | null;
   /** Lockfile-derived dependency install executed with lifecycle scripts disabled. */
@@ -87,10 +192,11 @@ export interface TrustedVerificationReceiptV1 {
 function resolveRepositoryRoot(cwd: string): string {
   const start = fs.realpathSync(cwd);
   try {
-    const root = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    const root = execFileSync("git", trustedGitArgs(["rev-parse", "--show-toplevel"]), {
       cwd: start,
       encoding: "utf8",
       timeout: 30_000,
+      env: trustedGitEnvironment(),
     }).trim();
     return fs.realpathSync(root);
   } catch {
@@ -107,6 +213,7 @@ function isCommandSpec(value: unknown): value is CommandSpec {
     && command.executable.length > 0
     && command.executable.length <= 4096
     && !command.executable.includes("\0")
+    && (!path.isAbsolute(command.executable) || path.resolve(command.executable) === path.resolve(process.execPath))
     && Array.isArray(command.argv)
     && command.argv.length <= 256
     && command.argv.every((item) => typeof item === "string" && item.length <= 65_536 && !item.includes("\0"))
@@ -121,10 +228,11 @@ export function loadTrustedVerificationConfig(cwd: string): TrustedVerificationC
   const repositoryRoot = resolveRepositoryRoot(cwd);
   let rawBytes: string;
   try {
-    execFileSync("git", ["cat-file", "-e", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`], {
+    execFileSync("git", trustedGitArgs(["cat-file", "-e", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`]), {
       cwd: repositoryRoot,
       stdio: "ignore",
       timeout: 30_000,
+      env: trustedGitEnvironment(),
     });
   } catch {
     // Trusted checks are optional when the committed policy file is absent.
@@ -133,11 +241,12 @@ export function loadTrustedVerificationConfig(cwd: string): TrustedVerificationC
     return { enabled: false, checks: [] };
   }
   try {
-    rawBytes = execFileSync("git", ["show", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`], {
+    rawBytes = execFileSync("git", trustedGitArgs(["show", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`]), {
       cwd: repositoryRoot,
       encoding: "utf8",
       timeout: 30_000,
       maxBuffer: MAX_TRUSTED_VERIFICATION_CONFIG_BYTES,
+      env: trustedGitEnvironment(),
     });
   } catch (error) {
     throw new Error(`Unable to read committed trusted-verification policy at ${TRUSTED_VERIFICATION_CONFIG_PATH}`, { cause: error });
@@ -194,11 +303,57 @@ export function trustedVerificationPolicyMatches(
 }
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30_000 }).trim();
+  return execFileSync("git", trustedGitArgs(args), {
+    cwd,
+    encoding: "utf8",
+    timeout: 30_000,
+    env: trustedGitEnvironment(),
+  }).trim();
 }
 
 function trackedTreeClean(cwd: string): boolean {
-  return git(cwd, ["status", "--porcelain", "--untracked-files=no"]) === "";
+  let scratch: string | null = null;
+  try {
+    const tags = git(cwd, ["ls-files", "-v", "--"]);
+    if (tags.split(/\r?\n/).filter(Boolean).some((line) => /^[a-zS]/.test(line))) return false;
+    execFileSync("git", trustedGitArgs(["diff-index", "--cached", "--quiet", "HEAD", "--"]), {
+      cwd,
+      stdio: "ignore",
+      timeout: 30_000,
+      env: trustedGitEnvironment(),
+    });
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-clean-index-"));
+    const indexPath = path.join(scratch, "index");
+    const env = trustedGitEnvironment({ GIT_INDEX_FILE: indexPath });
+    execFileSync("git", trustedGitArgs(["read-tree", "HEAD"]), {
+      cwd,
+      stdio: "ignore",
+      timeout: 30_000,
+      env,
+    });
+    // read-tree deliberately leaves the fresh index without worktree stat
+    // data, so diff-files would otherwise report every tracked path as dirty.
+    // Refreshing this independent index both populates that data and forces
+    // content comparison without inheriting assume-unchanged/skip-worktree
+    // flags from the repository's mutable index.
+    execFileSync("git", trustedGitArgs(["update-index", "--really-refresh", "--ignore-submodules"]), {
+      cwd,
+      stdio: "ignore",
+      timeout: 30_000,
+      env,
+    });
+    execFileSync("git", trustedGitArgs(["diff-files", "--quiet", "--ignore-submodules=none", "--"]), {
+      cwd,
+      stdio: "ignore",
+      timeout: 30_000,
+      env,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 function resolveCheckCwd(validationRoot: string, configuredCwd?: string): string {
@@ -235,6 +390,9 @@ function assertCheckExecutableScoped(validationRoot: string, checkCwd: string, e
 
 function assertRuntimeConfig(config: TrustedVerificationConfig): void {
   if (!config.enabled) return;
+  if (Buffer.byteLength(JSON.stringify(config)) > MAX_TRUSTED_VERIFICATION_CONFIG_BYTES) {
+    throw new Error(`trusted verification configuration exceeds ${MAX_TRUSTED_VERIFICATION_CONFIG_BYTES} bytes`);
+  }
   if (config.checks.length === 0 || config.checks.length > 64) {
     throw new Error("trusted verification requires between 1 and 64 checks");
   }
@@ -278,7 +436,8 @@ interface SandboxedProcessOutcome {
 }
 
 interface SerializedSupervisorOutcome {
-  pid?: number;
+  supervisorPid?: number;
+  requestNonce?: string | null;
   status: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
@@ -766,6 +925,95 @@ function terminateSandboxProcessGroup(processGroupId: number | undefined): Trust
   };
 }
 
+interface MaterializedTrustedSupervisor {
+  path: string;
+  sha256: typeof TRUSTED_PROCESS_SUPERVISOR_SHA256;
+  device: number;
+  inode: number;
+  size: number;
+}
+
+function readBoundedRegularFileNoFollow(filePath: string, maximumBytes: number): Buffer {
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`trusted supervisor source is not a regular file: ${filePath}`);
+    if (stat.size > maximumBytes) throw new Error(`trusted supervisor source exceeds ${maximumBytes} bytes`);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const remaining = maximumBytes + 1 - total;
+      if (remaining <= 0) throw new Error(`trusted supervisor source exceeds ${maximumBytes} bytes`);
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      chunks.push(chunk.subarray(0, count));
+      total += count;
+      if (total > maximumBytes) throw new Error(`trusted supervisor source exceeds ${maximumBytes} bytes`);
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export function assertTrustedProcessSupervisorBytes(bytes: Buffer): void {
+  if (bytes.length === 0 || bytes.length > MAX_TRUSTED_PROCESS_SUPERVISOR_BYTES) {
+    throw new Error("trusted process supervisor source has an invalid size");
+  }
+  const actual = sha256(bytes);
+  if (actual !== TRUSTED_PROCESS_SUPERVISOR_SHA256) {
+    throw new Error(`trusted process supervisor digest mismatch: expected ${TRUSTED_PROCESS_SUPERVISOR_SHA256}, got ${actual}`);
+  }
+}
+
+function materializeTrustedProcessSupervisor(supervisorRoot: string): MaterializedTrustedSupervisor {
+  const canonicalRoot = fs.realpathSync(supervisorRoot);
+  const sourcePath = fileURLToPath(new URL(`../${TRUSTED_PROCESS_SUPERVISOR_PATH}`, import.meta.url));
+  const sourceBytes = readBoundedRegularFileNoFollow(sourcePath, MAX_TRUSTED_PROCESS_SUPERVISOR_BYTES);
+  assertTrustedProcessSupervisorBytes(sourceBytes);
+  const destination = path.join(canonicalRoot, `.trusted-process-supervisor-${crypto.randomBytes(16).toString("hex")}.mjs`);
+  writeExclusiveNoFollow(destination, sourceBytes);
+  fs.chmodSync(destination, 0o500);
+  const stat = fs.lstatSync(destination);
+  if (stat.isSymbolicLink() || !stat.isFile() || (stat.mode & 0o077) !== 0) {
+    throw new Error("private trusted process supervisor is not a private regular file");
+  }
+  const copiedBytes = readBoundedRegularFileNoFollow(destination, MAX_TRUSTED_PROCESS_SUPERVISOR_BYTES);
+  assertTrustedProcessSupervisorBytes(copiedBytes);
+  return {
+    path: destination,
+    sha256: TRUSTED_PROCESS_SUPERVISOR_SHA256,
+    device: stat.dev,
+    inode: stat.ino,
+    size: stat.size,
+  };
+}
+
+function trustedProcessSupervisorCopyIntact(supervisor: MaterializedTrustedSupervisor): boolean {
+  try {
+    const stat = fs.lstatSync(supervisor.path);
+    if (stat.isSymbolicLink() || !stat.isFile()
+      || stat.dev !== supervisor.device || stat.ino !== supervisor.inode || stat.size !== supervisor.size
+      || (stat.mode & 0o077) !== 0) return false;
+    const bytes = readBoundedRegularFileNoFollow(supervisor.path, MAX_TRUSTED_PROCESS_SUPERVISOR_BYTES);
+    assertTrustedProcessSupervisorBytes(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeTrustedProcessSupervisorCopy(supervisor: MaterializedTrustedSupervisor): boolean {
+  const intact = trustedProcessSupervisorCopyIntact(supervisor);
+  try {
+    fs.unlinkSync(supervisor.path);
+  } catch {
+    return false;
+  }
+  return intact;
+}
+
 function spawnContainedProcess(
   executable: string,
   argv: string[],
@@ -780,14 +1028,13 @@ function spawnContainedProcess(
   supervisorRoot: string,
   sandboxIdentity?: MacSandboxIdentity,
 ): SandboxedProcessOutcome {
-  // spawnSync cannot create a detached process group. A tiny trusted helper
-  // uses async spawn (which can), supervises output and timeout, and records
-  // the group id in a private path before waiting. The parent always performs
-  // a second TERM/KILL + extinction check, so a crashed or timed-out helper
-  // cannot abandon the sandbox process tree.
-  const supervisorPath = fileURLToPath(new URL("./trusted-process-supervisor.js", import.meta.url));
+  // The authenticated helper is itself launched as the detached group leader.
+  // spawnSync exposes that direct child PID, so the parent owns kill authority;
+  // no PID supplied by helper output or a mutable pidfile is ever trusted.
   const canonicalSupervisorRoot = fs.realpathSync(supervisorRoot);
-  const pidFile = path.join(canonicalSupervisorRoot, `.trusted-process-${crypto.randomBytes(16).toString("hex")}.pid`);
+  const runtimeExecutableBefore = captureRuntimeExecutableIdentity(process.execPath);
+  const supervisor = materializeTrustedProcessSupervisor(canonicalSupervisorRoot);
+  const requestNonce = crypto.randomBytes(32).toString("hex");
   const request = {
     executable,
     argv,
@@ -795,44 +1042,29 @@ function spawnContainedProcess(
     env: options.env,
     timeoutMs: options.timeout,
     maxBufferBytes: options.maxBuffer,
-    pidFile,
+    requestNonce,
     sandboxIdentity,
   };
-  const helper = spawnSync(process.execPath, [supervisorPath], {
+  // Node/libuv honors `detached` for spawnSync on POSIX (and exposes the
+  // resulting direct PID), although older @types/node releases omit it from
+  // the synchronous option interface.
+  const helperOptions: SpawnSyncOptionsWithStringEncoding & { detached: true } = {
     cwd: canonicalSupervisorRoot,
     shell: false,
+    detached: true,
     encoding: "utf8",
     input: JSON.stringify(request),
     timeout: options.timeout + 10_000,
-    maxBuffer: Math.max(12 * 1024 * 1024, options.maxBuffer * 3),
+    maxBuffer: Math.max(36 * 1024 * 1024, options.maxBuffer * 7),
     env: { PATH: path.dirname(process.execPath), NO_COLOR: "1" },
-  });
-
-  let recordedPid: number | undefined;
-  let pidFileError: Error | null = null;
-  try {
-    const descriptor = fs.openSync(pidFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    try {
-      const parsed = Number.parseInt(fs.readFileSync(descriptor, "utf8").trim(), 10);
-      if (Number.isSafeInteger(parsed) && parsed > 1) recordedPid = parsed;
-    } finally {
-      fs.closeSync(descriptor);
-    }
-  } catch (error) {
-    if (!pathError(error, "ENOENT")) {
-      try { fs.unlinkSync(pidFile); } catch { /* preserve the read failure */ }
-      pidFileError = error instanceof Error ? error : new Error(String(error));
-    }
-  }
+  };
+  const helper = spawnSync(process.execPath, [supervisor.path], helperOptions);
 
   let response: SerializedSupervisorOutcome | null = null;
   if (helper.status === 0 && typeof helper.stdout === "string") {
     try { response = JSON.parse(helper.stdout) as SerializedSupervisorOutcome; } catch { response = null; }
   }
-  const responsePid = response && Number.isSafeInteger(response.pid) && (response.pid ?? 0) > 1
-    ? response.pid
-    : undefined;
-  const processGroupId = recordedPid ?? responsePid;
+  const processGroupId = Number.isSafeInteger(helper.pid) && helper.pid > 1 ? helper.pid : undefined;
   const parentGroupCleanup = terminateSandboxProcessGroup(processGroupId);
   const parentIdentityCleanup = sandboxIdentity
     ? terminateMacSandboxIdentity(sandboxIdentity)
@@ -843,23 +1075,31 @@ function spawnContainedProcess(
       identityCensus: "linux-pid-namespace-v1" as const,
       identityMatchesObserved: 0,
     };
-  try { fs.unlinkSync(pidFile); } catch (error) {
-    if (!pathError(error, "ENOENT")) parentGroupCleanup.descendantsTerminated = false;
+  let runtimeExecutableIntact = false;
+  try {
+    runtimeExecutableIntact = sameRuntimeExecutableIdentity(
+      runtimeExecutableBefore,
+      captureRuntimeExecutableIdentity(process.execPath),
+    );
+  } catch {
+    runtimeExecutableIntact = false;
   }
+  const supervisorCopyIntact = removeTrustedProcessSupervisorCopy(supervisor);
 
-  const pidConsistent = recordedPid !== undefined && responsePid !== undefined && recordedPid === responsePid;
   const responseValid = response !== null
+    && response.supervisorPid === processGroupId
+    && response.requestNonce === requestNonce
     && response.processContainment?.isolatedProcessGroup === true
+    && typeof response.processContainment.descendantsTerminated === "boolean"
     && response.processContainment.identityCensus === parentIdentityCleanup.identityCensus
     && Number.isSafeInteger(response.processContainment.identityMatchesObserved)
     && response.processContainment.identityMatchesObserved >= 0
-    && pidFileError === null
-    && pidConsistent;
+    && runtimeExecutableIntact
+    && supervisorCopyIntact;
   const descendantsTerminated = Boolean(processGroupId)
     && parentGroupCleanup.descendantsTerminated
     && parentIdentityCleanup.descendantsTerminated
-    && responseValid
-    && response!.processContainment.descendantsTerminated;
+    && responseValid;
   const processContainment: TrustedVerificationProcessContainment = {
     isolatedProcessGroup: true,
     descendantsTerminated,
@@ -878,11 +1118,16 @@ function spawnContainedProcess(
   }
 
   if (!responseValid) {
-    const helperMessage = pidFileError?.message
-      ?? helper.error?.message
+    const helperMessage = !runtimeExecutableIntact
+      ? "trusted runtime executable changed during supervisor execution"
+      : !supervisorCopyIntact
+      ? "private trusted process supervisor changed during execution"
+      : helper.error?.message
       ?? String(helper.stderr || "trusted process supervisor returned invalid output").trim();
-    const helperCode = pidFileError
-      ? "ESUPERVISORPID"
+    const helperCode = !runtimeExecutableIntact
+      ? "ESUPERVISORRUNTIME"
+      : !supervisorCopyIntact
+      ? "ESUPERVISORINTEGRITY"
       : helper.error && "code" in helper.error
         ? String(helper.error.code)
         : "ESUPERVISOR";
@@ -1043,10 +1288,9 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
         .filter((pid): pid is number => Number.isSafeInteger(pid) && (pid ?? 0) > 1);
     } catch { /* a missing/malformed proof fails below */ }
     const escapedPids = spawnedPids.filter(processExists);
-    for (const pid of escapedPids) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* capability probe cleanup */ }
-      try { process.kill(-pid, "SIGKILL"); } catch { /* detached escape cleanup */ }
-    }
+    // Never signal raw child-reported PIDs here. The process-group/profile
+    // cleanup above is the authenticated lifetime boundary; a reported PID
+    // may already have been recycled to an unrelated same-UID process.
     const unrelatedSurvived = Number.isSafeInteger(unrelatedPid) && processExists(unrelatedPid!);
     const backendIdentityProof = selection.backend === "macos-sandbox-exec"
       ? outcome.processContainment.identityMatchesObserved >= 12
@@ -1378,20 +1622,23 @@ function createDetachedValidationCheckout(sourceRoot: string, validationRoot: st
   // dangerous source `.git` write exception. A shallow local fetch copies the
   // exact commit into a self-contained repository instead.
   fs.rmdirSync(validationRoot);
-  execFileSync("git", ["init", "-q", validationRoot], {
+  execFileSync("git", trustedGitArgs(["init", "-q", validationRoot]), {
     cwd: sourceRoot,
     encoding: "utf8",
     timeout: 30_000,
+    env: trustedGitEnvironment(),
   });
-  execFileSync("git", ["fetch", "--quiet", "--no-tags", "--depth=1", sourceRoot, sourceSha], {
+  execFileSync("git", trustedGitArgs(["-c", "protocol.file.allow=always", "fetch", "--quiet", "--no-tags", "--depth=1", sourceRoot, sourceSha]), {
     cwd: validationRoot,
     encoding: "utf8",
     timeout: 120_000,
+    env: trustedGitEnvironment(),
   });
-  execFileSync("git", ["checkout", "--quiet", "--detach", sourceSha], {
+  execFileSync("git", trustedGitArgs(["checkout", "--quiet", "--detach", sourceSha]), {
     cwd: validationRoot,
     encoding: "utf8",
     timeout: 30_000,
+    env: trustedGitEnvironment(),
   });
 }
 
@@ -1437,6 +1684,7 @@ export function runTrustedVerification(params: {
   // A new verifier attempt supersedes any older receipt for this cycle. If
   // this attempt crashes before signing, the prior PASS cannot survive it.
   invalidateFixedReceipt(receiptPath);
+  const runtimeExecutableBefore = captureRuntimeExecutableIdentity(process.execPath);
   const sandboxSelection = selectTrustedVerificationSandbox();
   if (!sandboxSelection) {
     throw new Error("trusted verification requires an enforceable OS sandbox (macOS sandbox-exec or Linux bubblewrap); no backend passed the capability probe");
@@ -1619,6 +1867,15 @@ export function runTrustedVerification(params: {
 
   const sourceShaAfter = git(sourceRoot, ["rev-parse", "HEAD"]);
   const sourceTrackedTreeCleanAfter = trackedTreeClean(sourceRoot);
+  let runtimeExecutableStable = false;
+  try {
+    runtimeExecutableStable = sameRuntimeExecutableIdentity(
+      runtimeExecutableBefore,
+      captureRuntimeExecutableIdentity(process.execPath),
+    );
+  } catch {
+    runtimeExecutableStable = false;
+  }
   const requiredFailed = config.checks.some((check) => check.required && results.find((result) => result.id === check.id)?.status !== "PASS");
   const allTreesClean = sourceTrackedTreeCleanBefore && sourceTrackedTreeCleanAfter && validationTrackedTreeClean;
   const receipt: TrustedVerificationReceiptV1 = {
@@ -1638,6 +1895,8 @@ export function runTrustedVerification(params: {
     checksHash: trustedVerificationConfigHash(config),
     resultsHash: sha256(results.map((result) => JSON.stringify(result)).join("\n")),
     sandbox: sandboxSelection.receipt,
+    supervisorHelperSha256: TRUSTED_PROCESS_SUPERVISOR_SHA256,
+    supervisorRuntimeExecutable: publicRuntimeExecutableIdentity(runtimeExecutableBefore),
     dependencyMaterialization,
     dependencyBootstrap,
     results,
@@ -1647,6 +1906,7 @@ export function runTrustedVerification(params: {
       && sourceSha === sourceShaAfter
       && sourceSha === validationSha
       && validationSha === validationShaAfter
+      && runtimeExecutableStable
       && allTreesClean,
   };
   const receiptBytes = JSON.stringify(receipt, null, 2);
@@ -1670,6 +1930,8 @@ export function runTrustedVerification(params: {
         sandboxBackend: receipt.sandbox.backend,
         sandboxProfile: receipt.sandbox.profile,
         descendantProcessContainment: receipt.sandbox.descendantProcessContainment,
+        supervisorHelperSha256: receipt.supervisorHelperSha256,
+        supervisorRuntimeExecutable: receipt.supervisorRuntimeExecutable,
         dependencyLockfileSha256: receipt.dependencyMaterialization?.lockfileSha256 ?? null,
         dependencyManifestSha256: receipt.dependencyMaterialization?.manifestSha256 ?? null,
         dependencyTarballs: receipt.dependencyMaterialization?.uniqueTarballs ?? 0,
@@ -1695,7 +1957,7 @@ function isWithin(root: string, candidate: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function readFileNoFollowWithin(root: string, candidate: string): Buffer {
+function readFileNoFollowWithin(root: string, candidate: string, maximumBytes: number): Buffer {
   const canonicalRoot = fs.realpathSync(root);
   const absoluteCandidate = path.resolve(candidate);
   if (!isWithin(canonicalRoot, absoluteCandidate)) {
@@ -1711,10 +1973,24 @@ function readFileNoFollowWithin(root: string, candidate: string): Buffer {
   }
   const descriptor = fs.openSync(absoluteCandidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    if (!fs.fstatSync(descriptor).isFile()) {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) {
       throw new Error(`trusted verification artifact is not a regular file: ${candidate}`);
     }
-    return fs.readFileSync(descriptor);
+    if (stat.size > maximumBytes) {
+      throw new Error(`trusted verification artifact exceeds ${maximumBytes} bytes: ${candidate}`);
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maximumBytes + 1 - total));
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      total += count;
+      if (total > maximumBytes) throw new Error(`trusted verification artifact grew beyond ${maximumBytes} bytes: ${candidate}`);
+      chunks.push(chunk.subarray(0, count));
+    }
+    return Buffer.concat(chunks, total);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -1748,7 +2024,11 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
     const repositoryRoot = resolveRepositoryRoot(cwd);
     const artifactRoot = trustedArtifactDirectory(repositoryRoot, state, stateManager);
     const receiptPath = path.join(artifactRoot, "trusted-verification-receipt.json");
-    const receiptBytes = readFileNoFollowWithin(artifactRoot, receiptPath).toString("utf8");
+    const receiptBytes = readFileNoFollowWithin(
+      artifactRoot,
+      receiptPath,
+      MAX_TRUSTED_VERIFICATION_RECEIPT_BYTES,
+    ).toString("utf8");
     const receipt = JSON.parse(receiptBytes) as TrustedVerificationReceiptV1;
     if (receipt.schema !== TRUSTED_VERIFICATION_SCHEMA || receipt.runId !== state.runId || receipt.cycle !== state.cycle) return null;
     if (!receipt.sandbox
@@ -1760,6 +2040,12 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
       || receipt.sandbox.validationWorktreeWritable !== true
       || receipt.sandbox.sourceRepositoryReadDenied !== true
       || receipt.sandbox.descendantProcessContainment !== "isolated-process-lifetime-v1") return null;
+    if (receipt.supervisorHelperSha256 !== TRUSTED_PROCESS_SUPERVISOR_SHA256) return null;
+    const currentRuntimeExecutable = publicRuntimeExecutableIdentity(captureRuntimeExecutableIdentity(process.execPath));
+    if (!receipt.supervisorRuntimeExecutable
+      || receipt.supervisorRuntimeExecutable.path !== currentRuntimeExecutable.path
+      || receipt.supervisorRuntimeExecutable.sha256 !== currentRuntimeExecutable.sha256
+      || receipt.supervisorRuntimeExecutable.size !== currentRuntimeExecutable.size) return null;
     if (!Array.isArray(receipt.results) || typeof receipt.resultsHash !== "string" || typeof receipt.checksHash !== "string") return null;
     const currentSha = git(repositoryRoot, ["rev-parse", "HEAD"]);
     if (receipt.sourceSha !== receipt.sourceShaAfter
@@ -1786,7 +2072,11 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
       : "linux-pid-namespace-v1";
     if (receipt.dependencyBootstrap) {
       if (!hasValidProcessContainment(receipt.dependencyBootstrap, expectedIdentityCensus)) return null;
-      if (sha256(readFileNoFollowWithin(artifactRoot, receipt.dependencyBootstrap.artifact)) !== receipt.dependencyBootstrap.artifactSha256) return null;
+      if (sha256(readFileNoFollowWithin(
+        artifactRoot,
+        receipt.dependencyBootstrap.artifact,
+        MAX_TRUSTED_VERIFICATION_ARTIFACT_BYTES,
+      )) !== receipt.dependencyBootstrap.artifactSha256) return null;
     }
     const materializationPassed = !receipt.dependencyMaterialization
       || receipt.dependencyMaterialization.status === "PASS";
@@ -1801,7 +2091,11 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
     for (const result of receipt.results) {
       if (typeof result.artifact !== "string" || typeof result.artifactSha256 !== "string") return null;
       if (!hasValidProcessContainment(result, expectedIdentityCensus)) return null;
-      if (sha256(readFileNoFollowWithin(artifactRoot, result.artifact)) !== result.artifactSha256) return null;
+      if (sha256(readFileNoFollowWithin(
+        artifactRoot,
+        result.artifact,
+        MAX_TRUSTED_VERIFICATION_ARTIFACT_BYTES,
+      )) !== result.artifactSha256) return null;
     }
     const absoluteReceiptPath = path.resolve(receiptPath);
     const attestation = state.attestations.find((item) => path.resolve(item.path) === absoluteReceiptPath && item.sha256 === sha256(receiptBytes));

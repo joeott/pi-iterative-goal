@@ -5,13 +5,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as net from "node:net";
-import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createSigningState } from "../dist/cyber-runtime.js";
 import { validateApprovalForCommand } from "../dist/domain/approval.js";
 import { createStateManager } from "../dist/state.js";
 import { runLocalReleaseGate } from "../dist/review/gates/release-gate.js";
 import { registerGoalShellTool } from "../dist/shell.js";
+import { isSafeReadOnly, requiresOperatorApproval } from "../dist/safety.js";
 import {
+  assertTrustedProcessSupervisorBytes,
   detectTrustedVerificationSandboxBackend,
   diagnoseTrustedVerificationSandboxBackend,
   loadTrustedVerificationConfig,
@@ -55,6 +58,46 @@ function expectThrow(fn, pattern) {
   assert.match(String(thrown), pattern);
 }
 
+const trustedSupervisorBytes = fs.readFileSync(new URL("./trusted-process-supervisor.mjs", import.meta.url));
+assert.doesNotThrow(() => assertTrustedProcessSupervisorBytes(trustedSupervisorBytes));
+assert.doesNotMatch(
+  trustedSupervisorBytes.toString("utf8"),
+  /(?:child\.kill\(|process\.kill\(activeChildPid)/,
+  "trusted supervisor must delegate cleanup to the parent-owned process group, never a raw child PID",
+);
+const tamperedSupervisorBytes = Buffer.from(trustedSupervisorBytes);
+tamperedSupervisorBytes[Math.floor(tamperedSupervisorBytes.length / 2)] ^= 1;
+expectThrow(
+  () => assertTrustedProcessSupervisorBytes(tamperedSupervisorBytes),
+  /trusted process supervisor digest mismatch/,
+);
+
+for (const command of [
+  "find src -maxdepth 2 -type f -print",
+  "sed -n '1,5p' src/safety.ts",
+  "npm audit --json",
+  "rg -n safety src",
+]) {
+  assert.equal(isSafeReadOnly(command), true, `${command} remains an allowlisted read`);
+  assert.equal(requiresOperatorApproval(command), false, `${command} does not need operator approval`);
+}
+for (const command of [
+  "find . -delete",
+  "find . -exec touch victim ;",
+  "find . -execdir touch victim ;",
+  "find . -fprint victim",
+  "sed -n -i.bak '1p' victim",
+  "sed -ni '1p' victim",
+  "sed -n --in-place=.bak '1p' victim",
+  "npm audit fix",
+  "npm audit --fix",
+  "rg --pre 'touch victim' needle .",
+  "rg --pre=touch needle .",
+]) {
+  assert.equal(isSafeReadOnly(command), false, `${command} must not inherit safety from its executable prefix`);
+  assert.equal(requiresOperatorApproval(command), true, `${command} requires operator approval`);
+}
+
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -64,8 +107,73 @@ function processAlive(pid) {
   }
 }
 
+function runSupervisorGroupAuthorityProbe() {
+  const wait = (milliseconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  const unrelated = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  unrelated.unref();
+  let helperGroup;
+  let helperGroupNeedsCleanup = false;
+  try {
+    const nonce = "b".repeat(64);
+    const payload = [
+      "const{spawn}=require('node:child_process');",
+      "const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});",
+      "child.unref();console.log(child.pid);",
+    ].join("");
+    const request = {
+      executable: process.execPath,
+      argv: ["-e", payload],
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH },
+      timeoutMs: 2_000,
+      maxBufferBytes: 4_096,
+      requestNonce: nonce,
+    };
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("./trusted-process-supervisor.mjs", import.meta.url))], {
+      input: JSON.stringify(request),
+      encoding: "utf8",
+      detached: true,
+      timeout: 4_000,
+    });
+    helperGroup = result.pid;
+    helperGroupNeedsCleanup = Number.isSafeInteger(helperGroup) && helperGroup > 1;
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout);
+    const groupedChild = Number.parseInt(response.stdout.trim(), 10);
+    assert.equal(response.supervisorPid, helperGroup, "parent-observed helper PID must be the only group authority");
+    assert.equal(response.requestNonce, nonce, "supervisor response must bind the one-use request nonce");
+    assert.equal(processAlive(groupedChild), true);
+    assert.equal(processAlive(unrelated.pid), true);
+    try { process.kill(-helperGroup, "SIGTERM"); } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+    for (let attempt = 0; attempt < 20 && processAlive(groupedChild); attempt += 1) wait(25);
+    if (processAlive(groupedChild)) {
+      try { process.kill(-helperGroup, "SIGKILL"); } catch (error) {
+        if (error?.code !== "ESRCH") throw error;
+      }
+    }
+    for (let attempt = 0; attempt < 80 && processAlive(groupedChild); attempt += 1) wait(25);
+    assert.equal(processAlive(groupedChild), false, "the parent-owned helper group must contain its descendants");
+    helperGroupNeedsCleanup = false;
+    assert.equal(processAlive(unrelated.pid), true, "group cleanup must not signal an unrelated sibling");
+  } finally {
+    if (helperGroupNeedsCleanup && Number.isSafeInteger(helperGroup) && helperGroup > 1) {
+      try { process.kill(-helperGroup, "SIGKILL"); } catch { /* group already extinct */ }
+    }
+    if (unrelated.exitCode === null && unrelated.signalCode === null
+      && Number.isSafeInteger(unrelated.pid) && unrelated.pid > 1) {
+      try { unrelated.kill("SIGKILL"); } catch { /* direct test child already exited */ }
+    }
+  }
+}
+
+runSupervisorGroupAuthorityProbe();
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-trusted-security-"));
-const descendantPids = new Set();
 try {
   const repo = path.join(scratch, "repo");
   const external = path.join(scratch, "external");
@@ -275,12 +383,13 @@ try {
   const descendantArtifact = fs.readFileSync(descendantResult.artifact, "utf8");
   assert.match(descendantArtifact, /Identity census: (?:macos-sandbox-check-v1|linux-pid-namespace-v1)/);
   assert.match(descendantArtifact, /Identity matches observed: \d+/);
+  let observedDescendantPids = 0;
   for (const match of descendantArtifact.matchAll(/DESCENDANT_(?:GROUP|DETACHED)_PID=(\d+)/g)) {
     const pid = Number.parseInt(match[1], 10);
-    descendantPids.add(pid);
+    observedDescendantPids += 1;
     assert.equal(processAlive(pid), false, `sandbox descendant ${pid} must not outlive its check`);
   }
-  assert.ok(descendantPids.size >= 1, "daemon containment test must observe at least one spawned descendant");
+  assert.ok(observedDescendantPids >= 1, "daemon containment test must observe at least one spawned descendant");
   const lifetimeResult = receipt.results.find((result) => result.id === "descendant-lifetime");
   assert.equal(lifetimeResult?.status, "PASS");
   assert.equal(lifetimeResult?.processContainment.isolatedProcessGroup, true);
@@ -290,7 +399,6 @@ try {
   const lifetimePidMatch = lifetimeArtifact.match(/STDOUT:\n(\d+)\n/);
   assert.ok(lifetimePidMatch, "same-group daemon test must record its descendant PID");
   const lifetimePid = Number.parseInt(lifetimePidMatch[1], 10);
-  descendantPids.add(lifetimePid);
   assert.equal(processAlive(lifetimePid), false, `same-group descendant ${lifetimePid} must not outlive its check`);
   const fastExitResult = receipt.results.find((result) => result.id === "fast-exit");
   assert.equal(fastExitResult?.status, "PASS");
@@ -322,6 +430,11 @@ try {
   fs.renameSync(artifactBackup, artifactPath);
   assert.ok(readTrustedVerificationReceipt(repo, state, manager));
 
+  fs.writeFileSync(receiptPath, Buffer.alloc((2 * 1024 * 1024) + 1, 0x20));
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "oversized receipt input fails closed before JSON allocation");
+  fs.writeFileSync(receiptPath, receiptBytes);
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
   const modifiedReceipt = JSON.parse(receiptBytes);
   modifiedReceipt.ok = false;
   fs.writeFileSync(receiptPath, JSON.stringify(modifiedReceipt, null, 2));
@@ -348,7 +461,18 @@ try {
   assert.equal(fs.existsSync(receiptPath), false, "failed rerun must invalidate an older PASS receipt");
   fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked\n");
 
-  const fresh = runTrustedVerification({ cwd: repo, state, stateManager: manager, config });
+  let fresh = runTrustedVerification({ cwd: repo, state, stateManager: manager, config });
+  assert.equal(fresh.ok, true);
+  git(repo, "update-index", "--assume-unchanged", "tracked.txt");
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "assume-unchanged-dirt\n");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "fresh-index comparison defeats assume-unchanged hiding");
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config }),
+    /clean tracked source tree/,
+  );
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked\n");
+  git(repo, "update-index", "--no-assume-unchanged", "tracked.txt");
+  fresh = runTrustedVerification({ cwd: repo, state, stateManager: manager, config });
   assert.equal(fresh.ok, true);
   const oldHead = git(repo, "rev-parse", "HEAD");
   fs.writeFileSync(path.join(repo, "head-change.txt"), "new head\n");
@@ -384,6 +508,15 @@ try {
   expectThrow(
     () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config: symlinkCwdConfig }),
     /cwd resolves outside validation worktree/,
+  );
+
+  const externalExecutable = path.join(external, "mutable-pass");
+  fs.writeFileSync(externalExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const mutableExecutableConfig = structuredClone(config);
+  mutableExecutableConfig.checks[0].command.executable = externalExecutable;
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config: mutableExecutableConfig }),
+    /trusted verification check is invalid/,
   );
 
   const detachedHeadDriftConfig = structuredClone(config);
@@ -670,6 +803,26 @@ try {
     assert.equal(executions, 1, "an interpreter bypass must not reach pi.exec");
   }
 
+  for (const command of [
+    "find . -delete",
+    "find . -exec touch victim ;",
+    "find . -execdir touch victim ;",
+    "sed -n -i.bak '1p' victim",
+    "npm audit fix",
+    "rg --pre 'touch victim' needle .",
+  ]) {
+    const prefixedBypass = await shellTool.execute(
+      `call-prefixed-bypass-${command}`,
+      { command },
+      undefined,
+      undefined,
+      { cwd: approvalStateRoot },
+    );
+    assert.equal(prefixedBypass.details.allowed, false, `${command} must require operator approval`);
+    assert.equal(prefixedBypass.details.safetyCheckResult, "operator_approval_required");
+    assert.equal(executions, 1, "a mutating/exec flag on an allowlisted prefix must not reach pi.exec");
+  }
+
   const hardBlockedApproval = {
     ...stateApproval,
     token: "APPROVAL_hard_block",
@@ -707,9 +860,5 @@ try {
 
   console.log(`trusted-security: PASS (${sandboxBackend ? `${sandboxBackend.backend} receipt signature/artifact/config/HEAD/cwd/clean-tree` : "OS sandbox unavailable -> trusted runner failed closed"} + scoped one-use approvals)`);
 } finally {
-  for (const pid of descendantPids) {
-    try { process.kill(pid, "SIGKILL"); } catch { /* already reaped */ }
-    try { process.kill(-pid, "SIGKILL"); } catch { /* already reaped */ }
-  }
   fs.rmSync(scratch, { recursive: true, force: true });
 }

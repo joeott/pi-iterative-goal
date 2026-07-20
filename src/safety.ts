@@ -6,6 +6,7 @@
  */
 
 import type { SafetyCheckResult } from "./types.js";
+import { commandSpecFromShellWords } from "./domain/verification.js";
 
 // ── Blocklist patterns (always blocked) ─────────────────────────────
 
@@ -90,10 +91,11 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*ps\b/,
   /^\s*top\b/,
   /^\s*htop\b/,
-  /^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get)/i,
+  /^\s*git\s+(status|log|diff|show|branch|remote)\b/i,
+  /^\s*git\s+config\s+--get(?:\s|$)/i,
   /^\s*git\s+ls-/i,
-  /^\s*npm\s+(list|ls|view|info|search|outdated|audit)/i,
-  /^\s*yarn\s+(list|info|why|audit)/i,
+  /^\s*npm\s+(list|ls|view|info|search|outdated|audit)\b/i,
+  /^\s*yarn\s+(list|info|why|audit)\b/i,
   /^\s*node\s+--version\s*$/i,
   /^\s*python3?\s+--version\s*$/i,
   /^\s*jq\b/,
@@ -102,8 +104,8 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*fd\b/,
   /^\s*bat\b/,
   /^\s*eza\b/,
-  /^\s*go\s+(version|env|tool)/i,
-  /^\s*cargo\s+(version|check|clippy|tree|metadata)/i,
+  /^\s*go\s+(version|env|tool)\b/i,
+  /^\s*cargo\s+(version|check|clippy|tree|metadata)\b/i,
   /^\s*cd\s/,
   /^\s*make\s+(-n|--dry-run)/i,
 ];
@@ -135,7 +137,50 @@ export function isDestructive(command: string): boolean {
 }
 
 export function isSafeReadOnly(command: string): boolean {
-  return SAFE_PATTERNS.some((p) => p.test(command));
+  if (!SAFE_PATTERNS.some((p) => p.test(command))) return false;
+
+  // SAFE_PATTERNS intentionally keeps the top-level allowlist compact, but a
+  // matching executable is not sufficient: several nominally read-only tools
+  // accept argv that writes files or launches arbitrary processes. Parse the
+  // same direct-exec shape goal_shell uses and fail closed on those forms.
+  const spec = commandSpecFromShellWords(command);
+  if (!spec) return false;
+  const executable = spec.executable.toLowerCase();
+  const argv = spec.argv;
+
+  if (executable === "find") {
+    const sideEffectActions = new Set([
+      "-delete",
+      "-exec",
+      "-execdir",
+      "-ok",
+      "-okdir",
+      "-fls",
+      "-fprint",
+      "-fprint0",
+      "-fprintf",
+    ]);
+    if (argv.some((arg) => sideEffectActions.has(arg.toLowerCase()))) return false;
+  }
+
+  if (executable === "sed") {
+    // Covers -i, -i.bak, bundled forms such as -ni, and --in-place[=SUFFIX].
+    if (argv.some((arg) => /^--in-place(?:=|$)/i.test(arg) || /^-[^-]*i/i.test(arg))) {
+      return false;
+    }
+  }
+
+  if (executable === "npm" && argv[0]?.toLowerCase() === "audit") {
+    if (argv.slice(1).some((arg) => arg.toLowerCase() === "fix" || /^--fix(?:=|$)/i.test(arg))) {
+      return false;
+    }
+  }
+
+  if (executable === "rg") {
+    if (argv.some((arg) => arg === "--pre" || arg.startsWith("--pre="))) return false;
+  }
+
+  return true;
 }
 
 /** Anything outside the narrow direct-exec read allowlist needs a capability. */

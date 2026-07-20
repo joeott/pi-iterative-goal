@@ -73,7 +73,17 @@ function readRegularFileNoFollow(filePath: string, maximumBytes: number): Buffer
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) throw new Error(`not a regular file: ${filePath}`);
     if (stat.size > maximumBytes) throw new Error(`file exceeds ${maximumBytes} bytes: ${filePath}`);
-    return fs.readFileSync(descriptor);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maximumBytes + 1 - total));
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      total += count;
+      if (total > maximumBytes) throw new Error(`file grew beyond ${maximumBytes} bytes while reading: ${filePath}`);
+      chunks.push(chunk.subarray(0, count));
+    }
+    return Buffer.concat(chunks, total);
   } finally {
     fs.closeSync(descriptor);
   }
