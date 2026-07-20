@@ -10,6 +10,7 @@ import path from "node:path";
 
 const { PiSubprocessAgentPool, createAgentTask } = await import("../dist/agents/pool.js");
 const { dispatchAgentTask } = await import("../dist/agents/run-pool.js");
+const { requireModelRoute } = await import("../dist/domain/model-roster.js");
 const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
 const { PolicyEngine } = await import("../dist/policy/engine.js");
 const { loadModelInvocations } = await import("../dist/model-telemetry.js");
@@ -37,6 +38,8 @@ function makeManualSpawn() {
       return true;
     };
     proc.emitAssistant = ({
+      provider,
+      model,
       input,
       output,
       cacheRead = 0,
@@ -52,6 +55,8 @@ function makeManualSpawn() {
         type: "message_end",
         message: {
           role: "assistant",
+          provider,
+          model,
           stopReason,
           content: [
             { type: "text", text: "budget fixture" },
@@ -105,7 +110,8 @@ async function runSingle(repo, agentTask, message, { newline = true } = {}) {
   const resultPromise = pool.submit(agentTask);
   assert.equal(spawnImpl.pending.length, 1, "task reaches the fake subprocess");
   const child = spawnImpl.pending[0].proc;
-  child.emitAssistant(message, newline);
+  const route = requireModelRoute(agentTask.modelProfile);
+  child.emitAssistant({ provider: route.provider, model: route.model, ...message }, newline);
   return { pool, child, resultPromise };
 }
 
@@ -201,7 +207,7 @@ try {
   assert.equal(exactResult.ok, true, "terminal response exactly at all limits is admitted");
   assert.equal(exactResult.usage.turns, 1);
   assert.equal(exactResult.usage.input + exactResult.usage.output, 15);
-  assert.equal(exactResult.responseModel, null, "absent response identity remains explicit null");
+  assert.equal(exactResult.responseModel, "gpt-oss-120b", "native Pi identity normalizes when responseModel is absent");
 
   // Preserve the exact provider response identity (including Fireworks fast's
   // fixed backing-model value) and derive tool counters from finalized Pi JSON

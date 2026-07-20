@@ -2621,11 +2621,19 @@ const c1 = await (async () => {
     return separator >= 0 ? selection.slice(separator + 1) : selection;
   }
 
-  function usageMessageLine(prompt, model) {
+  function requestedProvider(args) {
+    const index = args.indexOf("--model");
+    const selection = index >= 0 ? String(args[index + 1] ?? "") : "";
+    const separator = selection.indexOf("/");
+    return separator >= 0 ? selection.slice(0, separator) : "";
+  }
+
+  function usageMessageLine(prompt, provider, model) {
     return JSON.stringify({
       type: "message_end",
       message: {
         role: "assistant",
+        provider,
         model,
         responseModel: model,
         content: [{ type: "text", text: fakeOutputForPrompt(prompt) }],
@@ -2649,11 +2657,13 @@ const c1 = await (async () => {
       spawns.push({ cmd, args, opts, proc });
       setTimeout(() => {
         const text = outputForPrompt ? String(outputForPrompt(args.at(-1))) : fakeOutputForPrompt(args.at(-1));
+        const provider = requestedProvider(args);
         const model = requestedModel(args);
         const line = JSON.stringify({
           type: "message_end",
           message: {
             role: "assistant",
+            provider,
             model,
             responseModel: model,
             content: [{ type: "text", text }],
@@ -2680,7 +2690,11 @@ const c1 = await (async () => {
       proc.signals = [];
       proc.kill = (signal) => { proc.killed = true; proc.signals.push(signal); };
       proc.finish = (code = 0) => {
-        proc.stdout.emit("data", Buffer.from(usageMessageLine(args.at(-1), requestedModel(args)) + "\n"));
+        proc.stdout.emit("data", Buffer.from(usageMessageLine(
+          args.at(-1),
+          requestedProvider(args),
+          requestedModel(args),
+        ) + "\n"));
         proc.emit("close", code);
       };
       pending.push(proc);

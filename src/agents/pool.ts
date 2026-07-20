@@ -9,7 +9,7 @@ import { normalizeRepoPath } from "../domain/path-scope.js";
 import { prepareIsolatedWorktree } from "../workspace/worktrees.js";
 import type { IsolatedWorkspace } from "../workspace/worktrees.js";
 import type { AgentRole } from "./roles.js";
-import { requireModelRoute, type ModelProfileId } from "../domain/model-roster.js";
+import { requireModelRoute, type ModelProfileId, type ResolvedModelRoute } from "../domain/model-roster.js";
 import {
   WORKER_ENV,
   encodeWorkerAllowedPaths,
@@ -82,7 +82,7 @@ export interface AgentResult<T = unknown> {
   outputTruncated?: boolean;
   /** Kernel-observed hard budget stop; output/patch remains evidence only. */
   budgetExhausted?: AgentBudgetExhaustion;
-  /** Exact provider-reported identity from the last assistant response. */
+  /** Effective Pi-observed identity from the last assistant response. */
   responseModel: string | null;
   /** Tool calls observed in finalized assistant content across all turns. */
   toolCallCount: number;
@@ -177,7 +177,9 @@ export class PiSubprocessAgentPool implements AgentPool {
     const invalidBudget = validateTaskBudget(task);
     if (invalidBudget) return failedResult(task, invalidBudget);
     let args: string[];
+    let route: ResolvedModelRoute;
     try {
+      route = requireModelRoute(task.modelProfile || DEFAULT_MODEL_PROFILE_BY_ROLE[task.role]);
       args = buildPiSubprocessArgs(task);
     } catch (err) {
       return failedResult(task, err instanceof Error ? err.message : String(err));
@@ -331,7 +333,7 @@ export class PiSubprocessAgentPool implements AgentPool {
           stdoutLineBuffer = pendingLine;
         }
         for (const line of lines) {
-          const observation = accumulateUsageFromJsonLine(line, usage, resultMetadata);
+          const observation = accumulateUsageFromJsonLine(line, usage, resultMetadata, route);
           enforceBudget(observation);
         }
       });
@@ -348,7 +350,7 @@ export class PiSubprocessAgentPool implements AgentPool {
         // complete line even when the child exits without that delimiter so a
         // provider cannot evade accounting through framing.
         if (stdoutLineBuffer.trim()) {
-          enforceBudget(accumulateUsageFromJsonLine(stdoutLineBuffer, usage, resultMetadata), false);
+          enforceBudget(accumulateUsageFromJsonLine(stdoutLineBuffer, usage, resultMetadata, route), false);
           stdoutLineBuffer = "";
         }
         if (code === 0 && usage.turns === 0 && budgetExhausted === null) {
@@ -574,6 +576,7 @@ function accumulateUsageFromJsonLine(
   line: string,
   usage: AgentResult["usage"],
   metadata: MutableAgentResultMetadata,
+  route: ResolvedModelRoute,
 ): UsageObservation {
   const observation: UsageObservation = {
     assistantTurn: false,
@@ -607,9 +610,19 @@ function accumulateUsageFromJsonLine(
       usage.turns += 1;
       observation.assistantTurn = true;
       observation.continues = message.stopReason === "toolUse" || message.stopReason === "tool_use";
-      metadata.responseModel = typeof message.responseModel === "string" && message.responseModel.length > 0
-        ? message.responseModel
-        : null;
+      const runtimeIdentityMatches = message.provider === route.provider && message.model === route.model;
+      const explicitResponseMatches = typeof message.responseModel === "string" && (
+        message.responseModel === route.model
+        || (route.profileId === "fireworks_glm_5_2_fast"
+          && message.responseModel === "accounts/fireworks/models/glm-5p2")
+      );
+      metadata.responseModel = !runtimeIdentityMatches
+        ? null
+        : message.responseModel === undefined
+          ? message.model
+          : explicitResponseMatches
+            ? message.responseModel
+            : null;
       if (Array.isArray(message.content)) {
         metadata.toolCallCount += message.content.filter((part: unknown) => (
           !!part && typeof part === "object" && (part as { type?: unknown }).type === "toolCall"

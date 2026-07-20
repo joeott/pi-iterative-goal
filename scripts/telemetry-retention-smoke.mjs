@@ -249,11 +249,29 @@ try {
 
   runtimeEvents.get("turn_start")({ turnIndex: 2, timestamp: Date.now() }, openRouterCtx);
   runtimeEvents.get("before_provider_request")({ payload: { messages: [] } }, openRouterCtx);
-  let missingIdentityAbortCount = 0;
-  const missingIdentityMessage = {
+  let nativeShapeAbortCount = 0;
+  const nativeShapeMessage = {
     role: "assistant",
     provider: "openrouter",
     model: "moonshotai/kimi-k3",
+    content: [{ type: "toolCall", id: "native-shape", name: "read", arguments: {} }],
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    stopReason: "toolUse",
+  };
+  const nativeShapeCtx = { ...openRouterCtx, abort() { nativeShapeAbortCount += 1; } };
+  runtimeEvents.get("message_end")({ message: nativeShapeMessage }, nativeShapeCtx);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, nativeShapeCtx), undefined);
+  runtimeEvents.get("turn_end")({ message: nativeShapeMessage, toolResults: [] }, nativeShapeCtx);
+  assert.equal(nativeShapeAbortCount, 0, "Pi's native provider/model identity works without optional responseModel");
+  const nativeShapeTelemetry = telemetry.loadModelInvocations(root, "run-coordinator").at(-1);
+  assert.equal(nativeShapeTelemetry.responseModel, "moonshotai/kimi-k3");
+  assert.equal(nativeShapeTelemetry.errorCode, null);
+
+  runtimeEvents.get("turn_start")({ turnIndex: 3, timestamp: Date.now() }, openRouterCtx);
+  runtimeEvents.get("before_provider_request")({ payload: { messages: [] } }, openRouterCtx);
+  let missingIdentityAbortCount = 0;
+  const missingIdentityMessage = {
+    role: "assistant",
     content: [{ type: "toolCall", id: "missing-id", name: "read", arguments: {} }],
     usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
     stopReason: "toolUse",
@@ -262,8 +280,24 @@ try {
   runtimeEvents.get("message_end")({ message: missingIdentityMessage }, missingIdentityCtx);
   assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, missingIdentityCtx).block, true);
   runtimeEvents.get("turn_end")({ message: missingIdentityMessage, toolResults: [] }, missingIdentityCtx);
-  assert.equal(missingIdentityAbortCount, 1, "missing response identity fails before tool execution");
-  assert.equal(telemetry.loadModelInvocations(root, "run-coordinator").at(-1).errorCode, "response_model_identity_missing");
+  assert.equal(missingIdentityAbortCount, 1, "missing runtime identity fails before tool execution");
+  assert.equal(telemetry.loadModelInvocations(root, "run-coordinator").at(-1).errorCode, "response_runtime_identity_missing");
+
+  runtimeEvents.get("turn_start")({ turnIndex: 4, timestamp: Date.now() }, openRouterCtx);
+  runtimeEvents.get("before_provider_request")({ payload: { messages: [] } }, openRouterCtx);
+  let runtimeMismatchAbortCount = 0;
+  const runtimeMismatchMessage = {
+    ...nativeShapeMessage,
+    provider: "zai",
+    model: "glm-5.2",
+    content: [{ type: "toolCall", id: "runtime-mismatch", name: "read", arguments: {} }],
+  };
+  const runtimeMismatchCtx = { ...openRouterCtx, abort() { runtimeMismatchAbortCount += 1; } };
+  runtimeEvents.get("message_end")({ message: runtimeMismatchMessage }, runtimeMismatchCtx);
+  assert.equal(runtimeEvents.get("tool_call")({ toolName: "read", input: { path: "goal.md" } }, runtimeMismatchCtx).block, true);
+  runtimeEvents.get("turn_end")({ message: runtimeMismatchMessage, toolResults: [] }, runtimeMismatchCtx);
+  assert.equal(runtimeMismatchAbortCount, 1, "provider/model substitution fails before tool execution");
+  assert.equal(telemetry.loadModelInvocations(root, "run-coordinator").at(-1).errorCode, "response_runtime_identity_mismatch");
 
   // The real dispatch boundary resolves the exact roster route before its
   // ledger start and writes metadata-only terminal telemetry. Unique prompt

@@ -244,6 +244,24 @@ export function workerResponseMatchesRoute(route: ResolvedModelRoute, responseMo
     && responseModel === "accounts/fireworks/models/glm-5p2";
 }
 
+export function workerMessageIdentityError(
+  route: ResolvedModelRoute,
+  message: { provider?: unknown; model?: unknown; responseModel?: unknown },
+): "response_runtime_identity_missing" | "response_runtime_identity_mismatch" | "response_model_identity_mismatch" | null {
+  if (
+    typeof message.provider !== "string" || message.provider.length === 0
+    || typeof message.model !== "string" || message.model.length === 0
+  ) {
+    return "response_runtime_identity_missing";
+  }
+  if (message.provider !== route.provider || message.model !== route.model) {
+    return "response_runtime_identity_mismatch";
+  }
+  return message.responseModel === undefined || workerResponseMatchesRoute(route, message.responseModel)
+    ? null
+    : "response_model_identity_mismatch";
+}
+
 export function registerWorkerExtension(
   pi: ExtensionAPI,
   env: NodeJS.ProcessEnv = process.env,
@@ -287,15 +305,10 @@ export function registerWorkerExtension(
   // never exercise even the scoped worker tools.
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant") return;
-    responseIdentityValidated = (
-      event.message.model !== config.route.model
-      ? false
-      : workerResponseMatchesRoute(config.route, event.message.responseModel)
-    );
-    if (!responseIdentityValidated) {
-      failClosed(ctx, event.message.responseModel
-        ? "response_model_identity_mismatch"
-        : "response_model_identity_missing");
+    const identityError = workerMessageIdentityError(config.route, event.message);
+    responseIdentityValidated = identityError === null;
+    if (identityError) {
+      failClosed(ctx, identityError);
     }
   });
 

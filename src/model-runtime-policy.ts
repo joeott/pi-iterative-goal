@@ -12,7 +12,18 @@ interface ActiveTurn {
   requestDigest: string | null;
   cwd: string;
   responseIdentity: "pending" | "valid" | "invalid";
-  responseIdentityError: "response_model_identity_missing" | "response_model_mismatch" | null;
+  responseIdentityError: ResponseIdentityError | null;
+}
+
+type ResponseIdentityError =
+  | "response_runtime_identity_missing"
+  | "response_runtime_identity_mismatch"
+  | "response_model_mismatch";
+
+interface ResponseIdentityObservation {
+  provider?: unknown;
+  model?: unknown;
+  responseModel?: unknown;
 }
 
 function digest(value: unknown): string {
@@ -59,6 +70,35 @@ function responseMatchesRoute(route: ResolvedModelRoute, responseModel: string |
   // responses; the live probe verifies that one intentional mapping.
   return route.profileId === "fireworks_glm_5_2_fast"
     && responseModel === "accounts/fireworks/models/glm-5p2";
+}
+
+function observeResponseIdentity(
+  route: ResolvedModelRoute,
+  message: ResponseIdentityObservation,
+): { valid: boolean; error: ResponseIdentityError | null; observedModel: string | null } {
+  const provider = typeof message.provider === "string" && message.provider.length > 0
+    ? message.provider
+    : null;
+  const model = typeof message.model === "string" && message.model.length > 0
+    ? message.model
+    : null;
+  if (!provider || !model) {
+    return { valid: false, error: "response_runtime_identity_missing", observedModel: null };
+  }
+  if (provider !== route.provider || model !== route.model) {
+    return { valid: false, error: "response_runtime_identity_mismatch", observedModel: null };
+  }
+  // Pi's finalized AssistantMessage always carries provider/model, while only
+  // some adapters expose the upstream concrete model as responseModel. An
+  // omitted optional field is therefore valid; a supplied one remains an
+  // additional fail-closed check (including the one verified router mapping).
+  if (message.responseModel === undefined) {
+    return { valid: true, error: null, observedModel: model };
+  }
+  if (typeof message.responseModel !== "string" || !responseMatchesRoute(route, message.responseModel)) {
+    return { valid: false, error: "response_model_mismatch", observedModel: null };
+  }
+  return { valid: true, error: null, observedModel: message.responseModel };
 }
 
 function exactRequestPayload(payload: unknown, route: ResolvedModelRoute): unknown {
@@ -148,16 +188,10 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
 
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || !activeTurn) return;
-    const responseModel = event.message.responseModel;
-    const identityMatch = event.message.model === activeTurn.route.model
-      && responseMatchesRoute(activeTurn.route, responseModel);
-    activeTurn.responseIdentity = identityMatch ? "valid" : "invalid";
-    activeTurn.responseIdentityError = identityMatch
-      ? null
-      : responseModel
-        ? "response_model_mismatch"
-        : "response_model_identity_missing";
-    if (!identityMatch) {
+    const identity = observeResponseIdentity(activeTurn.route, event.message);
+    activeTurn.responseIdentity = identity.valid ? "valid" : "invalid";
+    activeTurn.responseIdentityError = identity.error;
+    if (!identity.valid) {
       stateManager.setStatus("provider_unavailable");
       ctx.abort();
     }
@@ -177,14 +211,10 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
     const usage = event.message.usage;
     const toolCallCount = event.message.content.filter((part) => part.type === "toolCall").length;
     const toolErrorCount = event.toolResults.filter((result) => result.isError).length;
-    const identityMatch = event.message.model === turn.route.model
-      && responseMatchesRoute(turn.route, event.message.responseModel);
-    const identityError = identityMatch
-      ? null
-      : turn.responseIdentityError
-        ?? (event.message.responseModel ? "response_model_mismatch" : "response_model_identity_missing");
-    const termination = !identityMatch ? "provider_error" : terminationFor(event.message.stopReason);
-    if (!identityMatch && turn.responseIdentity !== "invalid") {
+    const identity = observeResponseIdentity(turn.route, event.message);
+    const identityError = identity.valid ? null : turn.responseIdentityError ?? identity.error;
+    const termination = !identity.valid ? "provider_error" : terminationFor(event.message.stopReason);
+    if (!identity.valid && turn.responseIdentity !== "invalid") {
       stateManager.setStatus("provider_unavailable");
       ctx.abort();
     }
@@ -204,7 +234,7 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
         routeId: turn.route.profileId,
         provider: turn.route.provider,
         requestedModel: turn.route.model,
-        responseModel: event.message.responseModel ?? null,
+        responseModel: identity.observedModel,
         familyId: turn.route.familyId,
         servingVariant: turn.route.serving.variant,
         reasoningEffort: turn.route.reasoning.variant === "none"
@@ -230,8 +260,8 @@ export function registerModelRuntimePolicy(pi: ExtensionAPI, stateManager: State
         toolCallCount,
         toolErrorCount,
         termination,
-        gateStatus: !identityMatch ? "FAIL" : "NOT_RUN",
-        errorCode: !identityMatch
+        gateStatus: !identity.valid ? "FAIL" : "NOT_RUN",
+        errorCode: !identity.valid
           ? identityError
           : event.message.errorMessage ? digest(event.message.errorMessage).slice(0, 16) : null,
         requestDigest: turn.requestDigest,

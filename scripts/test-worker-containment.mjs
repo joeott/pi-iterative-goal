@@ -141,7 +141,7 @@ try {
   assert.equal(aborted, false);
   fake.hooks.get("turn_start")({ turnIndex: 0, timestamp: Date.now() }, providerCtx);
   fake.hooks.get("message_end")({
-    message: { role: "assistant", model: route.model, responseModel: "wrong-model" },
+    message: { role: "assistant", provider: route.provider, model: route.model, responseModel: "wrong-model" },
   }, providerCtx);
   assert.equal(aborted, true, "response substitution aborts the worker");
   assert.deepEqual(failures, ["response_model_identity_mismatch"]);
@@ -149,17 +149,33 @@ try {
 
   aborted = false;
   fake.hooks.get("turn_start")({ turnIndex: 1, timestamp: Date.now() }, providerCtx);
-  fake.hooks.get("message_end")({ message: { role: "assistant", model: route.model } }, providerCtx);
-  assert.equal(aborted, true, "missing response identity aborts before worker tool dispatch");
-  assert.deepEqual(failures, ["response_model_identity_mismatch", "response_model_identity_missing"]);
+  fake.hooks.get("message_end")({
+    message: { role: "assistant", provider: route.provider, model: route.model },
+  }, providerCtx);
+  assert.equal(aborted, false, "Pi's native provider/model identity does not require optional responseModel");
+  assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx), undefined);
 
   aborted = false;
   fake.hooks.get("turn_start")({ turnIndex: 2, timestamp: Date.now() }, providerCtx);
   fake.hooks.get("message_end")({
-    message: { role: "assistant", model: route.model, responseModel: route.model },
+    message: { role: "assistant", provider: route.provider, model: route.model, responseModel: route.model },
   }, providerCtx);
   assert.equal(aborted, false);
   assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx), undefined);
+
+  aborted = false;
+  fake.hooks.get("turn_start")({ turnIndex: 3, timestamp: Date.now() }, providerCtx);
+  fake.hooks.get("message_end")({ message: { role: "assistant", model: route.model } }, providerCtx);
+  assert.equal(aborted, true, "missing runtime provider identity aborts before worker tool dispatch");
+  assert.equal(failures.at(-1), "response_runtime_identity_missing");
+
+  aborted = false;
+  fake.hooks.get("turn_start")({ turnIndex: 4, timestamp: Date.now() }, providerCtx);
+  fake.hooks.get("message_end")({
+    message: { role: "assistant", provider: "openrouter", model: route.model },
+  }, providerCtx);
+  assert.equal(aborted, true, "runtime provider substitution aborts before worker tool dispatch");
+  assert.equal(failures.at(-1), "response_runtime_identity_mismatch");
 
   const openRouter = roster.requireModelRoute("openrouter_kimi_k3");
   const openRouterPayload = worker.exactWorkerRequestPayload({ model: "other", provider: { order: ["x"] } }, openRouter);
@@ -234,6 +250,7 @@ try {
       type: "message_end",
       message: {
         role: "assistant",
+        provider: "cerebras",
         model: "gpt-oss-120b",
         responseModel: "gpt-oss-120b",
         stopReason: "stop",
