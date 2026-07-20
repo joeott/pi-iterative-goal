@@ -27,22 +27,22 @@ export const ALLOWED_CREDENTIALS = Object.freeze([
 export const PROVIDERS = Object.freeze({
   zai: {
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
-    piApi: "openai-completions",
+    piApi: "pi-iterative-goal-exact-openai-completions",
     piCompat: { supportsDeveloperRole: false, maxTokensField: "max_tokens", thinkingFormat: "zai" },
   },
   fireworks: {
     baseUrl: "https://api.fireworks.ai/inference/v1",
-    piApi: "openai-completions",
+    piApi: "pi-iterative-goal-exact-openai-completions",
     piCompat: { supportsDeveloperRole: false, maxTokensField: "max_tokens", thinkingFormat: "reasoning_effort" },
   },
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
-    piApi: "openai-completions",
+    piApi: "pi-iterative-goal-exact-openai-completions",
     piCompat: { supportsDeveloperRole: false, maxTokensField: "max_tokens", thinkingFormat: "openrouter" },
   },
   cerebras: {
     baseUrl: "https://api.cerebras.ai/v1",
-    piApi: "openai-completions",
+    piApi: "pi-iterative-goal-exact-openai-completions",
     piCompat: { supportsDeveloperRole: false, maxTokensField: "max_tokens" },
   },
 });

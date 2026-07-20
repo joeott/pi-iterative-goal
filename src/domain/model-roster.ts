@@ -370,6 +370,20 @@ export function requireModelRoute(
   return resolved;
 }
 
+/**
+ * USD budgets are enforceable only when every token class has a verified
+ * catalog price. Explicit nulls are unknown—not free—and must fail closed.
+ */
+export function hasVerifiedModelPricing(
+  route: Pick<ResolvedModelRoute, "pricing">,
+): boolean {
+  const { pricing } = route;
+  return typeof pricing.source === "string"
+    && pricing.source.length > 0
+    && [pricing.input, pricing.output, pricing.cacheRead, pricing.cacheWrite]
+      .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+}
+
 /** Return the immutable, fixed-order fallback chain for a supported route. */
 export function getRouteProfiles(routeName: ModelRouteName): readonly ResolvedModelRoute[] {
   if (!ROUTE_NAMES.includes(routeName)) throw new Error(`Unknown model route: ${String(routeName)}`);

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { EXACT_MODEL_IDENTITY_API } from "./worker-extension.js";
 
 export const ZAI_PROVIDER = "zai";
 export const ZAI_GLM_5_2_MODEL = "glm-5.2";
@@ -69,7 +70,7 @@ export function registerZaiGlm52Provider(ctx: ExtensionContext | ExtensionComman
   if (typeof registerProvider === "function") {
     registerProvider.call(ctx.modelRegistry, ZAI_PROVIDER, {
       name: "Z.ai",
-      api: "openai-completions",
+      api: EXACT_MODEL_IDENTITY_API,
       baseUrl,
       apiKey,
       authHeader: true,
@@ -86,7 +87,7 @@ export function registerZaiGlm52ProviderWithPi(pi: ExtensionAPI, cwd = process.c
   const baseUrl = ZAI_CODING_BASE_URL;
   pi.registerProvider(ZAI_PROVIDER, {
     name: "Z.ai",
-    api: "openai-completions",
+    api: EXACT_MODEL_IDENTITY_API,
     baseUrl,
     apiKey,
     authHeader: true,
@@ -102,7 +103,7 @@ export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
   return {
     id: ZAI_GLM_5_2_MODEL,
     name: "GLM-5.2",
-    api: "openai-completions",
+    api: EXACT_MODEL_IDENTITY_API,
     baseUrl: ZAI_CODING_BASE_URL,
     reasoning: true,
     input: ["text"] as ("text" | "image")[],

@@ -8,6 +8,17 @@ import type {
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import {
+  createAssistantMessageEventStream,
+  getApiProvider,
+  type Api,
+  type AssistantMessage,
+  type AssistantMessageEvent,
+  type AssistantMessageEventStream,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import {
   normalizeRepoPath,
   parsePathScope,
   pathInScopes,
@@ -15,7 +26,9 @@ import {
   type PathScope,
 } from "./domain/path-scope.js";
 import {
+  MODEL_ROSTER,
   requireModelRoute,
+  resolveModelRoute,
   type ModelProfileId,
   type ResolvedModelRoute,
 } from "./domain/model-roster.js";
@@ -57,6 +70,19 @@ const BLOCKED_READ_BASENAMES = new Set([
   ".npmrc", ".netrc", ".pypirc", ".git-credentials", "auth.json",
   "credentials.json", "service-account.json", "id_rsa", "id_ed25519",
 ]);
+export const EXACT_MODEL_IDENTITY_API = "pi-iterative-goal-exact-openai-completions";
+
+export type OpenAICompatibleWorkerStream = (
+  model: Model<"openai-completions">,
+  context: Context,
+  options?: SimpleStreamOptions,
+) => AssistantMessageEventStream;
+
+const builtInOpenAICompatibleStream: OpenAICompatibleWorkerStream = (model, context, options) => {
+  const provider = getApiProvider("openai-completions");
+  if (!provider) throw new Error("Pi's built-in openai-completions adapter is unavailable.");
+  return provider.streamSimple(model, context, options);
+};
 
 const PROVIDER_RUNTIME: Readonly<Record<string, {
   name: string;
@@ -204,7 +230,11 @@ export function workerProviderConfig(
   return {
     name: provider.name,
     baseUrl: provider.baseUrl,
-    api: "openai-completions",
+    // A custom API wrapper makes the OpenAI-compatible adapter surface the
+    // raw upstream chunk.model even when it equals the requested model. Pi's
+    // built-in adapter intentionally omits responseModel in that case.
+    api: EXACT_MODEL_IDENTITY_API,
+    streamSimple: createExactIdentityWorkerStream(route),
     apiKey,
     authHeader: true,
     models: [{
@@ -217,6 +247,208 @@ export function workerProviderConfig(
       maxTokens: Math.min(32_768, Math.max(4_096, Math.floor(route.capabilities.contextWindow / 4))),
       compat: provider.compat,
     }],
+  };
+}
+
+/**
+ * Preserve positive upstream response identity without patching Pi.
+ *
+ * Pi's OpenAI-compatible adapter records responseModel only when chunk.model
+ * differs from Model.id. The delegate therefore receives an unrouteable
+ * internal sentinel while the composed payload hook forces route.model onto
+ * the wire. A conforming upstream response must differ from the sentinel, so
+ * the adapter records its concrete model. Missing chunk.model stays missing
+ * and is rejected by workerMessageIdentityError before any tool dispatch.
+ */
+export function createExactModelIdentityStream(
+  delegate: OpenAICompatibleWorkerStream = builtInOpenAICompatibleStream,
+): NonNullable<ProviderConfig["streamSimple"]> {
+  return (model, context, options) => {
+    const route = resolveModelRoute({ provider: model.provider, model: model.id });
+    if (!route) {
+      throw new Error("pi_worker_policy_failure:request_context_model_mismatch");
+    }
+
+    const sentinel = `__pi_exact_response_identity_${randomBytes(16).toString("hex")}__`;
+    const delegateModel = {
+      ...model,
+      api: "openai-completions" as const,
+      id: sentinel,
+      // Compatibility inference normally keys off the requested model id.
+      // Preserve the one id-sensitive setting after replacing that id with the
+      // internal sentinel; provider/base-URL-derived settings remain intact.
+      compat: {
+        ...model.compat,
+        ...(route.provider === "openrouter" && route.model.startsWith("anthropic/")
+          ? { cacheControlFormat: "anthropic" as const }
+          : {}),
+      },
+    } as Model<"openai-completions">;
+    const callerOnPayload = options?.onPayload;
+    const callerOnResponse = options?.onResponse;
+    const delegateOptions: SimpleStreamOptions = {
+      ...options,
+      onPayload: async (payload) => {
+        const initial = exactWorkerRequestPayload(payload, route);
+        if (!initial) throw new Error("pi_worker_policy_failure:invalid_provider_payload");
+        const replacement = callerOnPayload
+          ? await callerOnPayload(initial, model)
+          : undefined;
+        if (options?.signal?.aborted) {
+          throw new Error("pi_worker_policy_failure:provider_request_aborted");
+        }
+        const exact = exactWorkerRequestPayload(replacement === undefined ? initial : replacement, route);
+        if (!exact) throw new Error("pi_worker_policy_failure:invalid_provider_payload");
+        return exact;
+      },
+      onResponse: callerOnResponse
+        ? (response) => callerOnResponse(response, model)
+        : undefined,
+    };
+    const mapped = createAssistantMessageEventStream();
+
+    void (async () => {
+      try {
+        // Keep delegate construction inside the guarded task: missing auth and
+        // other synchronous adapter failures must become a terminal stream
+        // error instead of an unhandled extension exception.
+        const delegateContext = remapContextForIdentitySentinel(context, model, delegateModel);
+        const upstream = delegate(delegateModel, delegateContext, delegateOptions);
+        for await (const event of upstream) {
+          mapped.push(remapWorkerStreamEvent(event, model, route));
+        }
+        mapped.end();
+      } catch (error) {
+        const failed = failedWorkerMessage(model, route, error);
+        mapped.push({ type: "error", reason: "error", error: failed });
+        mapped.end();
+      }
+    })();
+
+    return mapped;
+  };
+}
+
+/**
+ * The built-in adapter preserves signed/redacted reasoning and tool-call
+ * signatures only when prior assistant messages match its model/api exactly.
+ * Remap history from the public exact-identity API to the private sentinel so
+ * a tool follow-up remains same-model inside the delegate. Cross-route history
+ * stays untouched and therefore keeps Pi's normal cross-model sanitization.
+ */
+function remapContextForIdentitySentinel(
+  context: Context,
+  publicModel: Model<Api>,
+  delegateModel: Model<"openai-completions">,
+): Context {
+  return {
+    ...context,
+    messages: context.messages.map((message) => {
+      if (message.role !== "assistant") return message;
+      // Pi drops errored/aborted assistant records before replay. Leave those
+      // incomplete records untouched; they do not carry a successful upstream
+      // identity and must never be promoted to same-model signed history.
+      if (message.stopReason === "error" || message.stopReason === "aborted") return message;
+      const historicalRoute = resolveModelRoute({ provider: message.provider, model: message.model });
+      if (!historicalRoute) {
+        throw new Error("pi_worker_policy_failure:historical_response_route_unlisted");
+      }
+      if (!workerResponseMatchesRoute(historicalRoute, message.responseModel)) {
+        throw new Error(message.responseModel === undefined
+          ? "pi_worker_policy_failure:historical_response_identity_missing"
+          : "pi_worker_policy_failure:historical_response_identity_mismatch");
+      }
+      if (message.provider !== publicModel.provider || message.model !== publicModel.id) return message;
+      if (message.api !== publicModel.api && message.api !== "openai-completions") {
+        throw new Error("pi_worker_policy_failure:historical_response_api_mismatch");
+      }
+      return {
+        ...message,
+        api: delegateModel.api,
+        model: delegateModel.id,
+      };
+    }),
+  };
+}
+
+/** Bind the generic exact-identity stream to the one route admitted in a worker. */
+export function createExactIdentityWorkerStream(
+  route: ResolvedModelRoute,
+  delegate: OpenAICompatibleWorkerStream = builtInOpenAICompatibleStream,
+): NonNullable<ProviderConfig["streamSimple"]> {
+  const stream = createExactModelIdentityStream(delegate);
+  return (model, context, options) => {
+    if (model.provider !== route.provider || model.id !== route.model) {
+      throw new Error("pi_worker_policy_failure:request_context_model_mismatch");
+    }
+    return stream(model, context, options);
+  };
+}
+
+/**
+ * Register the custom API handler for every exact coordinator provider.
+ * Generated Pi models select EXACT_MODEL_IDENTITY_API; this call supplies the
+ * one stream implementation without changing or expanding the model catalog.
+ */
+export function registerExactModelIdentityApi(pi: ExtensionAPI): void {
+  const streamSimple = createExactModelIdentityStream();
+  for (const provider of new Set(MODEL_ROSTER.profiles.map((profile) => profile.provider))) {
+    pi.registerProvider(provider, {
+      api: EXACT_MODEL_IDENTITY_API,
+      streamSimple,
+    });
+  }
+}
+
+function remapWorkerStreamEvent(
+  event: AssistantMessageEvent,
+  model: Model<Api>,
+  route: ResolvedModelRoute,
+): AssistantMessageEvent {
+  if ("partial" in event) {
+    return { ...event, partial: remapWorkerMessage(event.partial, model, route) } as AssistantMessageEvent;
+  }
+  if (event.type === "done") {
+    return { ...event, message: remapWorkerMessage(event.message, model, route) };
+  }
+  return { ...event, error: remapWorkerMessage(event.error, model, route) };
+}
+
+function remapWorkerMessage(
+  message: AssistantMessage,
+  model: Model<Api>,
+  route: ResolvedModelRoute,
+): AssistantMessage {
+  return {
+    ...message,
+    api: model.api,
+    provider: route.provider,
+    model: route.model,
+  };
+}
+
+function failedWorkerMessage(
+  model: Model<Api>,
+  route: ResolvedModelRoute,
+  error: unknown,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: route.provider,
+    model: route.model,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "error",
+    errorMessage: error instanceof Error ? error.message : String(error),
+    timestamp: Date.now(),
   };
 }
 
@@ -247,7 +479,7 @@ export function workerResponseMatchesRoute(route: ResolvedModelRoute, responseMo
 export function workerMessageIdentityError(
   route: ResolvedModelRoute,
   message: { provider?: unknown; model?: unknown; responseModel?: unknown },
-): "response_runtime_identity_missing" | "response_runtime_identity_mismatch" | "response_model_identity_mismatch" | null {
+): "response_runtime_identity_missing" | "response_runtime_identity_mismatch" | "response_model_identity_missing" | "response_model_identity_mismatch" | null {
   if (
     typeof message.provider !== "string" || message.provider.length === 0
     || typeof message.model !== "string" || message.model.length === 0
@@ -257,9 +489,8 @@ export function workerMessageIdentityError(
   if (message.provider !== route.provider || message.model !== route.model) {
     return "response_runtime_identity_mismatch";
   }
-  return message.responseModel === undefined || workerResponseMatchesRoute(route, message.responseModel)
-    ? null
-    : "response_model_identity_mismatch";
+  if (message.responseModel === undefined) return "response_model_identity_missing";
+  return workerResponseMatchesRoute(route, message.responseModel) ? null : "response_model_identity_mismatch";
 }
 
 export function registerWorkerExtension(

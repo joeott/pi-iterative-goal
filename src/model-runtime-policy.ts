@@ -18,6 +18,7 @@ interface ActiveTurn {
 type ResponseIdentityError =
   | "response_runtime_identity_missing"
   | "response_runtime_identity_mismatch"
+  | "response_model_identity_missing"
   | "response_model_mismatch";
 
 interface ResponseIdentityObservation {
@@ -88,12 +89,8 @@ function observeResponseIdentity(
   if (provider !== route.provider || model !== route.model) {
     return { valid: false, error: "response_runtime_identity_mismatch", observedModel: null };
   }
-  // Pi's finalized AssistantMessage always carries provider/model, while only
-  // some adapters expose the upstream concrete model as responseModel. An
-  // omitted optional field is therefore valid; a supplied one remains an
-  // additional fail-closed check (including the one verified router mapping).
   if (message.responseModel === undefined) {
-    return { valid: true, error: null, observedModel: model };
+    return { valid: false, error: "response_model_identity_missing", observedModel: null };
   }
   if (typeof message.responseModel !== "string" || !responseMatchesRoute(route, message.responseModel)) {
     return { valid: false, error: "response_model_mismatch", observedModel: null };

@@ -37,6 +37,11 @@ try {
     [...new Set(Object.values(piFiles["models.json"].providers).map((provider) => provider.apiKey))].sort(),
     [...ALLOWED_CREDENTIALS].sort(),
   );
+  assert.deepEqual(
+    [...new Set(Object.values(piFiles["models.json"].providers).map((provider) => provider.api))],
+    ["pi-iterative-goal-exact-openai-completions"],
+    "every Pi roster provider uses the positive response-identity stream",
+  );
 
   const expectedOpenCode = createOpenCodeConfig(roster);
   assert.deepEqual(expectedOpenCode.enabled_providers, ["zai", "fireworks", "openrouter", "cerebras"]);

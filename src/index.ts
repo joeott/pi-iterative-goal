@@ -61,6 +61,7 @@ import { registerZaiGlm52Provider, registerZaiGlm52ProviderWithPi } from "./zai.
 import { startManagedLogRetentionLoop } from "./log-retention.js";
 import { registerModelObservabilityCommands } from "./ui/model-commands.js";
 import { registerModelRuntimePolicy } from "./model-runtime-policy.js";
+import { registerExactModelIdentityApi } from "./worker-extension.js";
 
 export { extractTextFromParts, synthesizePhaseResultSafe } from "./kernel/output-synthesis.js";
 
@@ -126,6 +127,7 @@ async function buildRuntimeCapabilitySnapshot(
 
 export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   log("=== Extension initializing (v3 hardened) ===");
+  registerExactModelIdentityApi(pi);
   registerZaiGlm52ProviderWithPi(pi);
   const stateManager = createStateManager(pi);
   const stopRetentionLoop = startManagedLogRetentionLoop(process.cwd());

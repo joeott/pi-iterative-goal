@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 const worker = await import("../dist/worker-extension.js");
 const poolModule = await import("../dist/agents/pool.js");
@@ -69,6 +70,8 @@ try {
   assert.deepEqual([...fake.tools.keys()].sort(), ["edit", "find", "grep", "ls", "read", "write"]);
   assert.equal(fake.providers.length, 1);
   assert.equal(fake.providers[0].name, "cerebras");
+  assert.equal(fake.providers[0].config.api, "pi-iterative-goal-exact-openai-completions");
+  assert.equal(typeof fake.providers[0].config.streamSimple, "function", "worker provider installs the exact-identity stream wrapper");
   assert.equal(fake.providers[0].config.apiKey, "test-cerebras-credential", "provider receives the selected credential value, not its env-var name");
   const signal = new AbortController().signal;
   const ctx = { cwd: scratch };
@@ -152,8 +155,9 @@ try {
   fake.hooks.get("message_end")({
     message: { role: "assistant", provider: route.provider, model: route.model },
   }, providerCtx);
-  assert.equal(aborted, false, "Pi's native provider/model identity does not require optional responseModel");
-  assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx), undefined);
+  assert.equal(aborted, true, "missing upstream response identity aborts before worker tool dispatch");
+  assert.equal(failures.at(-1), "response_model_identity_missing");
+  assert.equal(fake.hooks.get("tool_call")({ toolName: "read", input: { path: "src/allowed.txt" } }, providerCtx).block, true);
 
   aborted = false;
   fake.hooks.get("turn_start")({ turnIndex: 2, timestamp: Date.now() }, providerCtx);
@@ -190,6 +194,195 @@ try {
     true,
     "the verified Fireworks fast backing-model identity is the sole substitution mapping",
   );
+
+  const streamRoute = roster.requireModelRoute("cerebras_gpt_oss_120b");
+  let delegateModel = null;
+  let delegateContext = null;
+  let outboundPayload = null;
+  const identityDelegate = (model, context, options) => {
+    delegateModel = model;
+    delegateContext = context;
+    const stream = createAssistantMessageEventStream();
+    void (async () => {
+      outboundPayload = await options.onPayload({ model: model.id, messages: [] }, model);
+      const message = {
+        role: "assistant",
+        content: [{ type: "text", text: "exact" }],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        responseModel: outboundPayload.model,
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      };
+      stream.push({ type: "start", partial: message });
+      stream.push({ type: "done", reason: "stop", message });
+      stream.end();
+    })();
+    return stream;
+  };
+  const exactStream = worker.createExactIdentityWorkerStream(streamRoute, identityDelegate);
+  const exactOuterModel = {
+    id: streamRoute.model,
+    name: streamRoute.model,
+    api: "pi-iterative-goal-exact-openai-completions",
+    provider: streamRoute.provider,
+    baseUrl: "https://example.invalid/v1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000,
+    maxTokens: 100,
+  };
+  const priorAssistant = {
+    role: "assistant",
+    api: exactOuterModel.api,
+    provider: exactOuterModel.provider,
+    model: exactOuterModel.id,
+    responseModel: streamRoute.model,
+    content: [
+      { type: "thinking", thinking: "signed", thinkingSignature: "reasoning_content" },
+      { type: "toolCall", id: "signed-call", name: "read", arguments: { path: "tracked.txt" }, thoughtSignature: "signed-tool" },
+    ],
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  };
+  const foreignRoute = roster.requireModelRoute("openrouter_kimi_k3");
+  const foreignAssistant = {
+    ...priorAssistant,
+    api: exactOuterModel.api,
+    provider: foreignRoute.provider,
+    model: foreignRoute.model,
+    responseModel: foreignRoute.model,
+    content: [{ type: "text", text: "other exact route" }],
+    stopReason: "stop",
+  };
+  const mappedMessage = await exactStream(exactOuterModel, {
+    messages: [
+      priorAssistant,
+      {
+        role: "toolResult",
+        toolCallId: "signed-call",
+        toolName: "read",
+        content: [{ type: "text", text: "tracked" }],
+        isError: false,
+        timestamp: Date.now(),
+      },
+      foreignAssistant,
+    ],
+  }, { apiKey: "test" }).result();
+  assert.notEqual(delegateModel.id, streamRoute.model, "delegate sees only an internal response-identity sentinel");
+  assert.match(delegateModel.id, /^__pi_exact_response_identity_[0-9a-f]{32}__$/);
+  assert.equal(delegateContext.messages[0].api, "openai-completions");
+  assert.equal(delegateContext.messages[0].model, delegateModel.id, "same-route history follows the private sentinel");
+  assert.equal(delegateContext.messages[0].content[0].thinkingSignature, "reasoning_content", "signed thinking survives same-model replay");
+  assert.equal(delegateContext.messages[0].content[1].thoughtSignature, "signed-tool", "signed tool calls survive same-model replay");
+  assert.equal(delegateContext.messages[1].toolCallId, "signed-call", "tool-result identity remains paired with replayed history");
+  assert.equal(delegateContext.messages[2], foreignAssistant, "another verified roster route remains cross-model");
+  assert.equal(priorAssistant.api, exactOuterModel.api, "history remapping never mutates the public session record");
+  assert.equal(priorAssistant.model, streamRoute.model);
+  assert.equal(outboundPayload.model, streamRoute.model, "the wire payload is forced back to the exact roster model");
+  assert.equal(mappedMessage.model, streamRoute.model, "the internal sentinel never escapes into Pi messages");
+  assert.equal(mappedMessage.responseModel, streamRoute.model, "same-model upstream identity remains explicit");
+
+  let rejectedHistoryDelegateCalled = false;
+  const rejectedHistoryStream = worker.createExactIdentityWorkerStream(streamRoute, () => {
+    rejectedHistoryDelegateCalled = true;
+    throw new Error("delegate must not receive unverified history");
+  });
+  const rejectedHistoryMessage = await rejectedHistoryStream(exactOuterModel, {
+    messages: [{ ...priorAssistant, responseModel: undefined }],
+  }, { apiKey: "test" }).result();
+  assert.equal(rejectedHistoryDelegateCalled, false);
+  assert.equal(rejectedHistoryMessage.stopReason, "error");
+  assert.match(rejectedHistoryMessage.errorMessage, /historical_response_identity_missing/);
+
+  const sonnetRoute = roster.requireModelRoute("openrouter_claude_sonnet_5");
+  let sonnetDelegateModel = null;
+  const sonnetIdentityStream = worker.createExactModelIdentityStream((model) => {
+    sonnetDelegateModel = model;
+    const stream = createAssistantMessageEventStream();
+    const message = {
+      ...priorAssistant,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      responseModel: sonnetRoute.model,
+      content: [{ type: "text", text: "exact" }],
+      stopReason: "stop",
+    };
+    stream.push({ type: "done", reason: "stop", message });
+    stream.end();
+    return stream;
+  });
+  await sonnetIdentityStream({
+    ...exactOuterModel,
+    id: sonnetRoute.model,
+    name: sonnetRoute.model,
+    provider: sonnetRoute.provider,
+  }, { messages: [] }, { apiKey: "test" }).result();
+  assert.equal(sonnetDelegateModel.compat.cacheControlFormat, "anthropic", "sentinel preserves OpenRouter Anthropic cache controls");
+
+  const kimiRoute = roster.requireModelRoute("openrouter_kimi_k3");
+  let kimiDelegateModel = null;
+  const kimiIdentityStream = worker.createExactModelIdentityStream((model) => {
+    kimiDelegateModel = model;
+    const stream = createAssistantMessageEventStream();
+    const message = {
+      ...priorAssistant,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      responseModel: kimiRoute.model,
+      content: [{ type: "text", text: "exact" }],
+      stopReason: "stop",
+    };
+    stream.push({ type: "done", reason: "stop", message });
+    stream.end();
+    return stream;
+  });
+  await kimiIdentityStream({
+    ...exactOuterModel,
+    id: kimiRoute.model,
+    name: kimiRoute.model,
+    provider: kimiRoute.provider,
+  }, { messages: [] }, { apiKey: "test" }).result();
+  assert.equal(kimiDelegateModel.compat.cacheControlFormat, undefined, "Kimi does not inherit Anthropic cache controls");
+
+  const throwingStream = worker.createExactModelIdentityStream(() => {
+    throw new Error("synchronous delegate failure");
+  });
+  const throwingMessage = await throwingStream(exactOuterModel, { messages: [] }, { apiKey: "test" }).result();
+  assert.equal(throwingMessage.stopReason, "error");
+  assert.match(throwingMessage.errorMessage, /synchronous delegate failure/);
+
+  const coordinatorProviders = makeFakePi();
+  worker.registerExactModelIdentityApi(coordinatorProviders.api);
+  assert.deepEqual(
+    coordinatorProviders.providers.map(({ name }) => name).sort(),
+    ["cerebras", "fireworks", "openrouter", "zai"],
+  );
+  assert(coordinatorProviders.providers.every(({ config }) => (
+    config.api === "pi-iterative-goal-exact-openai-completions"
+    && typeof config.streamSimple === "function"
+    && config.models === undefined
+  )), "coordinator identity registration supplies one custom API without expanding the roster");
 
   const readOnly = makeFakePi();
   worker.registerWorkerExtension(

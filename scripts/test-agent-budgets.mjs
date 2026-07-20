@@ -47,6 +47,7 @@ function makeManualSpawn() {
       cost,
       stopReason = "stop",
       responseModel,
+      omitResponseModel = false,
       toolCallCount = 0,
     }, newline = true) => {
       const usage = { input, output, cacheRead, cacheWrite };
@@ -68,7 +69,7 @@ function makeManualSpawn() {
             })),
           ],
           usage,
-          ...(responseModel === undefined ? {} : { responseModel }),
+          ...(omitResponseModel ? {} : { responseModel: responseModel ?? model }),
         },
       };
       proc.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}${newline ? "\n" : ""}`));
@@ -123,7 +124,6 @@ try {
   const turnsTask = task("budget-turns", {
     maxTurns: 1,
     maxTokens: 1_000,
-    maxCost: 1,
     timeoutMs: 10_000,
   }, { role: "Implementer", workspace: "isolated_worktree", allowedPaths: ["src/budget.ts"] });
   const turns = await runSingle(repo, turnsTask, {
@@ -171,43 +171,82 @@ try {
   assert.equal(tokensResult.budgetExhausted?.observed, 101);
   assert.equal(tokensResult.usage.input + tokensResult.usage.output, 101, "streaming usage snapshots are not double-counted");
 
-  const costTask = task("budget-cost", { maxTurns: 4, maxTokens: 1_000, maxCost: 0.01, timeoutMs: 10_000 });
-  const cost = await runSingle(repo, costTask, { input: 10, output: 5, cost: 0.011 });
-  assert.deepEqual(cost.child.signals, ["SIGTERM"]);
-  cost.child.finish(143);
-  const costResult = await cost.resultPromise;
-  assert.equal(costResult.budgetExhausted?.limit, "maxCost");
-  assert.equal(costResult.budgetExhausted?.observed, 0.011);
-
-  // Missing required provider measurements fail closed instead of silently
-  // converting unavailable cost into zero.
-  const missingCostTask = task("budget-missing-cost", {
+  // No catalog route currently has a complete, source-backed price snapshot.
+  // Unknown is not free: reject maxCost before worktree creation or spawn.
+  const unpricedCostTask = task("budget-unpriced-cost", {
     maxTurns: 4,
     maxTokens: 1_000,
     maxCost: 0.01,
     timeoutMs: 10_000,
   });
-  const missingCost = await runSingle(repo, missingCostTask, { input: 10, output: 5 });
-  missingCost.child.finish(143);
-  const missingCostResult = await missingCost.resultPromise;
-  assert.equal(missingCostResult.budgetExhausted?.limit, "maxCost");
-  assert.equal(missingCostResult.budgetExhausted?.observed, null);
+  const unpricedSpawn = makeManualSpawn();
+  const unpricedPool = new PiSubprocessAgentPool(repo, { spawnImpl: unpricedSpawn });
+  const unpricedCostResult = await unpricedPool.submit(unpricedCostTask);
+  assert.equal(unpricedCostResult.ok, false);
+  assert.match(unpricedCostResult.stderr, /cannot enforce maxCost: verified pricing is unavailable/);
+  assert.equal(unpricedSpawn.pending.length, 0, "unpriced USD budgets fail before subprocess admission");
 
   // Exact limits are valid for a terminal response, including a final JSON
   // event without a trailing newline. The close handler must account for it.
   const exactTask = task("budget-exact-final", {
     maxTurns: 1,
     maxTokens: 15,
-    maxCost: 0.001,
     timeoutMs: 10_000,
   });
   const exact = await runSingle(repo, exactTask, { input: 10, output: 5, cost: 0.001 }, { newline: false });
   exact.child.finish(0);
   const exactResult = await exact.resultPromise;
-  assert.equal(exactResult.ok, true, "terminal response exactly at all limits is admitted");
+  assert.equal(exactResult.ok, true, "terminal response exactly at turn/token limits is admitted");
   assert.equal(exactResult.usage.turns, 1);
   assert.equal(exactResult.usage.input + exactResult.usage.output, 15);
-  assert.equal(exactResult.responseModel, "gpt-oss-120b", "native Pi identity normalizes when responseModel is absent");
+  assert.equal(exactResult.responseModel, "gpt-oss-120b");
+
+  const missingIdentityTask = task("budget-missing-identity", {
+    maxTurns: 1,
+    maxTokens: 15,
+    timeoutMs: 10_000,
+  });
+  const missingIdentity = await runSingle(
+    repo,
+    missingIdentityTask,
+    { input: 10, output: 5, omitResponseModel: true },
+  );
+  missingIdentity.child.finish(0);
+  const missingIdentityResult = await missingIdentity.resultPromise;
+  assert.equal(missingIdentityResult.ok, false, "the exported pool fails closed on missing response identity");
+  assert.equal(missingIdentityResult.responseModel, null);
+  assert.equal(missingIdentityResult.responseIdentityError, "response_model_identity_missing");
+  assert.match(missingIdentityResult.stderr, /response_model_identity_missing/);
+
+  const stickyIdentityTask = task("budget-sticky-identity", {
+    maxTurns: 2,
+    maxTokens: 100,
+    timeoutMs: 10_000,
+  });
+  const stickySpawn = makeManualSpawn();
+  const stickyPool = new PiSubprocessAgentPool(repo, { spawnImpl: stickySpawn });
+  const stickyPromise = stickyPool.submit(stickyIdentityTask);
+  const stickyChild = stickySpawn.pending[0].proc;
+  const stickyRoute = requireModelRoute(stickyIdentityTask.modelProfile);
+  stickyChild.emitAssistant({
+    provider: stickyRoute.provider,
+    model: stickyRoute.model,
+    input: 10,
+    output: 5,
+    responseModel: "wrong-model",
+  });
+  stickyChild.emitAssistant({
+    provider: stickyRoute.provider,
+    model: stickyRoute.model,
+    input: 10,
+    output: 5,
+    responseModel: stickyRoute.model,
+  });
+  stickyChild.finish(0);
+  const stickyIdentityResult = await stickyPromise;
+  assert.equal(stickyIdentityResult.ok, false, "a later valid turn cannot erase an earlier identity violation");
+  assert.equal(stickyIdentityResult.responseModel, null);
+  assert.equal(stickyIdentityResult.responseIdentityError, "response_model_mismatch");
 
   // Preserve the exact provider response identity (including Fireworks fast's
   // fixed backing-model value) and derive tool counters from finalized Pi JSON
@@ -316,7 +355,7 @@ try {
   };
   const classified = await dispatchAgentTask({
     pool: {
-      async submit() { return costResult; },
+      async submit() { return tokensResult; },
       async map() { throw new Error("not used"); },
       async cancel() { return "unknown"; },
       wasCancelled() { return false; },
@@ -329,16 +368,16 @@ try {
     backend: "pi-subprocess",
     detectedBackend: "none",
     cwd: repo,
-  }, costTask);
+  }, tokensTask);
   assert.equal(classified.ok, false);
   assert.equal(classified.status, "failed");
   assert.equal(started.length, 1);
   assert.equal(finished.at(-1).status, "failed");
   const invocation = loadModelInvocations(repo, "budget-dispatch-run").at(-1);
   assert.equal(invocation?.termination, "budget_exhausted");
-  assert.equal(invocation?.errorCode, "budget_exhausted_maxCost");
+  assert.equal(invocation?.errorCode, "budget_exhausted_maxTokens");
 
-  console.log("✓ hard agent budgets enforce turns/tokens/cost/time, cancellation, exact TERM→KILL ownership, close framing, and telemetry classification");
+  console.log("✓ hard agent budgets enforce turns/tokens/time, reject unpriced USD limits, preserve identity, and classify telemetry");
 } finally {
   fs.rmSync(repo, { recursive: true, force: true });
 }

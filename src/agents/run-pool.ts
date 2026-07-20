@@ -37,7 +37,11 @@ import type {
   SubagentTaskRecord,
 } from "../types.js";
 import { logDebug } from "../logging.js";
-import { requireModelRoute, type ResolvedModelRoute } from "../domain/model-roster.js";
+import {
+  hasVerifiedModelPricing,
+  requireModelRoute,
+  type ResolvedModelRoute,
+} from "../domain/model-roster.js";
 import { recordModelInvocation, type ModelTermination } from "../model-telemetry.js";
 
 function log(msg: string) {
@@ -332,6 +336,9 @@ export async function dispatchAgentTask(
   try {
     // Fail before a ledger start can claim an inexact or unlisted route.
     route = requireModelRoute(agentTask.modelProfile || DEFAULT_MODEL_PROFILE_BY_ROLE[agentTask.role]);
+    if (agentTask.budget.maxCost !== undefined && !hasVerifiedModelPricing(route)) {
+      throw new Error(`Task ${agentTask.id} cannot enforce maxCost: verified pricing is unavailable for ${route.profileId}.`);
+    }
   } catch (error) {
     pool.unnoteQueued?.(agentTask.id);
     throw error;
@@ -450,7 +457,8 @@ export async function dispatchAgentTask(
   const cancelled = pool.wasCancelled?.(agentTask.id) === true;
   const responseIdentity = responseModelMatches(route, result.responseModel);
   const responseMismatch = !responseIdentity;
-  const responseIdentityError = result.responseModel ? "response_model_mismatch" : "response_model_identity_missing";
+  const responseIdentityError = result.responseIdentityError
+    ?? (result.responseModel ? "response_model_mismatch" : "response_model_identity_missing");
   const status = cancelled ? "cancelled" : result.ok && !responseMismatch ? "completed" : "failed";
   const termination: ModelTermination = result.budgetExhausted
     ? "budget_exhausted"

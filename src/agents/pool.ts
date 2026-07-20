@@ -9,10 +9,16 @@ import { normalizeRepoPath } from "../domain/path-scope.js";
 import { prepareIsolatedWorktree } from "../workspace/worktrees.js";
 import type { IsolatedWorkspace } from "../workspace/worktrees.js";
 import type { AgentRole } from "./roles.js";
-import { requireModelRoute, type ModelProfileId, type ResolvedModelRoute } from "../domain/model-roster.js";
+import {
+  hasVerifiedModelPricing,
+  requireModelRoute,
+  type ModelProfileId,
+  type ResolvedModelRoute,
+} from "../domain/model-roster.js";
 import {
   WORKER_ENV,
   encodeWorkerAllowedPaths,
+  workerMessageIdentityError,
   type WorkerMode,
 } from "../worker-extension.js";
 
@@ -84,6 +90,8 @@ export interface AgentResult<T = unknown> {
   budgetExhausted?: AgentBudgetExhaustion;
   /** Effective Pi-observed identity from the last assistant response. */
   responseModel: string | null;
+  /** Sticky response-identity failure observed on any finalized turn. */
+  responseIdentityError?: AgentResponseIdentityError | null;
   /** Tool calls observed in finalized assistant content across all turns. */
   toolCallCount: number;
   /** Failed finalized tool-result messages observed across all turns. */
@@ -104,6 +112,12 @@ export interface AgentResult<T = unknown> {
     turns: number;
   };
 }
+
+export type AgentResponseIdentityError =
+  | "response_runtime_identity_missing"
+  | "response_runtime_identity_mismatch"
+  | "response_model_identity_missing"
+  | "response_model_mismatch";
 
 export type AgentBudgetLimit = "maxTurns" | "maxTokens" | "maxCost" | "timeoutMs";
 
@@ -180,6 +194,9 @@ export class PiSubprocessAgentPool implements AgentPool {
     let route: ResolvedModelRoute;
     try {
       route = requireModelRoute(task.modelProfile || DEFAULT_MODEL_PROFILE_BY_ROLE[task.role]);
+      if (task.budget.maxCost !== undefined && !hasVerifiedModelPricing(route)) {
+        throw new Error(`Task ${task.id} cannot enforce maxCost: verified pricing is unavailable for ${route.profileId}.`);
+      }
       args = buildPiSubprocessArgs(task);
     } catch (err) {
       return failedResult(task, err instanceof Error ? err.message : String(err));
@@ -245,6 +262,7 @@ export class PiSubprocessAgentPool implements AgentPool {
       const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
       const resultMetadata: MutableAgentResultMetadata = {
         responseModel: null,
+        responseIdentityError: null,
         toolCallCount: 0,
         toolErrorCount: 0,
       };
@@ -393,7 +411,10 @@ export class PiSubprocessAgentPool implements AgentPool {
         resolve({
           taskId: task.id,
           role: task.role,
-          ok: code === 0 && budgetExhausted === null && !aborted,
+          ok: code === 0
+            && budgetExhausted === null
+            && !aborted
+            && resultMetadata.responseIdentityError === null,
           outputText: patch ? `${outputText}\n\n[ISOLATED_WORKTREE_PATCH]\n${patch}`.trim() : outputText,
           structuredOutput: structured.value,
           exitCode: code,
@@ -401,6 +422,7 @@ export class PiSubprocessAgentPool implements AgentPool {
             stderr,
             structured.error,
             budgetExhausted ? formatBudgetExhaustion(budgetExhausted) : "",
+            resultMetadata.responseIdentityError ?? "",
             aborted ? "cancelled_by_abort_signal" : "",
           ].filter(Boolean).join("\n"),
           workspacePath,
@@ -568,6 +590,7 @@ interface UsageObservation {
 
 interface MutableAgentResultMetadata {
   responseModel: string | null;
+  responseIdentityError: AgentResponseIdentityError | null;
   toolCallCount: number;
   toolErrorCount: number;
 }
@@ -610,19 +633,19 @@ function accumulateUsageFromJsonLine(
       usage.turns += 1;
       observation.assistantTurn = true;
       observation.continues = message.stopReason === "toolUse" || message.stopReason === "tool_use";
-      const runtimeIdentityMatches = message.provider === route.provider && message.model === route.model;
-      const explicitResponseMatches = typeof message.responseModel === "string" && (
-        message.responseModel === route.model
-        || (route.profileId === "fireworks_glm_5_2_fast"
-          && message.responseModel === "accounts/fireworks/models/glm-5p2")
-      );
-      metadata.responseModel = !runtimeIdentityMatches
-        ? null
-        : message.responseModel === undefined
-          ? message.model
-          : explicitResponseMatches
-            ? message.responseModel
-            : null;
+      const observedIdentityError = workerMessageIdentityError(route, message);
+      const normalizedIdentityError: AgentResponseIdentityError | null = observedIdentityError === "response_model_identity_mismatch"
+        ? "response_model_mismatch"
+        : observedIdentityError;
+      if (normalizedIdentityError !== null) {
+        // Identity failure is sticky across turns. A later valid-looking turn
+        // cannot rehabilitate a conversation that already used an unverified
+        // or mismatched upstream model.
+        metadata.responseIdentityError ??= normalizedIdentityError;
+        metadata.responseModel = null;
+      } else if (metadata.responseIdentityError === null) {
+        metadata.responseModel = message.responseModel;
+      }
       if (Array.isArray(message.content)) {
         metadata.toolCallCount += message.content.filter((part: unknown) => (
           !!part && typeof part === "object" && (part as { type?: unknown }).type === "toolCall"
