@@ -6,6 +6,7 @@
 
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import type { ShardState } from "./domain/shard.js";
 
 // ── Phase definitions ───────────────────────────────────────────────
 
@@ -380,6 +381,8 @@ export interface IterativeGoalState {
   finalizationPolicy: FinalizationPolicy;
   releaseAuthorization: ReleaseAuthorization | null;
   swarm: SwarmState;
+  /** Campaign 2 sharder: pending typed plan + committed shard plans (§6.1–6.3). */
+  shards: ShardState;
 }
 
 // ── Durable task planning ───────────────────────────────────────────

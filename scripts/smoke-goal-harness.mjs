@@ -23,6 +23,10 @@
  * 19. C1 swarm wiring: role profiles, shardability gate, cross-call write scopes,
  *     subagent ledger events + replay, swarm status line, fallback contract,
  *     and the recorded swarm-vs-single baseline benchmark (§8.4)
+ * 20. C2 sharder: typed plan emission via goal_post_shards, dependency graph,
+ *     spectral (Fiedler) prior + Kernighan–Lin refinement enforced as
+ *     assertions, coupling-density gate declining fan-out, shard_posted
+ *     ledger + replay, hook flag-off by default (§6.1–6.3, §8.5)
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -3500,6 +3504,791 @@ const c1 = await (async () => {
   await shutdownRunAgentPools();
 
   console.log("✓ Test 54: C1 chain binding truncates oversized artifacts and surfaces unresolved ids");
+}
+
+// ── C2 shared fixtures: lifecycle rig + typed-plan builders ─────────
+
+const c2 = await (async () => {
+  const { createStateManager } = await import("../dist/state.js");
+
+  const WORKED_FILES = [
+    "auth/login.ts", "auth/session.ts", "auth/token.ts",
+    "billing/invoice.ts", "billing/refund.ts", "billing/stripe.ts",
+  ];
+  const AUTH_FILES = WORKED_FILES.slice(0, 3);
+  const BILLING_FILES = WORKED_FILES.slice(3);
+
+  // The §6.3 worked example as real source files: two import triangles plus
+  // the invoice→token bridge, exactly one reference per pair.
+  function writeWorkedExampleFiles(repo) {
+    fs.mkdirSync(path.join(repo, "auth"), { recursive: true });
+    fs.mkdirSync(path.join(repo, "billing"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "auth/login.ts"), 'import "./session";\nimport "./token";\nexport const login = 1;\n');
+    fs.writeFileSync(path.join(repo, "auth/session.ts"), 'import "./token";\nexport const session = 1;\n');
+    fs.writeFileSync(path.join(repo, "auth/token.ts"), "export const token = 1;\n");
+    fs.writeFileSync(path.join(repo, "billing/invoice.ts"), 'import "./refund";\nimport "./stripe";\nimport "../auth/token";\nexport const invoice = 1;\n');
+    fs.writeFileSync(path.join(repo, "billing/refund.ts"), 'import "./stripe";\nexport const refund = 1;\n');
+    fs.writeFileSync(path.join(repo, "billing/stripe.ts"), "export const stripe = 1;\n");
+  }
+
+  // Six files, each importing the other five — a complete graph K6.
+  function writeDenseFiles(repo) {
+    fs.mkdirSync(path.join(repo, "mod"), { recursive: true });
+    for (let i = 1; i <= 6; i += 1) {
+      const imports = [];
+      for (let j = 1; j <= 6; j += 1) {
+        if (j !== i) imports.push(`import "./f${j}";`);
+      }
+      fs.writeFileSync(path.join(repo, "mod", `f${i}.ts`), `${imports.join("\n")}\nexport const f${i} = 1;\n`);
+    }
+  }
+
+  function planSpec(id, tasks) {
+    return {
+      id,
+      version: 1,
+      createdAt: new Date().toISOString(),
+      tasks: tasks.map((task, index) => ({
+        id: task.id ?? `task-${index + 1}`,
+        title: task.title,
+        dependsOn: task.dependsOn ?? [],
+        satisfies: [],
+        allowedPaths: task.allowedPaths,
+        requiredCapabilities: [],
+        checks: [],
+        rollback: "git checkout -- <files>",
+        risk: task.risk ?? "low",
+      })),
+    };
+  }
+
+  // Full capability snapshot shape (union of what the prompt renderers read).
+  function makeSnapshot() {
+    return {
+      activeTools: ["goal_report_phase_result", "goal_post_shards"],
+      allTools: [
+        { name: "goal_report_phase_result", description: "", source: "extension" },
+        { name: "goal_record_blocker", description: "", source: "extension" },
+        { name: "goal_post_shards", description: "", source: "extension" },
+      ],
+      commands: [],
+      hasBashTool: false,
+      hasSubagentTool: false,
+      hasAgentTool: false,
+      hasMcpTool: false,
+      mcpServers: [],
+      model: "deepseek/deepseek-v4-pro",
+      provider: "openrouter",
+      awsCli: null,
+      gitFinalization: null,
+      hasFilesystem: true,
+      hasGit: true,
+      hasNetwork: false,
+      hasAws: false,
+      hasAwsConfig: false,
+      hasAwsSecurityHub: false,
+      hasAwsAccessAnalyzer: false,
+      hasScannerTools: true,
+      hasSandbox: true,
+      hasDlpProxy: true,
+      hasIpiSanitizer: true,
+      hasEvidenceSigner: true,
+      cyberCapabilities: [],
+      unavailableCapabilities: [],
+    };
+  }
+
+  // pi/ctx/services doubles that drive registerGoalLifecycle's agent_end
+  // handler end-to-end: tools captured by name, prompts recorded.
+  function makeLifecycleRig(repo) {
+    const tools = new Map();
+    const handlers = new Map();
+    const sent = [];
+    const pi = {
+      appendEntry() {},
+      registerTool(tool) { tools.set(tool.name, tool); },
+      on(event, handler) { handlers.set(event, handler); },
+      sendUserMessage(message) { sent.push(String(message)); },
+      sendMessage() {},
+      async setModel() {},
+    };
+    const stateManager = createStateManager(pi);
+    const ctx = {
+      cwd: repo,
+      modelRegistry: { find: () => undefined },
+      ui: { notify() {} },
+      sessionManager: { getEntries: () => [] },
+    };
+    const snapshot = makeSnapshot();
+    const services = { buildRuntimeCapabilitySnapshot: async () => snapshot, log() {} };
+    return { pi, tools, handlers, sent, stateManager, ctx, services, snapshot };
+  }
+
+  function readEvents(stateManager) {
+    return fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  }
+
+  return { WORKED_FILES, AUTH_FILES, BILLING_FILES, writeWorkedExampleFiles, writeDenseFiles, planSpec, makeSnapshot, makeLifecycleRig, readEvents };
+})();
+
+// ── Test 55: C2 six-file worked example — spectral prior + KL refinement confirmed (§6.3, §8.5) ──
+
+{
+  const { Value } = await import("typebox/value");
+  const { ShardPlanSchema, ShardSchema } = await import("../dist/domain/shard.js");
+  const {
+    buildDependencyGraph, bisectGraph, adjacencyMatrix, fiedlerVector, buildShardPlan,
+  } = await import("../dist/kernel/sharder.js");
+  ok(ShardPlanSchema && ShardSchema, "shard schemas exported");
+
+  const files = c2.WORKED_FILES;
+  // Two triangles plus the token↔invoice bridge — the §6.3 table.
+  const references = [
+    { from: "auth/login.ts", to: "auth/session.ts", weight: 1 },
+    { from: "auth/login.ts", to: "auth/token.ts", weight: 1 },
+    { from: "auth/session.ts", to: "auth/token.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "billing/refund.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "billing/stripe.ts", weight: 1 },
+    { from: "billing/refund.ts", to: "billing/stripe.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "auth/token.ts", weight: 1 },
+  ];
+  const graph = buildDependencyGraph(files, { resolveReferences: () => references });
+  eq(graph.edges.length, 7);
+  eq(graph.totalWeight, 7);
+
+  // Fiedler: λ2 = (5 − √17)/2 ≈ 0.438; bridge endpoints carry the smallest |v2[i]|.
+  const { lambda2, vector } = fiedlerVector(adjacencyMatrix(graph));
+  ok(Math.abs(lambda2 - (5 - Math.sqrt(17)) / 2) < 1e-9, `λ2 = (5−√17)/2, got ${lambda2}`);
+  const magnitudes = vector.map((value) => Math.abs(value)).sort((a, b) => a - b);
+  ok(Math.abs(magnitudes[0] - 0.261) < 1e-3 && Math.abs(magnitudes[1] - 0.261) < 1e-3,
+    "bridge endpoints f3/f4 carry |v2| ≈ 0.261");
+  ok(magnitudes.slice(2).every((m) => Math.abs(m - 0.465) < 1e-3), "leaves carry |v2| ≈ 0.465");
+
+  // Balanced 3/3 partition at cut weight 1 (label-agnostic: the eigensolver
+  // sign is arbitrary, so compare partition sets, not block labels).
+  const bisection = bisectGraph(graph, 0.34);
+  eq(bisection.priorSplit, "sign", "sign split is balanced — no median fallback");
+  const blocks = [
+    files.filter((_, index) => bisection.assignment[index] === 0).sort(),
+    files.filter((_, index) => bisection.assignment[index] === 1).sort(),
+  ].sort();
+  deepStrictEqual(blocks, [c2.AUTH_FILES, c2.BILLING_FILES].sort());
+  eq(bisection.refinement.finalCutWeight, 1);
+
+  // §8.5 safeguard as assertion, not claim: the Kernighan–Lin pass EXECUTED
+  // — all nine cross-shard swaps evaluated, none with positive gain, so the
+  // spectral prior is confirmed locally optimal (§6.3 worked example).
+  eq(bisection.refinement.passes, 1, "one KL confirmation pass ran");
+  eq(bisection.refinement.evaluatedSwaps, 9, "all 3×3 cross-shard swaps evaluated");
+  eq(bisection.refinement.swapsExecuted, 0, "no improving swap exists");
+  eq(bisection.refinement.improved, false);
+  eq(bisection.refinement.initialCutWeight, 1);
+
+  // End-to-end via buildShardPlan over REAL files with the default
+  // static-import scanner (dependency-free edge resolution, §6.2).
+  const repo = c1.makeGitRepo("pi-ig-c2-worked-");
+  c2.writeWorkedExampleFiles(repo);
+  const plan = c2.planSpec("plan-worked", [
+    { id: "auth", title: "auth module", allowedPaths: c2.AUTH_FILES.map((file) => ({ kind: "exact", path: file })) },
+    { id: "billing", title: "billing module", allowedPaths: c2.BILLING_FILES.map((file) => ({ kind: "exact", path: file })), risk: "medium" },
+  ]);
+  const shardPlan = buildShardPlan(plan, { runId: "run-worked", cycle: 1, cwd: repo });
+  eq(shardPlan.decision, "fan_out");
+  eq(shardPlan.cutWeight, 1);
+  eq(shardPlan.totalEdgeWeight, 7);
+  eq(shardPlan.shards.length, 2);
+  deepStrictEqual(shardPlan.shards.map((shard) => shard.files).sort(), [c2.AUTH_FILES, c2.BILLING_FILES].sort());
+  deepStrictEqual(shardPlan.shards.map((shard) => shard.taskIds).sort(), [["auth"], ["billing"]].sort());
+  // The bridge is the only cross-shard contract, surfaced on both shards.
+  for (const shard of shardPlan.shards) {
+    eq(shard.crossShardContracts.length, 1);
+    eq(shard.crossShardContracts[0].weight, 1);
+    const { from, to } = shard.crossShardContracts[0];
+    ok((from === "auth/token.ts" && to === "billing/invoice.ts") || (from === "billing/invoice.ts" && to === "auth/token.ts"),
+      "f3–f4 bridge is the cross-shard contract");
+  }
+  ok(Value.Check(ShardPlanSchema, shardPlan), "ShardPlan validates against ShardPlanSchema");
+  eq(shardPlan.algorithm.prior, "spectral-fiedler");
+  eq(shardPlan.algorithm.refinement, "kernighan-lin");
+  eq(shardPlan.algorithm.refinementEvaluatedSwaps, 9);
+  eq(shardPlan.algorithm.refinementSwapsExecuted, 0);
+
+  // Schema inheritance is a tested contract (C2-OUS-004): every
+  // PlanSpecSchema key must exist in ShardPlanSchema with an identical
+  // schema, guarding the properties-spread against silent drift.
+  const { PlanSpecSchema } = await import("../dist/domain/plan.js");
+  for (const key of Object.keys(PlanSpecSchema.properties)) {
+    ok(Object.hasOwn(ShardPlanSchema.properties, key), `ShardPlanSchema inherits PlanSpecSchema.${key}`);
+    deepStrictEqual(ShardPlanSchema.properties[key], PlanSpecSchema.properties[key],
+      `ShardPlanSchema.${key} schema is identical to PlanSpecSchema.${key}`);
+  }
+
+  console.log("✓ Test 55: C2 worked example reproduces the 3/3 cut at weight 1 with the KL pass executed and confirmed");
+}
+
+// ── Test 56: C2 refinement improves a suboptimal prior; median split enforces balance ──
+
+{
+  const { buildDependencyGraph, refineBisection, bisectGraph } = await import("../dist/kernel/sharder.js");
+
+  const files = c2.WORKED_FILES;
+  const references = [
+    { from: "auth/login.ts", to: "auth/session.ts", weight: 1 },
+    { from: "auth/login.ts", to: "auth/token.ts", weight: 1 },
+    { from: "auth/session.ts", to: "auth/token.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "billing/refund.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "billing/stripe.ts", weight: 1 },
+    { from: "billing/refund.ts", to: "billing/stripe.ts", weight: 1 },
+    { from: "billing/invoice.ts", to: "auth/token.ts", weight: 1 },
+  ];
+  const graph = buildDependencyGraph(files, { resolveReferences: () => references });
+
+  // Planted suboptimal prior: {login, invoice, refund} | {session, token,
+  // stripe} cuts 5 edges. One KL swap (login↔stripe) reaches the optimum.
+  const planted = [0, 1, 1, 0, 0, 1];
+  const report = refineBisection(graph, planted, 0.34);
+  eq(report.initialCutWeight, 5);
+  eq(report.swapsExecuted, 1, "refinement executes the positive-gain swap");
+  eq(report.passes, 2, "second pass confirms the new assignment");
+  eq(report.improved, true);
+  eq(report.finalCutWeight, 1);
+  const refined = [
+    files.filter((_, index) => report.assignment[index] === 0).sort(),
+    files.filter((_, index) => report.assignment[index] === 1).sort(),
+  ].sort();
+  deepStrictEqual(refined, [c2.AUTH_FILES, c2.BILLING_FILES].sort());
+
+  // Median split substitutes when the sign split violates balance tolerance
+  // (§6.3): K4 clique + two isolated vertices → Fiedler sign split is 5/1.
+  const degenerate = ["c/a.ts", "c/b.ts", "c/c.ts", "c/d.ts", "iso/e.ts", "iso/f.ts"];
+  const cliqueRefs = [];
+  for (let i = 0; i < 4; i += 1) {
+    for (let j = i + 1; j < 4; j += 1) cliqueRefs.push({ from: degenerate[i], to: degenerate[j], weight: 1 });
+  }
+  const degenerateGraph = buildDependencyGraph(degenerate, { resolveReferences: () => cliqueRefs });
+  const degenerateBisection = bisectGraph(degenerateGraph, 0.34);
+  eq(degenerateBisection.priorSplit, "median", "median split enforces balance when the sign split violates ε");
+  const inB = degenerateBisection.assignment.reduce((sum, side) => sum + side, 0);
+  eq(inB, 3, "balanced 3/3 after the median split");
+
+  console.log("✓ Test 56: C2 KL refinement converts a suboptimal prior (cut 5→1); median split enforces balance tolerance");
+}
+
+// ── Test 57: C2 densely coupled plan declines fan-out through the lifecycle (§6.1, §8.5) ──
+
+{
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { registerGoalLifecycle } = await import("../dist/kernel/lifecycle.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c2-dense-");
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { sharder: { enabled: true } } }));
+  c2.writeDenseFiles(repo);
+
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Dense coupling", "Fan-out is declined for tightly coupled work");
+  rig.stateManager.acquireLock(run.runId, "ph-plan-1");
+  rig.stateManager.setPhase("plan");
+
+  registerGoalCoreTools(rig.pi, rig.stateManager, {});
+  const denseFiles = [1, 2, 3, 4, 5, 6].map((i) => `mod/f${i}.ts`);
+  const posted = await rig.tools.get("goal_post_shards").execute("post-1", {
+    runId: run.runId,
+    phaseAttemptId: "ph-plan-1",
+    plan: c2.planSpec("plan-dense", denseFiles.map((file, index) => ({ title: `edit ${file}`, allowedPaths: [file] }))),
+  });
+  eq(posted.details.rejected, false);
+  ok(rig.stateManager.getState().shards.pendingPlan, "typed plan pending for the transition");
+
+  registerGoalLifecycle(rig.pi, rig.stateManager, rig.services);
+  await rig.handlers.get("agent_end")({}, rig.ctx);
+
+  // The transition still happened — plan → implement on the single-slice path.
+  eq(rig.stateManager.getState().phase, "implement");
+  const implementPrompt = rig.sent.at(-1);
+  ok(implementPrompt.includes("[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]"),
+    "implement phase keeps its single-slice renderImplementPrompt path");
+
+  // The sharder fired, tripped the coupling-density check, and ledgered the
+  // decline. Independently computed truth (C2-ADV-007): the K6 fixture has
+  // 15 undirected pairs at symmetrized weight 2 (each direction imports
+  // once) = 30 total; the balanced 3/3 cut severs 3×3=9 pairs = 18.
+  const shardPosted = c2.readEvents(rig.stateManager).filter((event) => event.type === "shard_posted");
+  eq(shardPosted.length, 1);
+  eq(shardPosted[0].shardPlan.decision, "single_slice");
+  eq(shardPosted[0].shardPlan.cutWeight, 18, "3×3 cut pairs × symmetrized weight 2");
+  eq(shardPosted[0].shardPlan.totalEdgeWeight, 30, "15 K6 pairs × symmetrized weight 2");
+  eq(shardPosted[0].shardPlan.couplingDensity, 0.6, "18/30 — independently computed");
+  ok(shardPosted[0].shardPlan.decisionReason.includes("coupling density"), "decline reason recorded");
+  eq(shardPosted[0].shardPlan.shards.length, 0, "no shards when fan-out is declined");
+  eq(rig.stateManager.getState().shards.pendingPlan, null, "pending plan consumed by the hook");
+
+  console.log("✓ Test 57: C2 coupling-density check declines fan-out; implement stays single-slice");
+}
+
+// ── Test 58: C2 shard_posted verifies against the hash chain and rebuilds under replay (§6.1, §8.5) ──
+
+{
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { registerGoalLifecycle } = await import("../dist/kernel/lifecycle.js");
+  const { createStateManager } = await import("../dist/state.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c2-replay-");
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { sharder: { enabled: true } } }));
+  c2.writeWorkedExampleFiles(repo);
+
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Shard replay", "shard_posted survives replay and restart");
+  rig.stateManager.acquireLock(run.runId, "ph-plan-1");
+  rig.stateManager.setPhase("plan");
+
+  registerGoalCoreTools(rig.pi, rig.stateManager, {});
+  const posted = await rig.tools.get("goal_post_shards").execute("post-1", {
+    runId: run.runId,
+    phaseAttemptId: "ph-plan-1",
+    plan: c2.planSpec("plan-worked", [
+      { id: "auth", title: "auth module", allowedPaths: c2.AUTH_FILES },
+      { id: "billing", title: "billing module", allowedPaths: c2.BILLING_FILES, risk: "medium" },
+    ]),
+  });
+  eq(posted.details.rejected, false);
+
+  registerGoalLifecycle(rig.pi, rig.stateManager, rig.services);
+  await rig.handlers.get("agent_end")({}, rig.ctx);
+
+  const committed = rig.stateManager.getState().shards.plans.at(-1);
+  eq(committed.decision, "fan_out");
+  eq(committed.cutWeight, 1);
+  eq(committed.shards.length, 2);
+  // Algorithm evidence is ledgered with the record (§8.5 reads it back).
+  eq(committed.algorithm.priorSplit, "sign");
+  eq(committed.algorithm.refinementEvaluatedSwaps, 9);
+  eq(committed.algorithm.refinementSwapsExecuted, 0);
+
+  // Replay verifies the hash chain (non-null) and rebuilds shard state.
+  const replayed = rig.stateManager.replayActiveState();
+  ok(replayed, "replay verifies the hash chain and returns state");
+  eq(replayed.shards.plans.length, 1);
+  eq(replayed.shards.plans[0].decision, "fan_out");
+  eq(replayed.shards.plans[0].cutWeight, 1);
+  deepStrictEqual(replayed.shards.plans[0].shards.map((shard) => shard.files).sort(),
+    [c2.AUTH_FILES, c2.BILLING_FILES].sort());
+  eq(replayed.shards.pendingPlan, null, "consumed pending plan stays consumed under replay");
+
+  // Restart path: a fresh state manager restores shard state from events.
+  const fresh = createStateManager({ appendEntry() {} });
+  const restored = fresh.restore({ cwd: repo, sessionManager: { getEntries: () => [] } });
+  ok(restored, "restore replays the run");
+  eq(restored.shards.plans.length, 1);
+  eq(restored.shards.plans[0].id, "plan-worked", "PlanSpec fields survive inside the shard plan");
+  eq(restored.shards.plans[0].decision, "fan_out");
+
+  // Tamper with the shard_posted payload → replay fails closed.
+  const eventsPath = rig.stateManager.getEventsPath();
+  const raw = fs.readFileSync(eventsPath, "utf8");
+  fs.writeFileSync(eventsPath, raw.replace('"decision":"fan_out"', '"decision":"single_slice"'));
+  eq(rig.stateManager.replayActiveState(), null, "tampered shard_posted fails the hash chain");
+
+  console.log("✓ Test 58: C2 shard_posted hash-chains, replays, restores, and fails closed on tamper");
+}
+
+// ── Test 59: C2 sharder hook defaults flag-off — advanceToNextPhase unchanged (§8.5 rollback) ──
+
+{
+  const { loadSharderConfig } = await import("../dist/kernel/sharder.js");
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { registerGoalLifecycle } = await import("../dist/kernel/lifecycle.js");
+
+  // Flag parsing: defaults off; settings enable; tuning values clamp.
+  const noSettings = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c2-flag-default-"));
+  const defaults = loadSharderConfig(noSettings);
+  eq(defaults.enabled, false);
+  eq(defaults.balanceTolerance, 0.34);
+  eq(defaults.maxCouplingDensity, 0.5);
+  eq(defaults.maxShards, 2);
+  const withSettings = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c2-flag-tuned-"));
+  fs.mkdirSync(path.join(withSettings, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(withSettings, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { sharder: { enabled: true, balanceTolerance: 99, maxCouplingDensity: -3, maxShards: 99 } } }));
+  const tuned = loadSharderConfig(withSettings);
+  eq(tuned.enabled, true);
+  eq(tuned.balanceTolerance, 0.5, "tolerance clamps to (0, 0.5]");
+  eq(tuned.maxCouplingDensity, 0.01, "density clamps to (0, 1]");
+  eq(tuned.maxShards, 8, "shard count clamps to [2, 8]");
+
+  // Flag off: the transition behaves exactly as before, even with a typed
+  // plan posted — no shard_posted, checklist path untouched.
+  const repo = c1.makeGitRepo("pi-ig-c2-flag-off-");
+  c2.writeWorkedExampleFiles(repo);
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Flag off", "Disabled sharder cannot affect the transition");
+  rig.stateManager.acquireLock(run.runId, "ph-plan-1");
+  rig.stateManager.setPhase("plan");
+
+  registerGoalCoreTools(rig.pi, rig.stateManager, {});
+  const posted = await rig.tools.get("goal_post_shards").execute("post-1", {
+    runId: run.runId,
+    phaseAttemptId: "ph-plan-1",
+    plan: c2.planSpec("plan-ignored", [
+      { id: "auth", title: "auth module", allowedPaths: c2.AUTH_FILES },
+      { id: "billing", title: "billing module", allowedPaths: c2.BILLING_FILES },
+    ]),
+  });
+  eq(posted.details.rejected, false, "the posting tool itself is not flag-gated");
+
+  const taskPlan = {
+    updatedAt: new Date().toISOString(),
+    updatedByPhaseAttemptId: "ph-plan-1",
+    rationale: "checklist stays authoritative with the sharder off",
+    items: [
+      { id: "task-1", title: "do the work", status: "in_progress", detail: null, evidence: [], updatedAt: new Date().toISOString() },
+      { id: "task-2", title: "verify the work", status: "pending", detail: null, evidence: [], updatedAt: new Date().toISOString() },
+    ],
+  };
+  rig.stateManager.updateTaskPlan(taskPlan);
+
+  registerGoalLifecycle(rig.pi, rig.stateManager, rig.services);
+  await rig.handlers.get("agent_end")({}, rig.ctx);
+
+  eq(rig.stateManager.getState().phase, "implement");
+  ok(rig.sent.at(-1).includes("[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]"), "single-slice implement prompt");
+  eq(c2.readEvents(rig.stateManager).filter((event) => event.type === "shard_posted").length, 0,
+    "flag-off: no shard_posted event");
+  eq(rig.stateManager.getState().shards.plans.length, 0);
+  ok(rig.stateManager.getState().shards.pendingPlan, "pending plan unconsumed — the hook never ran");
+  deepStrictEqual(rig.stateManager.getState().taskPlan, taskPlan, "checklist path untouched");
+
+  console.log("✓ Test 59: C2 sharder lands flag-off: no shard_posted, checklist path untouched, transition unchanged");
+}
+
+// ── Test 60: C2 goal_post_shards validation + typed-plan prompt contract ──
+
+{
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { renderPlanPrompt } = await import("../dist/phases.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c2-tool-");
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Shard tool", "goal_post_shards validates the typed plan");
+  rig.stateManager.acquireLock(run.runId, "ph-plan-1");
+  rig.stateManager.setPhase("plan");
+  registerGoalCoreTools(rig.pi, rig.stateManager, {});
+  const tool = rig.tools.get("goal_post_shards");
+  ok(tool, "goal_post_shards registered");
+
+  const validPlan = () => c2.planSpec("plan-valid", [
+    { id: "a", title: "first", allowedPaths: ["src/a.ts"] },
+    { id: "b", title: "second", allowedPaths: [{ kind: "glob", pattern: "src/**/*.ts" }], dependsOn: ["a"] },
+  ]);
+
+  // Stale guards.
+  const wrongRun = await tool.execute("c1", { runId: "ig-nope", phaseAttemptId: "ph-plan-1", plan: validPlan() });
+  eq(wrongRun.details.rejected, true);
+  const wrongAttempt = await tool.execute("c2", { runId: run.runId, phaseAttemptId: "ph-stale", plan: validPlan() });
+  eq(wrongAttempt.details.rejected, true);
+
+  // Plan-only tool.
+  rig.stateManager.setPhase("research");
+  const wrongPhase = await tool.execute("c3", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: validPlan() });
+  eq(wrongPhase.details.rejected, true);
+  eq(wrongPhase.details.reason, "wrong_phase");
+  rig.stateManager.setPhase("plan");
+
+  // Schema, duplicates, dangling dependsOn, un-normalizable paths.
+  const badRisk = validPlan();
+  badRisk.tasks[0].risk = "extreme";
+  eq((await tool.execute("c4", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: badRisk })).details.reason, "schema_validation");
+  const dup = c2.planSpec("plan-dup", [
+    { id: "a", title: "one", allowedPaths: ["src/a.ts"] },
+    { id: "a", title: "two", allowedPaths: ["src/b.ts"] },
+  ]);
+  eq((await tool.execute("c5", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: dup })).details.reason, "duplicate_task_id");
+  const dangling = c2.planSpec("plan-dangling", [
+    { id: "a", title: "one", allowedPaths: ["src/a.ts"], dependsOn: ["ghost"] },
+  ]);
+  eq((await tool.execute("c6", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: dangling })).details.reason, "unknown_dependency");
+  const escaping = c2.planSpec("plan-escaping", [
+    { id: "a", title: "one", allowedPaths: ["../outside.ts"] },
+  ]);
+  eq((await tool.execute("c7", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: escaping })).details.reason, "invalid_paths");
+  eq(rig.stateManager.getState().shards.pendingPlan, null, "rejections never touch pending state");
+
+  // Valid post: string scopes leniently normalize to typed scopes.
+  const accepted = await tool.execute("c8", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: validPlan() });
+  eq(accepted.details.rejected, false);
+  eq(accepted.details.tasks, 2);
+  const pending = rig.stateManager.getState().shards.pendingPlan;
+  ok(pending, "pending plan recorded");
+  eq(pending.cycle, 1);
+  deepStrictEqual(pending.plan.tasks[0].allowedPaths, [{ kind: "exact", path: "src/a.ts" }]);
+  deepStrictEqual(pending.plan.tasks[1].allowedPaths, [{ kind: "glob", pattern: "src/**/*.ts" }]);
+
+  // Id charset parity with goal_update_task_plan (C2-OUS-009): plan.id,
+  // task.id, and dependsOn normalize before validation, so a spaced
+  // dependsOn reference lands on the normalized task id.
+  const messy = c2.planSpec("plan messy", [
+    { id: "task one", title: "first", allowedPaths: ["src/a.ts"] },
+    { id: "task two", title: "second", allowedPaths: ["src/b.ts"], dependsOn: ["task one"] },
+  ]);
+  const messyPosted = await tool.execute("c9", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: messy });
+  eq(messyPosted.details.rejected, false, "dependsOn normalizes onto the normalized task id");
+  const messyPending = rig.stateManager.getState().shards.pendingPlan;
+  eq(messyPending.plan.id, "plan-messy");
+  eq(messyPending.plan.tasks[0].id, "task-one");
+  deepStrictEqual(messyPending.plan.tasks[1].dependsOn, ["task-one"]);
+
+  // Free-text scrub round-trip (C2-ADV-005): rollback and check fields
+  // traverse the same DLP/IPI path as goal_update_task_plan items — the
+  // UNTRUSTED_DATA wrapper proves the scrub ran; content survives inside.
+  const withChecks = c2.planSpec("plan-checks", [
+    { id: "a", title: "first", allowedPaths: ["src/a.ts"] },
+  ]);
+  withChecks.tasks[0].checks = [{ id: "chk-1", name: "unit tests", required: true, command: { executable: "npm", argv: ["test"] } }];
+  withChecks.tasks[0].rollback = "revert the diff";
+  const checksPosted = await tool.execute("c10", { runId: run.runId, phaseAttemptId: "ph-plan-1", plan: withChecks });
+  eq(checksPosted.details.rejected, false);
+  const storedPlan = rig.stateManager.getState().shards.pendingPlan.plan;
+  ok(storedPlan.tasks[0].rollback.includes("<UNTRUSTED_DATA"), "rollback passes through the DLP/IPI scrub path");
+  ok(storedPlan.tasks[0].rollback.includes("revert the diff"), "content survives inside the wrapper");
+  ok(storedPlan.tasks[0].checks[0].name.includes("unit tests"));
+  ok(storedPlan.tasks[0].checks[0].command.executable.includes("npm"));
+  ok(storedPlan.tasks[0].checks[0].command.argv[0].includes("test"));
+
+  // §8.5 typed plan emission: the plan prompt carries the contract only
+  // when the posting tool exists.
+  const withTool = renderPlanPrompt(rig.stateManager.getState(), rig.snapshot, { kind: "none" });
+  ok(withTool.includes("Typed Plan Contract (sharder)"), "typed plan contract rendered");
+  ok(withTool.includes("goal_post_shards"), "posting tool named in the plan prompt");
+  const bareSnapshot = { ...rig.snapshot, allTools: [], activeTools: [] };
+  const withoutTool = renderPlanPrompt(rig.stateManager.getState(), bareSnapshot, { kind: "none" });
+  ok(!withoutTool.includes("Typed Plan Contract (sharder)"), "no contract without the tool");
+  // The free-text sections survive either way (additive upgrade, §6.1).
+  for (const section of ["Required Plan Sections:", "- Exact files to modify (the allowlist)", "Durable Task Plan Instructions:"]) {
+    ok(withTool.includes(section) && withoutTool.includes(section), `free-text section kept: ${section}`);
+  }
+
+  console.log("✓ Test 60: C2 goal_post_shards validates/guards typed plans; plan prompt emits the additive typed contract");
+}
+
+// ── Test 61: C2 Jacobi operating range — closed-form path-graph fixture (C2-ADV-001) ──
+
+{
+  const { buildDependencyGraph, adjacencyMatrix, fiedlerVector } = await import("../dist/kernel/sharder.js");
+
+  // Path graph Pn has the closed form λ2 = 2(1 − cos(π/n)) — a dependency-
+  // free truth that gates the eigensolver across the operating range. The
+  // pre-fix rotation budget under-converged here (2.4e-3 error at n=30,
+  // 7.7e-2 at n=50); the 12-sweep budget must hold machine precision.
+  for (const n of [30, 40, 50]) {
+    const vertices = Array.from({ length: n }, (_, i) => `p/v${String(i).padStart(2, "0")}.ts`);
+    const references = Array.from({ length: n - 1 }, (_, i) => ({ from: vertices[i], to: vertices[i + 1], weight: 1 }));
+    const graph = buildDependencyGraph(vertices, { resolveReferences: () => references });
+    const { lambda2 } = fiedlerVector(adjacencyMatrix(graph));
+    const expected = 2 * (1 - Math.cos(Math.PI / n));
+    ok(Math.abs(lambda2 - expected) < 1e-9,
+      `P${n}: |λ2 ${lambda2} − ${expected}| < 1e-9 (diff ${Math.abs(lambda2 - expected).toExponential(2)})`);
+  }
+
+  console.log("✓ Test 61: C2 Jacobi holds the closed-form P30/P40/P50 Fiedler values to <1e-9 across the operating range");
+}
+
+// ── Test 62: C2 vertex cap declines oversized plans (C2-ADV-002) ──
+
+{
+  const { Value } = await import("typebox/value");
+  const { ShardPlanSchema } = await import("../dist/domain/shard.js");
+  const { buildShardPlan, MAX_SHARD_VERTICES } = await import("../dist/kernel/sharder.js");
+
+  eq(MAX_SHARD_VERTICES, 200);
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c2-cap-"));
+
+  // 201 files: the synchronous eigensolver must decline, not freeze agent_end.
+  const oversized = Array.from({ length: MAX_SHARD_VERTICES + 1 }, (_, i) => `src/f${i}.ts`);
+  const bigPlan = c2.planSpec("plan-huge", [{
+    id: "wide",
+    title: "wide allowlist",
+    allowedPaths: oversized.map((file) => ({ kind: "exact", path: file })),
+  }]);
+  const declined = buildShardPlan(bigPlan, { runId: "run-cap", cycle: 1, cwd, resolveReferences: () => [] });
+  eq(declined.decision, "single_slice");
+  ok(declined.decisionReason.includes("vertex_cap_exceeded"), "ledgered decline reason names the cap");
+  eq(declined.shards.length, 0);
+  ok(Value.Check(ShardPlanSchema, declined), "decline record still validates");
+
+  // Boundary: exactly MAX_SHARD_VERTICES files still partition (empty graph
+  // → median split 100/100 at cut 0).
+  const atCap = Array.from({ length: MAX_SHARD_VERTICES }, (_, i) => `src/f${i}.ts`);
+  const okPlan = c2.planSpec("plan-at-cap", [{
+    id: "wide",
+    title: "at-cap allowlist",
+    allowedPaths: atCap.map((file) => ({ kind: "exact", path: file })),
+  }]);
+  const accepted = buildShardPlan(okPlan, { runId: "run-cap", cycle: 1, cwd, resolveReferences: () => [] });
+  eq(accepted.decision, "fan_out");
+  eq(accepted.shards.length, 2);
+  deepStrictEqual(accepted.shards.map((shard) => shard.files.length).sort((a, b) => a - b), [100, 100]);
+
+  console.log("✓ Test 62: C2 vertex cap declines 201-file plans with a ledgered reason; 200 files still partition");
+}
+
+// ── Test 63: C2 pending plan is bound to its posting attempt (C2-ADV-003) ──
+
+{
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { registerGoalLifecycle } = await import("../dist/kernel/lifecycle.js");
+
+  const makeRepo = (prefix) => {
+    const repo = c1.makeGitRepo(prefix);
+    fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+      JSON.stringify({ iterativeGoal: { sharder: { enabled: true } } }));
+    c2.writeWorkedExampleFiles(repo);
+    return repo;
+  };
+  const postPlan = async (rig, run, attemptId) => rig.tools.get("goal_post_shards").execute("post-1", {
+    runId: run.runId,
+    phaseAttemptId: attemptId,
+    plan: c2.planSpec("plan-attempt", [
+      { id: "auth", title: "auth module", allowedPaths: c2.AUTH_FILES },
+      { id: "billing", title: "billing module", allowedPaths: c2.BILLING_FILES },
+    ]),
+  });
+
+  // Same-cycle retry: the plan attempt rolls ph-1 → ph-2 before the
+  // transition, so the ph-1 proposal must be dropped, never sharded.
+  const repoA = makeRepo("pi-ig-c2-attempt-a-");
+  const rigA = c2.makeLifecycleRig(repoA);
+  eq(rigA.stateManager.restore(rigA.ctx), null);
+  const runA = rigA.stateManager.createRun("Attempt binding", "stale attempt proposal is dropped");
+  rigA.stateManager.acquireLock(runA.runId, "ph-1");
+  rigA.stateManager.setPhase("plan");
+  registerGoalCoreTools(rigA.pi, rigA.stateManager, {});
+  eq((await postPlan(rigA, runA, "ph-1")).details.rejected, false);
+  eq(rigA.stateManager.getState().shards.pendingPlan.phaseAttemptId, "ph-1");
+  rigA.stateManager.acquireLock(runA.runId, "ph-2"); // retry attempt takes over before agent_end
+  registerGoalLifecycle(rigA.pi, rigA.stateManager, rigA.services);
+  await rigA.handlers.get("agent_end")({}, rigA.ctx);
+  eq(rigA.stateManager.getState().phase, "implement");
+  eq(c2.readEvents(rigA.stateManager).filter((event) => event.type === "shard_posted").length, 0,
+    "attempt-1 plan NOT consumed at attempt-2's transition");
+  eq(rigA.stateManager.getState().shards.pendingPlan, null, "stale proposal dropped");
+  eq(rigA.stateManager.getState().shards.plans.length, 0);
+  ok(rigA.sent.at(-1).includes("[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]"), "transition still proceeds single-slice");
+
+  // Matching attempt: the proposal IS consumed and ledgered.
+  const repoB = makeRepo("pi-ig-c2-attempt-b-");
+  const rigB = c2.makeLifecycleRig(repoB);
+  eq(rigB.stateManager.restore(rigB.ctx), null);
+  const runB = rigB.stateManager.createRun("Attempt binding", "matching attempt consumes the proposal");
+  rigB.stateManager.acquireLock(runB.runId, "ph-1");
+  rigB.stateManager.setPhase("plan");
+  registerGoalCoreTools(rigB.pi, rigB.stateManager, {});
+  eq((await postPlan(rigB, runB, "ph-1")).details.rejected, false);
+  registerGoalLifecycle(rigB.pi, rigB.stateManager, rigB.services);
+  await rigB.handlers.get("agent_end")({}, rigB.ctx);
+  const posted = c2.readEvents(rigB.stateManager).filter((event) => event.type === "shard_posted");
+  eq(posted.length, 1);
+  eq(posted[0].shardPlan.decision, "fan_out");
+  eq(rigB.stateManager.getState().shards.pendingPlan, null, "matching proposal consumed");
+
+  console.log("✓ Test 63: C2 attempt-1 proposal dropped at attempt-2's transition; matching attempt consumes");
+}
+
+// ── Test 64: C2 shard write scopes are exact-file and pairwise disjoint (C2-ADV-004) ──
+
+{
+  const { Value } = await import("typebox/value");
+  const { ShardPlanSchema } = await import("../dist/domain/shard.js");
+  const { buildShardPlan } = await import("../dist/kernel/sharder.js");
+  const { pathsOverlap } = await import("../dist/agents/pool.js");
+
+  // One task whose wide globs straddle the whole worked example: with the
+  // pre-fix scope union, BOTH shards inherited auth/** + billing/** (overlap
+  // → C1 writer-allowlist violation at dispatch time).
+  const repo = c1.makeGitRepo("pi-ig-c2-scopes-");
+  c2.writeWorkedExampleFiles(repo);
+  const plan = c2.planSpec("plan-wide-glob", [
+    { id: "wide", title: "touch both modules", allowedPaths: [{ kind: "glob", pattern: "auth/**" }, { kind: "glob", pattern: "billing/**" }] },
+  ]);
+  const shardPlan = buildShardPlan(plan, { runId: "run-scopes", cycle: 1, cwd: repo });
+  eq(shardPlan.decision, "fan_out");
+  eq(shardPlan.shards.length, 2);
+  for (const shard of shardPlan.shards) {
+    deepStrictEqual(
+      shard.allowedPaths,
+      shard.files.map((file) => ({ kind: "exact", path: file })),
+      "shard write scope rewritten to its exact file set",
+    );
+  }
+  const scopeStrings = shardPlan.shards.map((shard) => shard.allowedPaths.map((scope) => scope.path));
+  eq(pathsOverlap(scopeStrings[0], scopeStrings[1]), false, "shard write scopes pairwise disjoint");
+  ok(Value.Check(ShardPlanSchema, shardPlan));
+  // The straddling task still maps to both shards informationally (taskIds),
+  // but no write scope crosses the cut.
+  deepStrictEqual(shardPlan.shards.map((shard) => shard.taskIds), [["wide"], ["wide"]]);
+
+  console.log("✓ Test 64: C2 wide-glob task yields exact-file, pairwise-disjoint shard write scopes");
+}
+
+// ── Test 65: C2 shard_plan_proposed rides the ledger; replay rebuilds the pending plan (C2-OUS-002) ──
+
+{
+  const { registerGoalCoreTools } = await import("../dist/ui/tools.js");
+  const { createStateManager } = await import("../dist/state.js");
+  const { runSharderHook } = await import("../dist/kernel/sharder.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c2-proposed-");
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { sharder: { enabled: true } } }));
+  c2.writeWorkedExampleFiles(repo);
+
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Proposed replay", "pending plan survives restart");
+  rig.stateManager.acquireLock(run.runId, "ph-1");
+  rig.stateManager.setPhase("plan");
+  registerGoalCoreTools(rig.pi, rig.stateManager, {});
+  const posted = await rig.tools.get("goal_post_shards").execute("post-1", {
+    runId: run.runId,
+    phaseAttemptId: "ph-1",
+    plan: c2.planSpec("plan-proposed", [
+      { id: "auth", title: "auth module", allowedPaths: c2.AUTH_FILES },
+      { id: "billing", title: "billing module", allowedPaths: c2.BILLING_FILES },
+    ]),
+  });
+  eq(posted.details.rejected, false);
+
+  const proposed = c2.readEvents(rig.stateManager).filter((event) => event.type === "shard_plan_proposed");
+  eq(proposed.length, 1, "proposal ledgered");
+  eq(proposed[0].entry.phaseAttemptId, "ph-1");
+  eq(proposed[0].entry.cycle, 1);
+  eq(proposed[0].entry.plan.id, "plan-proposed");
+
+  // Restart: a fresh manager replays the ledger and rebuilds pendingPlan —
+  // no reliance on the model re-posting.
+  const fresh = createStateManager({ appendEntry() {} });
+  const restored = fresh.restore({ cwd: repo, sessionManager: { getEntries: () => [] } });
+  ok(restored, "restore replays the run");
+  ok(restored.shards.pendingPlan, "pending plan rebuilt from the ledger");
+  eq(restored.shards.pendingPlan.phaseAttemptId, "ph-1");
+  eq(restored.shards.pendingPlan.cycle, 1);
+
+  // The cycle/attempt guards work against replayed state: the hook consumes
+  // the rebuilt proposal under the matching attempt.
+  const shardPlan = runSharderHook({ stateManager: fresh, cwd: repo, sharderEnabled: true, phaseAttemptId: "ph-1" });
+  ok(shardPlan, "hook consumes the replayed proposal");
+  eq(shardPlan.decision, "fan_out");
+  eq(fresh.getState().shards.pendingPlan, null);
+
+  console.log("✓ Test 65: C2 shard_plan_proposed replays into pendingPlan; guards consume it after restart");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

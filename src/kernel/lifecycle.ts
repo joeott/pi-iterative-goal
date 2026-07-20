@@ -16,6 +16,7 @@ import {
 } from "../types.js";
 import { verifyImplementationAgainstPlan } from "../workspace/change-set.js";
 import { shutdownRunAgentPools } from "../agents/run-pool.js";
+import { runSharderHook } from "./sharder.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
 
@@ -311,6 +312,22 @@ async function advanceToNextPhase(
   phaseAttemptId: string,
 ): Promise<void> {
   const nextPhase = stateNextPhase(state.phase);
+
+  // C2 sharder attach seam (§6.1): at the exact plan→implement transition,
+  // evaluate the typed plan posted via goal_post_shards and commit
+  // shard_posted. Flag-gated inside runSharderHook (default OFF — the
+  // free-text plan + checklist path is untouched); a sharder failure must
+  // never wedge the loop motor, so it degrades to single-slice.
+  if (state.phase === "plan" && nextPhase === "implement") {
+    try {
+      runSharderHook({ stateManager, cwd: ctx.cwd, log: services.log, phaseAttemptId });
+    } catch (err) {
+      services.log(`Sharder hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      // Degradation observability (C2-ADV-006): the decline is visible, not silent.
+      ctx.ui.notify("Iterative goal sharder failed; implement phase continues single-slice.", "warning");
+    }
+  }
+
   state.lock.phaseStatus = "transition_pending";
   stateManager.setPhase(nextPhase);
   stateManager.persistAll();

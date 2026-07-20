@@ -77,6 +77,7 @@ import {
   filterAllowedModels,
   normalizeConfiguredModel,
 } from "./domain/models.js";
+import type { PendingShardPlan, ShardPlan } from "./domain/shard.js";
 import { logDebug } from "./logging.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
@@ -132,6 +133,11 @@ export interface StateManagerAPI {
     taskId: string,
     finish: { runId: string; status: SubagentTaskStatus; usage?: SubagentUsageCounters | null; error?: string | null },
   ): void;
+
+  // ── New: sharder ledger (Campaign 2) ───────────────────────────
+  setPendingShardPlan(entry: PendingShardPlan): void;
+  clearPendingShardPlan(): void;
+  recordShardPlan(shardPlan: ShardPlan): void;
   updateDlpState(dlp: CyberDlpState): void;
   updateSanitizationState(sanitizer: CyberSanitizationState): void;
   recordAttestation(attestation: ActionAttestation): void;
@@ -351,6 +357,16 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         task.error = event.error ?? null;
       }
     },
+    shard_plan_proposed(replayed, event) {
+      // The typed plan awaits the plan→implement transition; cycle/attempt
+      // guards in the sharder hook re-validate it against replayed state.
+      replayed.shards.pendingPlan = event.entry as PendingShardPlan;
+    },
+    shard_posted(replayed, event) {
+      // The hook consumes any pending typed plan when it commits a shard plan.
+      replayed.shards.pendingPlan = null;
+      replayed.shards.plans.push(event.shardPlan as ShardPlan);
+    },
     project_instructions_updated(replayed, event) {
       replayed.projectInstructions = event.projectInstructions;
     },
@@ -521,6 +537,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!raw.swarm || typeof raw.swarm !== "object") raw.swarm = { backend: null, detectedBackend: null, tasks: [] };
     if (!Array.isArray(raw.swarm.tasks)) raw.swarm.tasks = [];
     if (!("detectedBackend" in raw.swarm)) raw.swarm.detectedBackend = null;
+    if (!raw.shards || typeof raw.shards !== "object") raw.shards = { pendingPlan: null, plans: [] };
+    if (!Array.isArray(raw.shards.plans)) raw.shards.plans = [];
+    if (!("pendingPlan" in raw.shards)) raw.shards.pendingPlan = null;
     raw.constraints = {
       ...(raw.constraints ?? {}),
       neverStopUntilEvaluatorGoalMet: true,
@@ -886,6 +905,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         },
         releaseAuthorization: null,
         swarm: { backend: null, detectedBackend: null, tasks: [] },
+        shards: { pendingPlan: null, plans: [] },
       };
 
       ensureRunDirs();
@@ -1063,6 +1083,50 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         usage: finish.usage ?? null,
         error: finish.error ?? null,
         timestamp: finishedAt,
+      });
+    },
+
+    // ── Sharder ledger (Campaign 2) ──────────────────────────────
+
+    setPendingShardPlan(entry: PendingShardPlan): void {
+      if (!state) return;
+      // Staleness is enforced by the goal_post_shards tool's runId /
+      // phaseAttemptId guard before it calls this. The proposal rides the
+      // ledger (C2-OUS-002) so replay after restart rebuilds the pending
+      // plan; the hook's cycle/attempt guards re-validate it there.
+      state.shards.pendingPlan = entry;
+      appendEvent({
+        type: "shard_plan_proposed",
+        entry,
+        cycle: entry.cycle,
+        timestamp: entry.postedAt,
+      });
+      persistAllInternal();
+    },
+
+    clearPendingShardPlan(): void {
+      if (!state || !state.shards.pendingPlan) return;
+      // Eventless by design (C2-ADV-003): the drop is re-derivable — replay
+      // rebuilds the proposal and the hook's guards drop it again, so live
+      // state and replayed state converge without a ledger record.
+      state.shards.pendingPlan = null;
+      persistAllInternal();
+    },
+
+    recordShardPlan(shardPlan: ShardPlan): void {
+      if (!state) return;
+      if (shardPlan.runId !== state.runId) {
+        logDebug("state", `recordShardPlan ignored: plan runId ${shardPlan.runId} != current runId ${state.runId}`);
+        return;
+      }
+      state.shards.pendingPlan = null;
+      state.shards.plans.push(shardPlan);
+      appendEvent({
+        type: "shard_posted",
+        shardPlan,
+        cycle: shardPlan.cycle,
+        decision: shardPlan.decision,
+        timestamp: shardPlan.postedAt,
       });
     },
 

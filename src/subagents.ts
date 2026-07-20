@@ -14,8 +14,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -49,6 +47,7 @@ import {
 } from "./agents/run-pool.js";
 import { CapabilityBroker } from "./capabilities/broker.js";
 import { PolicyEngine, type PolicyDecision } from "./policy/engine.js";
+import { readIterativeGoalSettings } from "./domain/project-settings.js";
 import type { StateManagerAPI } from "./state.js";
 import { logDebug } from "./logging.js";
 
@@ -74,23 +73,9 @@ export interface SwarmConfig {
   defaultConcurrency: number;
 }
 
-function parseProjectSettings(cwd: string): Record<string, unknown> {
-  const settingsPath = path.join(cwd, ".pi", "settings.json");
-  if (!fs.existsSync(settingsPath)) return {};
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch (err) {
-    log(`Failed to parse ${settingsPath}: ${err instanceof Error ? err.message : String(err)}`);
-    return {};
-  }
-}
-
 export function loadSwarmConfig(cwd: string): SwarmConfig {
-  const settings = parseProjectSettings(cwd);
-  const iterativeGoal = settings.iterativeGoal && typeof settings.iterativeGoal === "object"
-    ? settings.iterativeGoal as Record<string, unknown>
-    : {};
+  // Shared guarded reader (src/domain/project-settings.ts, C2-OUS-003).
+  const iterativeGoal = readIterativeGoalSettings(cwd);
   const swarm = iterativeGoal.swarm && typeof iterativeGoal.swarm === "object"
     ? iterativeGoal.swarm as Record<string, unknown>
     : {};

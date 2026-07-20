@@ -1,0 +1,92 @@
+[
+  {
+    "id": "C2-OUS-001",
+    "severity": "high",
+    "category": "math-correctness",
+    "requirementIds": ["C2"],
+    "message": "Jacobi rotation budget miscounted (rotations vs sweeps); eigensolver under-converged from n~20; ledger recorded prior:'spectral-fiedler' as if exact; classical-vs-cyclic comment conflation.",
+    "location": "src/kernel/sharder.ts:256",
+    "status": "resolved",
+    "resolution": "maxRotations = 12 * n(n-1)/2 with 1e-12 early termination; renamed; comments corrected (classical max-pivot Jacobi; operating range gated by Test 61 P30/P40/P50 closed form <1e-9)."
+  },
+  {
+    "id": "C2-OUS-002",
+    "severity": "medium",
+    "category": "temporal-decomposition",
+    "requirementIds": ["C2"],
+    "message": "Pending plan effectively volatile despite persistAllInternal(); recovery relied on the model re-posting.",
+    "location": "src/state.ts:1083-1094,1332, src/domain/shard.ts:93-104",
+    "status": "resolved",
+    "resolution": "shard_plan_proposed event appended in setPendingShardPlan + replay handler; restore rebuilds pendingPlan from events. Test 65."
+  },
+  {
+    "id": "C2-OUS-003",
+    "severity": "medium",
+    "category": "duplication",
+    "requirementIds": ["C2"],
+    "message": "Settings reader was the fourth copy of parseProjectSettings.",
+    "location": "src/kernel/sharder.ts:58-83",
+    "status": "resolved",
+    "resolution": "New src/domain/project-settings.ts with guarded readIterativeGoalSettings(cwd); sharder and subagents migrated; git.ts/aws-cli.ts debt noted in header comment."
+  },
+  {
+    "id": "C2-OUS-004",
+    "severity": "low",
+    "category": "information-leakage",
+    "requirementIds": ["C2"],
+    "message": "PlanSpecSchema.properties spread coupling invisible to tooling.",
+    "location": "src/domain/shard.ts:70-72",
+    "status": "resolved",
+    "resolution": "Test 55 asserts every PlanSpecSchema key exists in ShardPlanSchema with deepStrictEqual schema identity (tested inheritance contract)."
+  },
+  {
+    "id": "C2-OUS-005",
+    "severity": "low",
+    "category": "stale-write",
+    "requirementIds": ["C2", "C3"],
+    "message": "PendingShardPlan.phaseAttemptId write-only; cross-attempt staleness unchecked.",
+    "location": "src/kernel/sharder.ts:692-696, src/ui/tools.ts:542-547",
+    "status": "resolved",
+    "resolution": "Attempt id threaded into the hook and required to match; mismatches dropped. Test 63."
+  },
+  {
+    "id": "C2-OUS-006",
+    "severity": "low",
+    "category": "scanner-accuracy",
+    "requirementIds": ["C2"],
+    "message": "Overlapping specifier patterns double-counted from-style edges; 500-char window dropped distant specifiers.",
+    "location": "src/kernel/sharder.ts:101-107",
+    "status": "resolved",
+    "resolution": "Comment/string masking + (from,to,specifier) dedupe; weight = distinct-specifier count."
+  },
+  {
+    "id": "C2-OUS-007",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C2"],
+    "message": "listRepoFiles duplicated repo-context.ts collectFiles.",
+    "location": "src/kernel/sharder.ts:218-241",
+    "status": "resolved",
+    "resolution": "Reciprocal SYNC REQUIREMENT comments in both files."
+  },
+  {
+    "id": "C2-OUS-008",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C2"],
+    "message": "0.5 coupling-density default's arbitrariness unmarked in code.",
+    "location": "src/kernel/sharder.ts:50",
+    "status": "resolved",
+    "resolution": "Comment marks it an uncalibrated v1 default pending C3 telemetry."
+  },
+  {
+    "id": "C2-OUS-009",
+    "severity": "low",
+    "category": "parity",
+    "requirementIds": ["C2"],
+    "message": "id fields skipped charset normalization.",
+    "location": "src/ui/tools.ts:515-537",
+    "status": "resolved",
+    "resolution": "normalizeIdToken hoisted and applied to plan.id/task.id/dependsOn before Value.Check. Test 60."
+  }
+]

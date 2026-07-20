@@ -71,6 +71,10 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
       ? `Use ${snapshot.hasSubagentTool ? "subagent" : "Agent"} tool.`
       : "No subagent backend. Perform ALL work in this session.";
 
+  const postShardsInstruction = hasTool(ns, "goal_post_shards")
+    ? "Post the typed plan with goal_post_shards (include runId + phaseAttemptId); the sharder evaluates it at the plan→implement transition."
+    : "goal_post_shards not available; the free-text plan and checklist are the only plan records.";
+
   const approvalInstruction = hasCyberApproval
     ? "Use cyber_request_approval for production-impacting, dangerous, or secret-accessing actions; it suspends the run."
     : "Request explicit operator approval before dangerous or production-impacting actions.";
@@ -83,7 +87,7 @@ function buildToolInstructions(snapshot: CapabilitySnapshot, subagentBackend: Su
     ? "Use goal_repo_context for repository reads, file listings, and text search before raw shell."
     : "Use available read/search tools or goal_shell for repository inspection.";
 
-  return { shellInstruction, awsInstruction, gitInstruction, reportInstruction, blockerInstruction, subagentInstruction, approvalInstruction, taskPlanInstruction, repoContextInstruction };
+  return { shellInstruction, awsInstruction, gitInstruction, reportInstruction, blockerInstruction, subagentInstruction, postShardsInstruction, approvalInstruction, taskPlanInstruction, repoContextInstruction };
 }
 
 function harnessMeta(state: IterativeGoalState): string {
@@ -175,6 +179,20 @@ export function renderResearchPrompt(state: IterativeGoalState, snapshot: Capabi
 export function renderPlanPrompt(state: IterativeGoalState, snapshot: CapabilitySnapshot, subagentBackend: SubagentBackend): string {
   const capSummary = renderCapabilitySummary(snapshot, subagentBackend);
   const ti = buildToolInstructions(snapshot, subagentBackend);
+  // The typed plan contract renders only when the posting tool exists —
+  // prompts must not instruct calls the environment cannot honor.
+  const hasPostShards = hasTool(buildNamespaces(snapshot), "goal_post_shards");
+  const typedPlanContract = hasPostShards
+    ? [
+      "Typed Plan Contract (sharder):",
+      "- ALSO emit the plan as PlanSpecSchema JSON and post it with goal_post_shards (include runId + phaseAttemptId).",
+      "- Shape: { \"id\": string, \"version\": number, \"createdAt\": ISO string, \"tasks\": [ { \"id\", \"title\", \"dependsOn\": [], \"satisfies\": [], \"allowedPaths\": [], \"requiredCapabilities\": [], \"checks\": [], \"rollback\": string, \"risk\": \"low\"|\"medium\"|\"high\" } ] }.",
+      "- allowedPaths entries: { \"kind\": \"exact\", \"path\": \"src/file.ts\" } or { \"kind\": \"glob\", \"pattern\": \"src/**\" }; every file you expect to modify MUST appear in some task's allowedPaths.",
+      "- checks entries: { \"id\", \"name\", \"required\": true, \"command\"?: { \"executable\", \"argv\": [] } }; dependsOn entries reference sibling task ids.",
+      "- The typed plan is ADDITIVE: the free-text plan below and the goal_update_task_plan checklist remain required.",
+      "",
+    ]
+    : [];
 
   return [
     "[ITERATIVE-GOAL PHASE 2/4: PLAN]", "",
@@ -208,12 +226,14 @@ export function renderPlanPrompt(state: IterativeGoalState, snapshot: Capability
     "- Safety invariants",
     "- Fallback plan",
     "- No-production-write confirmation", "",
+    ...typedPlanContract,
     "TOOLS THIS CYCLE:",
     `- Shell: ${ti.shellInstruction}`,
     `- AWS: ${ti.awsInstruction}`,
     `- Git: ${ti.gitInstruction}`,
     `- Repo Context: ${ti.repoContextInstruction}`,
     `- Subagent: ${ti.subagentInstruction}`,
+    `- Shard Plan: ${ti.postShardsInstruction}`,
     `- Task Plan: ${ti.taskPlanInstruction}`,
     `- Report: ${ti.reportInstruction}`,
     `- Blockers: ${ti.blockerInstruction}`, "",
