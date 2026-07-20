@@ -1,0 +1,12 @@
+flowchart LR
+    A["Plan artifact<br/>PlanSpecSchema"] --> B["Dependency graph<br/>kernel/sharder.ts"]
+    B --> C["Partition<br/>spectral + KL refine"]
+    C --> D["HEFT schedule<br/>kernel/scheduler.ts"]
+    D --> E["Assignment<br/>contract-net bids"]
+    E --> F["Worktree execution<br/>workspace/worktrees.ts"]
+    F --> G["Merge + verify<br/>change-set gate"]
+    L[("events.jsonl<br/>ledger")]
+    A -.->|shard_posted| L
+    E -.->|shard_claimed| L
+    F -.->|shard_completed / shard_failed| L
+    G -.->|merge_proposed / merge_verified| L

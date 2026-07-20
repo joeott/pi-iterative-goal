@@ -1,0 +1,16 @@
+flowchart LR
+  RC["run controller<br/>budgets · leases · lifecycle"] --> CM["coordinator / loop motor<br/>kernel/lifecycle.ts"]
+  CM --> SH["sharder<br/>kernel/sharder.ts"]
+  SH --> SC["scheduler<br/>kernel/scheduler.ts"]
+  SC --> WP["worker pool<br/>agents/pool.ts + roles.ts"]
+  WP --> MG["merge gate<br/>worktrees.ts + change-set.ts"]
+  MG --> EV["external evaluator<br/>evaluator.ts"]
+  EV -->|"verdict"| CM
+  BB[("event ledger / blackboard<br/>events.jsonl + version counter")]
+  CM -.-> BB
+  SH -.-> BB
+  SC -.-> BB
+  WP -.-> BB
+  MG -.-> BB
+  EV -.-> BB
+  BB -.->|"change feed"| UI["phase-indicator.ts"]

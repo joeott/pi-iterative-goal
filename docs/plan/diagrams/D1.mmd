@@ -1,0 +1,13 @@
+flowchart LR
+  R["research<br/>single-agent · read-only scouts"] --> P["plan<br/>single-agent · typed PlanSpec"]
+  P -->|"plan → implement hook"| SH{"sharder + shardability gate"}
+  SH -->|"pass · shard_posted"| I["implement<br/>shard fan-out via pool"]
+  SH -->|"decline"| I
+  I --> V["validate<br/>merge gate → evaluator"]
+  V -->|"retry / next cycle"| R
+  V -->|"goal_met"| D(["done"])
+  L[("events.jsonl<br/>blackboard")]
+  R -.-> L
+  P -.-> L
+  I -.-> L
+  V -.-> L
