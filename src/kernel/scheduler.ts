@@ -72,6 +72,7 @@
 import * as fs from "node:fs";
 import type { AgentRole, AgentTask } from "../agents/pool.js";
 import { DEFAULT_SWARM_CONCURRENCY, MAX_SWARM_CONCURRENCY } from "../agents/pool.js";
+import { effectiveSwarmConcurrency } from "../agents/memory-budget.js";
 import { getRoleProfile } from "../agents/roles.js";
 import { dispatchAgentTask, getRunAgentPool, type DispatchOutcome } from "../agents/run-pool.js";
 import { CapabilityBroker } from "../capabilities/broker.js";
@@ -143,7 +144,9 @@ export function loadSchedulerConfig(cwd: string): SchedulerConfig {
   const config = scheduler && typeof scheduler === "object" ? scheduler as Record<string, unknown> : {};
   return {
     enabled: config.enabled === true,
-    concurrency: Math.floor(clampNumber(config.concurrency, DEFAULT_SWARM_CONCURRENCY, 1, MAX_SWARM_CONCURRENCY)),
+    concurrency: effectiveSwarmConcurrency(
+      Math.floor(clampNumber(config.concurrency, DEFAULT_SWARM_CONCURRENCY, 1, MAX_SWARM_CONCURRENCY)),
+    ),
     driftThreshold: clampNumber(config.driftThreshold, DEFAULT_DRIFT_THRESHOLD, 0.05, 5),
     replanIntervalMs: Math.floor(clampNumber(config.replanIntervalMs, DEFAULT_REPLAN_INTERVAL_MS, 0, 3_600_000)),
     alpha: clampNumber(config.alpha, 1, 0, 100),

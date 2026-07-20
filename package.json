@@ -17,7 +17,7 @@
     "test:trusted-security": "npm run build && node scripts/test-trusted-security.mjs",
     "test:trusted-dependencies": "npm run build && node scripts/test-trusted-dependencies.mjs",
     "test:prod-feature-matrix": "npm run build && node scripts/test-prod-feature-matrix.mjs",
-    "smoke:compiled": "node scripts/smoke-goal-harness.mjs && node scripts/telemetry-retention-smoke.mjs && node scripts/test-model-roster.mjs && node scripts/test-model-failover.mjs && node scripts/test-prod-feature-matrix.mjs && node scripts/test-bounded-tree-snapshot.mjs && node scripts/test-trusted-dependencies.mjs && node scripts/test-trusted-security.mjs && node scripts/test-workspace-hardening.mjs && node scripts/test-long-session-lifecycle.mjs && node scripts/test-agent-budgets.mjs && node scripts/test-worker-containment.mjs",
+    "smoke:compiled": "node scripts/smoke-goal-harness.mjs && node scripts/telemetry-retention-smoke.mjs && node scripts/test-model-roster.mjs && node scripts/test-model-failover.mjs && node scripts/test-prod-feature-matrix.mjs && node scripts/test-bounded-tree-snapshot.mjs && node scripts/test-trusted-dependencies.mjs && node scripts/test-trusted-security.mjs && node scripts/test-workspace-hardening.mjs && node scripts/test-long-session-lifecycle.mjs && node scripts/test-agent-budgets.mjs && node scripts/test-worker-containment.mjs && node scripts/test-memory-budget.mjs",
     "smoke": "npm run build && npm run smoke:compiled",
     "lint": "tsc --noEmit",
     "format:check": "node -e \"console.log('format:check: no formatter configured')\"",

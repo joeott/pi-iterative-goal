@@ -32,6 +32,7 @@ import {
   createAgentTask,
   pathsOverlap,
 } from "./agents/pool.js";
+import { effectiveSwarmConcurrency } from "./agents/memory-budget.js";
 import {
   type AgentRole,
   AGENT_ROLES,
@@ -84,7 +85,7 @@ export function loadSwarmConfig(cwd: string): SwarmConfig {
     : DEFAULT_SWARM_CONCURRENCY;
   return {
     enabled: swarm.enabled === true,
-    defaultConcurrency: Math.max(1, Math.min(requested, MAX_SWARM_CONCURRENCY)),
+    defaultConcurrency: effectiveSwarmConcurrency(Math.max(1, Math.min(requested, MAX_SWARM_CONCURRENCY))),
   };
 }
 
@@ -525,7 +526,7 @@ export function registerGoalSubagentTool(
 
       try {
         const broker = new CapabilityBroker(new PolicyEngine({ repoRoot: cwd }));
-        const concurrency = Math.max(
+        const concurrency = effectiveSwarmConcurrency(Math.max(
           1,
           Math.min(
             typeof params.concurrency === "number" && Number.isFinite(params.concurrency)
@@ -533,7 +534,7 @@ export function registerGoalSubagentTool(
               : swarmConfig.defaultConcurrency,
             MAX_SWARM_CONCURRENCY,
           ),
-        );
+        ));
         const dispatchDeps = {
           pool,
           broker,

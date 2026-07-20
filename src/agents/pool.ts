@@ -21,6 +21,7 @@ import {
   workerMessageIdentityError,
   type WorkerMode,
 } from "../worker-extension.js";
+import { effectiveSwarmConcurrency, resolveAgentMemoryBudget } from "./memory-budget.js";
 
 export type { AgentRole } from "./roles.js";
 // The isolated-worktree primitive lives in src/workspace/worktrees.ts (C4
@@ -508,7 +509,10 @@ export class PiSubprocessAgentPool implements AgentPool {
     const results: AgentResult<T>[] = new Array(tasks.length);
     // Default 4, hard cap 8 (§5.1): beyond ~8 parallel specialists,
     // coordination overhead and token cost dominate.
-    const concurrency = Math.max(1, Math.min(options?.concurrency ?? DEFAULT_SWARM_CONCURRENCY, MAX_SWARM_CONCURRENCY, tasks.length || 1));
+    const concurrency = Math.min(
+      effectiveSwarmConcurrency(options?.concurrency ?? DEFAULT_SWARM_CONCURRENCY),
+      tasks.length || 1,
+    );
     let next = 0;
     await Promise.all(new Array(concurrency).fill(null).map(async () => {
       while (next < tasks.length) {
@@ -852,6 +856,15 @@ export function buildWorkerEnvironment(
   // Disable Pi's install telemetry in disposable workers; model-comparison
   // telemetry is recorded locally by this harness instead.
   env.PI_TELEMETRY = "0";
+  // Rebuild NODE_OPTIONS from the numeric cmux contract. Never forward an
+  // ambient string: NODE_OPTIONS can load arbitrary code via --require or
+  // --import, and historical shells carried unsafe 48 GiB/8 GiB heap flags.
+  const memory = resolveAgentMemoryBudget(source);
+  env.NODE_OPTIONS = memory.nodeOptions;
+  env.CMUX_MEMORY_PLAN_VERSION = String(memory.planVersion);
+  env.CMUX_AGENT_OLD_SPACE_MIB = String(memory.oldSpaceMiB);
+  env.CMUX_SWARM_MAX_CONCURRENCY = String(memory.maxConcurrency);
+  env.CMUX_MEMORY_AVAILABLE_MIB = String(memory.availableMiB);
   return env;
 }
 
