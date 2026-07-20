@@ -1,0 +1,431 @@
+#!/usr/bin/env node
+
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as net from "node:net";
+import { execFileSync } from "node:child_process";
+import { createSigningState } from "../dist/cyber-runtime.js";
+import { validateApprovalForCommand } from "../dist/domain/approval.js";
+import { createStateManager } from "../dist/state.js";
+import { runLocalReleaseGate } from "../dist/review/gates/release-gate.js";
+import { registerGoalShellTool } from "../dist/shell.js";
+import {
+  detectTrustedVerificationSandboxBackend,
+  readTrustedVerificationReceipt,
+  runTrustedVerification,
+} from "../dist/trusted-verification.js";
+
+function git(cwd, ...args) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30_000 }).trim();
+}
+
+function writeSettings(root, config) {
+  const settingsDir = path.join(root, ".pi");
+  fs.mkdirSync(settingsDir, { recursive: true });
+  fs.writeFileSync(path.join(settingsDir, "settings.json"), JSON.stringify({
+    iterativeGoal: { trustedVerification: config },
+  }, null, 2));
+}
+
+function expectThrow(fn, pattern) {
+  let thrown = null;
+  try { fn(); } catch (error) { thrown = error; }
+  assert.ok(thrown, "expected function to throw");
+  assert.match(String(thrown), pattern);
+}
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-trusted-security-"));
+try {
+  const repo = path.join(scratch, "repo");
+  const external = path.join(scratch, "external");
+  fs.mkdirSync(path.join(repo, "sub"), { recursive: true });
+  fs.mkdirSync(external, { recursive: true });
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked\n");
+  fs.writeFileSync(path.join(repo, "sub", "sentinel.txt"), "sentinel\n");
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "trusted-fixture", version: "1.0.0" }, null, 2));
+  fs.writeFileSync(path.join(repo, "package-lock.json"), JSON.stringify({
+    name: "trusted-fixture",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    requires: true,
+    packages: { "": { name: "trusted-fixture", version: "1.0.0" } },
+  }, null, 2));
+  fs.symlinkSync(external, path.join(repo, "escape"));
+  git(repo, "init", "-q");
+  git(repo, "config", "user.email", "trusted-security@example.invalid");
+  git(repo, "config", "user.name", "Trusted Security Test");
+  git(repo, "add", "tracked.txt", "sub/sentinel.txt", "package.json", "package-lock.json", "escape");
+  git(repo, "commit", "-qm", "fixture");
+
+  const config = {
+    enabled: true,
+    checks: [{
+      id: "cwd-check",
+      name: "check detached subdirectory cwd",
+      required: true,
+      command: {
+        executable: process.execPath,
+        argv: ["-e", "const fs=require('fs'); if(!fs.existsSync('sentinel.txt')) process.exit(7); console.log('cwd-ok')"],
+        cwd: "sub",
+        timeoutMs: 10_000,
+      },
+    }],
+  };
+  writeSettings(repo, config);
+
+  const state = {
+    runId: "ig-trusted-security",
+    cycle: 1,
+    signing: createSigningState("ig-trusted-security"),
+    sandbox: { profile: "local_build" },
+    attestations: [],
+  };
+  const cycleDir = path.join(repo, ".pi", "iterative-goal", "runs", state.runId, "cycles", "1");
+  const phaseDir = path.join(cycleDir, "validate");
+  const manager = {
+    getPhaseDir(_cycle, phase) {
+      const directory = path.join(cycleDir, phase);
+      fs.mkdirSync(directory, { recursive: true });
+      return directory;
+    },
+    getArtifactPath(_cycle, phase, filename) {
+      const directory = path.join(cycleDir, phase);
+      fs.mkdirSync(directory, { recursive: true });
+      return path.join(directory, filename);
+    },
+    recordAttestation(attestation) { state.attestations.push(attestation); },
+  };
+
+  const sandboxBackend = detectTrustedVerificationSandboxBackend();
+  if (!sandboxBackend) {
+    expectThrow(
+      () => runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config }),
+      /requires an enforceable OS sandbox/,
+    );
+    assert.equal(
+      fs.existsSync(path.join(phaseDir, "trusted-verification-receipt.json")),
+      false,
+      "an unavailable/nested OS sandbox must never degrade to a host-trusted receipt",
+    );
+  } else {
+  const sandboxServer = net.createServer((socket) => socket.destroy());
+  await new Promise((resolve, reject) => {
+    sandboxServer.once("error", reject);
+    sandboxServer.listen(0, "127.0.0.1", resolve);
+  });
+  const sandboxPort = sandboxServer.address().port;
+  config.checks.push({
+    id: "sandbox-escape",
+    name: "deny source read, outside write, and loopback network",
+    required: true,
+    command: {
+      executable: process.execPath,
+      argv: ["-e", [
+        "const fs=require('node:fs'),net=require('node:net');",
+        "let denied=0;",
+        "try{fs.readFileSync(process.argv[1]);}catch{denied++;}",
+        "try{fs.writeFileSync(process.argv[2],'escape');}catch{denied++;}",
+        "const socket=net.connect({host:'127.0.0.1',port:Number(process.argv[3])});",
+        "socket.once('connect',()=>process.exit(91));",
+        "socket.once('error',()=>process.exit(denied===2?0:92));",
+        "setTimeout(()=>process.exit(93),3000);",
+      ].join(""), path.join(repo, "tracked.txt"), path.join(external, "sandbox-escape.txt"), String(sandboxPort)],
+      timeoutMs: 10_000,
+    },
+  });
+  writeSettings(repo, config);
+  const receipt = runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config });
+  assert.equal(receipt.ok, true);
+  assert.deepEqual(receipt.sandbox, sandboxBackend);
+  assert.equal(receipt.results.find((result) => result.id === "sandbox-escape")?.status, "PASS");
+  assert.equal(fs.existsSync(path.join(external, "sandbox-escape.txt")), false);
+  assert.equal(receipt.sourceSha, git(repo, "rev-parse", "HEAD"));
+  assert.equal(receipt.dependencyBootstrap?.status, "PASS");
+  assert.equal(receipt.results[0].status, "PASS");
+  assert.match(fs.readFileSync(receipt.results[0].artifact, "utf8"), /cwd-ok/);
+  assert.ok(readTrustedVerificationReceipt(path.join(repo, "sub"), state, manager));
+
+  const receiptPath = path.join(phaseDir, "trusted-verification-receipt.json");
+  const receiptBytes = fs.readFileSync(receiptPath, "utf8");
+  const artifactPath = receipt.results[0].artifact;
+  const artifactBytes = fs.readFileSync(artifactPath);
+  const signature = state.attestations.at(-1).cryptographicSignature;
+
+  fs.appendFileSync(artifactPath, "tamper\n");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "artifact tamper must invalidate receipt");
+  fs.writeFileSync(artifactPath, artifactBytes);
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  const modifiedReceipt = JSON.parse(receiptBytes);
+  modifiedReceipt.ok = false;
+  fs.writeFileSync(receiptPath, JSON.stringify(modifiedReceipt, null, 2));
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "receipt tamper must invalidate signature");
+  fs.writeFileSync(receiptPath, receiptBytes);
+
+  state.attestations.at(-1).cryptographicSignature = Buffer.from("invalid").toString("base64");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "signature tamper must invalidate receipt");
+  state.attestations.at(-1).cryptographicSignature = signature;
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty\n");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "tracked dirt must invalidate receipt");
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config }),
+    /clean tracked source tree/,
+  );
+  assert.equal(fs.existsSync(receiptPath), false, "failed rerun must invalidate an older PASS receipt");
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked\n");
+
+  const fresh = runTrustedVerification({ cwd: repo, state, stateManager: manager, config });
+  assert.equal(fresh.ok, true);
+  const oldHead = git(repo, "rev-parse", "HEAD");
+  fs.writeFileSync(path.join(repo, "head-change.txt"), "new head\n");
+  git(repo, "add", "head-change.txt");
+  git(repo, "commit", "-qm", "head change");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "receipt must bind current HEAD");
+  git(repo, "checkout", "-q", "--detach", oldHead);
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  const changedConfig = structuredClone(config);
+  changedConfig.checks[0].name = "changed config";
+  writeSettings(repo, changedConfig);
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "config hash change must invalidate receipt");
+  writeSettings(repo, config);
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  const escapedCwdConfig = structuredClone(config);
+  escapedCwdConfig.checks[0].command.cwd = "../";
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config: escapedCwdConfig }),
+    /cwd escapes validation worktree/,
+  );
+  assert.equal(fs.existsSync(receiptPath), false, "throwing rerun must leave no stale receipt");
+
+  const symlinkCwdConfig = structuredClone(config);
+  symlinkCwdConfig.checks[0].command.cwd = "escape";
+  expectThrow(
+    () => runTrustedVerification({ cwd: repo, state, stateManager: manager, config: symlinkCwdConfig }),
+    /cwd resolves outside validation worktree/,
+  );
+
+  const detachedHeadDriftConfig = structuredClone(config);
+  detachedHeadDriftConfig.checks[0] = {
+    id: "head-drift",
+    name: "mutate detached validation HEAD",
+    required: true,
+    command: {
+      executable: "git",
+      argv: ["-c", "user.name=Trusted Security Test", "-c", "user.email=trusted-security@example.invalid", "commit", "--allow-empty", "-m", "validation head drift"],
+      timeoutMs: 10_000,
+    },
+  };
+  writeSettings(repo, detachedHeadDriftConfig);
+  const headDriftReceipt = runTrustedVerification({ cwd: repo, state, stateManager: manager, config: detachedHeadDriftConfig });
+  assert.equal(
+    headDriftReceipt.results[0].status,
+    "PASS",
+    fs.readFileSync(headDriftReceipt.results[0].artifact, "utf8"),
+  );
+  assert.notEqual(headDriftReceipt.validationSha, headDriftReceipt.validationShaAfter);
+  assert.equal(headDriftReceipt.ok, false, "a check that changes detached validation HEAD cannot certify source HEAD");
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null);
+
+  const failedOptionalConfig = structuredClone(config);
+  failedOptionalConfig.checks[0] = {
+    id: "optional-failure",
+    name: "optional failure remains accurately labeled",
+    required: false,
+    command: { executable: process.execPath, argv: ["-e", "process.exit(9)"], timeoutMs: 10_000 },
+  };
+  writeSettings(repo, failedOptionalConfig);
+  const optionalReceipt = runTrustedVerification({ cwd: repo, state, stateManager: manager, config: failedOptionalConfig });
+  assert.equal(optionalReceipt.results[0].status, "FAIL");
+  assert.equal(optionalReceipt.ok, true, "an explicitly optional failure does not fail required gates");
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager));
+
+  fs.writeFileSync(manager.getArtifactPath(1, "implement", "implementation-verification.json"), JSON.stringify({
+    allowlistViolation: false,
+    extraFiles: [],
+  }));
+  fs.writeFileSync(manager.getArtifactPath(1, "validate", "verification-results.jsonl"), `${JSON.stringify({ id: "release", status: "PASS" })}\n`);
+  state.artifacts = { validations: [{ cycle: 1, status: "completed" }] };
+  state.trustedVerification = {
+    required: true,
+    checksHash: optionalReceipt.checksHash,
+    pinnedAt: new Date().toISOString(),
+  };
+  const releaseGate = await runLocalReleaseGate(state, manager, repo);
+  assert.deepEqual(releaseGate, { ok: true, reasons: [] }, "release gate must use its explicit repository cwd");
+  writeSettings(repo, { enabled: false, checks: [] });
+  const downgradedRelease = await runLocalReleaseGate(state, manager, repo);
+  assert.ok(downgradedRelease.reasons.some((reason) => /pinned trusted-verification policy/.test(reason)));
+  writeSettings(repo, failedOptionalConfig);
+  sandboxServer.close();
+  }
+
+  const now = Date.now();
+  const approval = {
+    token: "APPROVAL_test",
+    runId: "run-1",
+    cycle: 3,
+    phaseAttemptId: "run-1/c3/implement/a2",
+    cwd: "/repo",
+    requestedAction: "remove fixture",
+    blastRadiusAssessment: "one file",
+    justification: "test",
+    rollbackPlan: "restore fixture",
+    affectedResources: ["fixture"],
+    exactCommands: ["rm fixture"],
+    exactAwsActions: [],
+    dataAccessScope: null,
+    requestedAt: new Date(now - 1_000).toISOString(),
+    expiresAt: new Date(now + 60_000).toISOString(),
+    status: "approved",
+    resolvedAt: new Date(now - 500).toISOString(),
+    usedAt: null,
+    usedForCommand: null,
+  };
+  const approvalContext = {
+    runId: "run-1",
+    cycle: 3,
+    phaseAttemptId: "run-1/c3/implement/a2",
+    cwd: "/repo",
+    command: "rm fixture",
+    nowMs: now,
+  };
+  assert.equal(validateApprovalForCommand(approval, approvalContext).ok, true);
+  for (const [label, changedRequest, changedContext] of [
+    ["missing scope", { ...approval, runId: undefined }, approvalContext],
+    ["wrong run", approval, { ...approvalContext, runId: "run-2" }],
+    ["wrong cycle", approval, { ...approvalContext, cycle: 4 }],
+    ["wrong phase attempt", approval, { ...approvalContext, phaseAttemptId: "run-1/c3/implement/a3" }],
+    ["wrong cwd", approval, { ...approvalContext, cwd: "/elsewhere" }],
+    ["wrong command", approval, { ...approvalContext, command: "rm other" }],
+    ["expired", { ...approval, expiresAt: new Date(now - 1).toISOString() }, approvalContext],
+    ["unresolved", { ...approval, resolvedAt: null }, approvalContext],
+    ["used", { ...approval, usedAt: new Date(now - 100).toISOString(), usedForCommand: "rm fixture" }, approvalContext],
+  ]) {
+    assert.equal(validateApprovalForCommand(changedRequest, changedContext).ok, false, `${label} approval must fail`);
+  }
+
+  const approvalStateRoot = path.join(scratch, "approval-state");
+  fs.mkdirSync(approvalStateRoot);
+  const stateManager = createStateManager({ appendEntry() {} });
+  stateManager.restore({ cwd: approvalStateRoot, sessionManager: { getEntries: () => [] } });
+  const active = stateManager.createRun("approval test", "one use");
+  const activePhaseAttemptId = `${active.runId}/c${active.cycle}/implement/a1`;
+  stateManager.acquireLock(active.runId, activePhaseAttemptId);
+  const stateApproval = {
+    ...approval,
+    token: "APPROVAL_state",
+    runId: active.runId,
+    cycle: active.cycle,
+    phaseAttemptId: activePhaseAttemptId,
+    cwd: approvalStateRoot,
+    status: "pending",
+    resolvedAt: null,
+  };
+  stateManager.requestApproval(stateApproval);
+  const resolved = stateManager.resolveApproval(stateApproval.token, "approved");
+  assert.equal(resolved.status, "approved");
+  assert.equal(stateManager.consumeApproval(stateApproval.token, "rm fixture", approvalStateRoot).ok, true);
+  assert.equal(stateManager.consumeApproval(stateApproval.token, "rm fixture", approvalStateRoot).ok, false, "approval is single use");
+
+  let shellTool = null;
+  let executions = 0;
+  const fakePi = {
+    registerTool(tool) { shellTool = tool; },
+    async exec() {
+      executions += 1;
+      return { code: 0, stdout: "simulated\n", stderr: "", killed: false };
+    },
+  };
+  registerGoalShellTool(fakePi, undefined, undefined, stateManager);
+  assert.ok(shellTool, "goal_shell tool registered");
+  const shellApproval = {
+    ...stateApproval,
+    token: "APPROVAL_shell",
+    status: "pending",
+    resolvedAt: null,
+    usedAt: null,
+    usedForCommand: null,
+  };
+  stateManager.requestApproval(shellApproval);
+  stateManager.resolveApproval(shellApproval.token, "approved");
+  const shellResult = await shellTool.execute(
+    "call-1",
+    { command: "rm fixture", cwd: ".", approvalToken: shellApproval.token },
+    undefined,
+    undefined,
+    { cwd: approvalStateRoot },
+  );
+  assert.equal(shellResult.details.allowed, true);
+  assert.equal(shellResult.details.cwd, approvalStateRoot, "relative shell cwd is canonicalized before scope validation");
+  assert.equal(executions, 1);
+  const replayResult = await shellTool.execute(
+    "call-2",
+    { command: "rm fixture", cwd: ".", approvalToken: shellApproval.token },
+    undefined,
+    undefined,
+    { cwd: approvalStateRoot },
+  );
+  assert.equal(replayResult.details.allowed, false, "consumed shell token cannot be replayed");
+  assert.equal(executions, 1);
+
+  for (const command of [
+    "node -e \"require('node:fs').writeFileSync('bypass', 'x')\"",
+    "python3 -c \"open('bypass', 'w').write('x')\"",
+  ]) {
+    const interpreterBypass = await shellTool.execute(
+      `call-interpreter-${executions}`,
+      { command },
+      undefined,
+      undefined,
+      { cwd: approvalStateRoot },
+    );
+    assert.equal(interpreterBypass.details.allowed, false, `${command} must require operator approval`);
+    assert.equal(interpreterBypass.details.safetyCheckResult, "operator_approval_required");
+    assert.equal(executions, 1, "an interpreter bypass must not reach pi.exec");
+  }
+
+  const hardBlockedApproval = {
+    ...stateApproval,
+    token: "APPROVAL_hard_block",
+    exactCommands: ["rm -rf fixture"],
+    status: "pending",
+    resolvedAt: null,
+    usedAt: null,
+    usedForCommand: null,
+  };
+  stateManager.requestApproval(hardBlockedApproval);
+  stateManager.resolveApproval(hardBlockedApproval.token, "approved");
+  const hardBlocked = await shellTool.execute(
+    "call-3",
+    { command: "rm -rf fixture", approvalToken: hardBlockedApproval.token },
+    undefined,
+    undefined,
+    { cwd: approvalStateRoot },
+  );
+  assert.equal(hardBlocked.details.allowed, false);
+  assert.match(hardBlocked.details.safetyCheckResult, /always-blocked/);
+  assert.equal(executions, 1);
+  assert.equal(
+    stateManager.consumeApproval(hardBlockedApproval.token, "rm -rf fixture", approvalStateRoot).ok,
+    true,
+    "deterministic policy denial must not burn the approval capability",
+  );
+
+  const expiredApproval = {
+    ...stateApproval,
+    token: "APPROVAL_expired",
+    expiresAt: new Date(Date.now() - 1).toISOString(),
+  };
+  stateManager.requestApproval(expiredApproval);
+  assert.equal(stateManager.resolveApproval(expiredApproval.token, "approved").status, "expired");
+
+  console.log(`trusted-security: PASS (${sandboxBackend ? `${sandboxBackend.backend} receipt signature/artifact/config/HEAD/cwd/clean-tree` : "OS sandbox unavailable -> trusted runner failed closed"} + scoped one-use approvals)`);
+} finally {
+  fs.rmSync(scratch, { recursive: true, force: true });
+}

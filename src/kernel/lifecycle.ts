@@ -21,6 +21,11 @@ import { runSharderHook } from "./sharder.js";
 import { type ShardExecutionReport, runSchedulerHook } from "./scheduler.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
+import {
+  loadTrustedVerificationConfig,
+  runTrustedVerification,
+  trustedVerificationPolicyMatches,
+} from "../trusted-verification.js";
 
 export interface LifecycleServices {
   buildRuntimeCapabilitySnapshot(
@@ -35,6 +40,11 @@ export function registerGoalLifecycle(
   stateManager: StateManagerAPI,
   services: LifecycleServices,
 ): void {
+  // Pi may emit session_start more than once in one extension runtime during
+  // session replacement. Treat a start as an edge, not a level: without a
+  // matching shutdown, a duplicate event must not mint another phase attempt.
+  let sessionStarted = false;
+
   pi.on("agent_end", async (event, ctx) => {
     const state = stateManager.getState();
     if (!state || state.status !== "running") return;
@@ -98,7 +108,12 @@ export function registerGoalLifecycle(
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
-      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      const startResult = await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      if (!startResult.started) {
+        ctx.ui.notify(`Iterative goal could not restart ${state.phase}: ${startResult.reason}.`, "warning");
+        services.log(`Retry of ${state.phase} stopped before prompt: ${startResult.reason}`);
+        return;
+      }
       const prompt = renderPhasePrompt(state.phase, state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
       services.log(`Retrying ${state.phase} after synthetic capture failure`);
@@ -112,8 +127,11 @@ export function registerGoalLifecycle(
         state.phase,
         state.cycle,
       ));
-      state.lock.phaseStatus = "paused";
-      stateManager.persistAll();
+      // This is a recoverable, operator-resumable pause. Persist the run-level
+      // status as well as the lock so /goal-resume and restart agree about the
+      // next legal action. Previously only phaseStatus changed, leaving the run
+      // "running": restart auto-resumed it while /goal-resume rejected it.
+      stateManager.setStatus("paused_by_user");
       ctx.ui.notify(`Iterative goal paused in ${state.phase}: synthetic output capture failure persisted after retry.`, "warning");
       services.log(`Pausing ${state.phase} after repeated synthetic capture failure`);
       return;
@@ -152,7 +170,14 @@ export function registerGoalLifecycle(
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    services.log(`session_start: reason=${(_event as any).reason}`);
+    const reason = _event.reason;
+    services.log(`session_start: reason=${reason}`);
+
+    if (sessionStarted) {
+      services.log(`session_start: duplicate reason=${reason} ignored`);
+      return;
+    }
+    sessionStarted = true;
 
     // C4-ADV-004: scoped worktree crash recovery on every session start —
     // harness-prefixed registrations from dead runs are reclaimed (surviving
@@ -172,13 +197,51 @@ export function registerGoalLifecycle(
       services.log(`Restored: runId=${restored.runId}, cycle=${restored.cycle}, status=${restored.status}`);
 
       if (restored.status === "running") {
+        const interrupted = restored.phaseAttempts.find(
+          (attempt) => attempt.phaseAttemptId === restored.lock.activePhaseId && attempt.status === "running",
+        );
+
+        // /reload tears down and recreates the extension runtime but does not
+        // replace the Pi session. The current prompt/queue remains owned by
+        // that session, so starting another attempt here duplicates work and
+        // produces two valid nonces for one phase. Rehydrate state only.
+        if (reason === "reload" && interrupted) {
+          services.log(`session_start: reload rehydrated active attempt ${restored.lock.activePhaseId ?? "none"}; no duplicate resume`);
+          return;
+        }
+
         ctx.ui.notify(`Resuming iterative goal: cycle ${restored.cycle}, phase ${restored.phase}`, "info");
+
+        // A true session replacement or process startup cannot continue an
+        // in-flight assistant turn. Close the interrupted attempt before
+        // issuing the fresh resume nonce so the ledger never contains two
+        // simultaneously-running attempts for the same phase.
+        if (interrupted) {
+          stateManager.completePhaseAttempt(interrupted.phaseAttemptId, "cancelled");
+          stateManager.recordPhaseEvent({
+            runId: restored.runId,
+            cycle: restored.cycle,
+            phase: restored.phase,
+            phaseAttemptId: interrupted.phaseAttemptId,
+            attempt: interrupted.attempt,
+            kind: "phase_cancelled",
+            timestamp: new Date().toISOString(),
+            details: { reason: `session_${reason}` },
+          });
+          restored.lock.phaseStatus = "paused";
+          stateManager.persistAll();
+        }
 
         const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, restored);
         stateManager.setCapabilities(snapshot);
         const backends = detectSubagentBackend(pi, snapshot);
 
-        await startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi, ctx);
+        const startResult = await startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi, ctx);
+        if (!startResult.started) {
+          ctx.ui.notify(`Iterative goal resume stopped before prompting: ${startResult.reason}.`, "warning");
+          services.log(`Session resume stopped before prompt: ${startResult.reason}`);
+          return;
+        }
 
         const prompt = renderResumePrompt(restored, snapshot, backends);
         pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -187,6 +250,8 @@ export function registerGoalLifecycle(
   });
 
   pi.on("session_shutdown", async () => {
+    sessionStarted = false;
+    await shutdownRunAgentPools();
     const state = stateManager.getState();
     if (state) {
       state.lock.phaseStatus = "paused";
@@ -213,6 +278,18 @@ async function handleValidateTransition(
   phaseAttemptId: string,
 ): Promise<void> {
   services.log(`Running external evaluator for cycle ${state.cycle}`);
+
+  try {
+    const trustedVerification = loadTrustedVerificationConfig(ctx.cwd);
+    if (state.trustedVerification?.required && !trustedVerificationPolicyMatches(state.trustedVerification, trustedVerification)) {
+      services.log("Trusted verification failed closed: pinned verifier policy was disabled or changed after goal start");
+    } else if (trustedVerification.enabled) {
+      const receipt = runTrustedVerification({ cwd: ctx.cwd, state, stateManager, config: trustedVerification });
+      services.log(`Trusted verification: ${receipt?.ok ? "PASS" : "FAIL"} sha=${receipt?.sourceSha.slice(0, 12) ?? "none"}`);
+    }
+  } catch (err) {
+    services.log(`Trusted verification failed closed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   stateManager.recordPhaseEvent({
     runId: state.runId, cycle: state.cycle, phase: state.phase,
@@ -311,7 +388,12 @@ async function handleValidateTransition(
   stateManager.setCapabilities(snapshot);
   const backends = detectSubagentBackend(pi, snapshot);
 
-  await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  const startResult = await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  if (!startResult.started) {
+    ctx.ui.notify(`Next cycle stopped before prompting: ${startResult.reason}.`, "warning");
+    services.log(`Next cycle ${state.cycle} ${nextPhase} stopped before prompt: ${startResult.reason}`);
+    return;
+  }
 
   const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
   pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -410,7 +492,12 @@ async function advanceToNextPhase(
   stateManager.setCapabilities(snapshot);
   const backends = detectSubagentBackend(pi, snapshot);
 
-  await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  const startResult = await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  if (!startResult.started) {
+    ctx.ui.notify(`Phase transition stopped before prompting: ${startResult.reason}.`, "warning");
+    services.log(`Phase transition ${state.phase} → ${nextPhase} stopped before prompt: ${startResult.reason}`);
+    return;
+  }
 
   const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
   pi.sendUserMessage(prompt, { deliverAs: "followUp" });

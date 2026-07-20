@@ -25,7 +25,7 @@ export function registerGovernanceCommands(
         return;
       }
 
-      const releaseGate = await runLocalReleaseGate(state, stateManager);
+      const releaseGate = await runLocalReleaseGate(state, stateManager, ctx.cwd);
       if (!releaseGate.ok) {
         ctx.ui.notify(`Release authorization denied:\n${releaseGate.reasons.map((reason) => `- ${reason}`).join("\n")}`, "warning");
         return;

@@ -24,6 +24,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { logDebug } from "./logging.js";
 import { assertEvaluatorCyberPrereqs } from "./cyber-runtime.js";
+import {
+  loadTrustedVerificationConfig,
+  readTrustedVerificationReceipt,
+  trustedVerificationPolicyMatches,
+} from "./trusted-verification.js";
 
 function log(msg: string) {
   logDebug("evaluator", msg);
@@ -408,6 +413,15 @@ export async function runExternalEvaluator(
   const mergeBackSettings = configCwd ? readIterativeGoalSettings(configCwd).mergeBack : undefined;
   const mergeBackEnabled = !!(mergeBackSettings && typeof mergeBackSettings === "object"
     && (mergeBackSettings as Record<string, unknown>).enabled === true);
+  let trustedVerificationConfig = { enabled: false, checks: [] } as ReturnType<typeof loadTrustedVerificationConfig>;
+  let trustedVerificationConfigError: string | null = null;
+  if (configCwd) {
+    try {
+      trustedVerificationConfig = loadTrustedVerificationConfig(configCwd);
+    } catch (error) {
+      trustedVerificationConfigError = error instanceof Error ? error.message : String(error);
+    }
+  }
 
   // Start evaluator state
   updateEvaluatorHeartbeat(stateManager, state, "running");
@@ -517,6 +531,48 @@ export async function runExternalEvaluator(
         ? ["Completion blocked until every fan-out shard is merge_verified."]
         : ["Completion blocked until durable task plan is resolved."],
     };
+  }
+
+  // When enabled, the evaluator cannot accept model-authored PASS records.
+  // It requires the kernel-owned executable/argv runner's current-HEAD receipt
+  // before spending a judge call.
+  const trustedVerificationRequired = state.trustedVerification?.required
+    || trustedVerificationConfig.enabled
+    || trustedVerificationConfigError !== null;
+  if (trustedVerificationRequired) {
+    if (!configCwd || trustedVerificationConfigError || !trustedVerificationPolicyMatches(state.trustedVerification, trustedVerificationConfig)) {
+      const blocker = trustedVerificationConfigError
+        ? `Trusted-verification configuration is invalid: ${trustedVerificationConfigError}`
+        : !configCwd
+          ? "Trusted verification is required but the evaluator has no repository cwd."
+          : "Pinned trusted-verification policy was disabled or changed after goal start.";
+      updateEvaluatorHeartbeat(stateManager, state, "failed");
+      return {
+        goal_met: false,
+        confidence: 0,
+        completion_blockers: [blocker],
+        accepted_evidence: [],
+        rejected_evidence: [blocker],
+        remaining_work: [{ priority: "critical", description: blocker }],
+        next_cycle_directive: { focus: "validate", reason: blocker },
+        safety_notes: ["Verifier policy is pinned before model execution and cannot be downgraded in-run."],
+      };
+    }
+    const trustedReceipt = readTrustedVerificationReceipt(configCwd, state, stateManager);
+    if (!trustedReceipt?.ok) {
+      const blocker = "Trusted verification receipt is missing, stale, dirty, tampered, or contains a required failing check.";
+      updateEvaluatorHeartbeat(stateManager, state, "failed");
+      return {
+        goal_met: false,
+        confidence: 0,
+        completion_blockers: [blocker],
+        accepted_evidence: [],
+        rejected_evidence: [blocker],
+        remaining_work: [{ priority: "critical", description: blocker }],
+        next_cycle_directive: { focus: "validate", reason: blocker },
+        safety_notes: ["Model-authored validation status is advisory only."],
+      };
+    }
   }
 
   const prompt = [
