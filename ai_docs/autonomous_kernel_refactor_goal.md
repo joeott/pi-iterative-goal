@@ -1,6 +1,9 @@
 # Autonomous Kernel Refactor Goal
 
-Use this document as the authoritative goal packet for a Pi `/goal-start` run in `/Users/joe/Projects/pi-iterative-goal`.
+> Historical implementation packet. The active long-running objective is
+> [`goal.md`](../goal.md), loaded by `/goal`. Runtime model authority is the
+> exact nine-profile [`config/model-roster.json`](../config/model-roster.json);
+> this document cannot expand or override that roster.
 
 ## Objective
 
@@ -60,22 +63,16 @@ The governing rule is:
    - Add replay, trace, and audit commands if feasible in this slice.
 
 9. Model selection.
-   - Limit repo defaults and local Pi harness model configuration to:
-     - `deepseek/deepseek-v4-flash`
-     - `xiaomi/mimo-v2.5`
-     - `minimax/minimax-m3`
-     - `tencent/hy3-preview`
-     - `openrouter/owl-alpha`
-     - `deepseek/deepseek-v4-pro`
-     - `anthropic/claude-opus-4.7`
-     - `anthropic/claude-opus-4.8`
-     - `anthropic/claude-sonnet-4.6`
-     - `z-ai/glm-5.2`
-     - `openrouter/fusion`
-     - `openrouter/pareto-code`
-     - `openrouter/auto`
-   - Verify IDs against the OpenRouter live catalog before finalizing config.
-   - Remove stale or broken model IDs from harness config only. Do not disturb unrelated user configs.
+   - Enforce only the nine exact routes in `config/model-roster.json`:
+     `zai/glm-5.2`, both exact Fireworks GLM-5.2 endpoints,
+     `openrouter/moonshotai/kimi-k3`, the three exact Cerebras endpoints, and
+     OpenRouter Claude Sonnet 5 and Claude Fable 5.
+   - Reject unlisted aliases, automatic substitutions, and provider fallback
+     before a provider request. OpenRouter requests set
+     `provider.allow_fallbacks=false`.
+   - Require live response identity for every coordinator, worker, health, and
+     evaluator path; only the tracked Fireworks fast backing-model mapping is
+     permitted.
 
 ## Quality Check Loop
 

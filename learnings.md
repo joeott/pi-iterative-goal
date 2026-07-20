@@ -3,6 +3,49 @@
 > This is the canonical durable-learning record. Runtime status belongs in
 > state.md; the active contract and lane scoreboard belong in goal.md.
 
+## 2026-07-20 — Final dirty-tree hardening lessons
+
+- OFF is a zero-effect compatibility proof, not a disabled-feature stimulus.
+  Its tool surface omits subagent and shard tools, and certification requires
+  zero feature tasks, worker telemetry, feature events, artifacts, or Git drift.
+- Concurrency cannot be certified from scheduler ledger timestamps alone.
+  Production evidence must show overlap in the actual worker invocation timing
+  records and bind the expected C1 task IDs to their exact intended roles.
+- A model-telemetry reader is part of the proof boundary. The matrix must reject
+  malformed, unterminated, wrong-schema, stale-head, sequence-broken, or
+  hash-broken records instead of silently dropping them.
+- Cleanup is proven only by a positive post-close extinction check. `unknown`,
+  permission-denied, or a surviving owned group is non-certifying. Likewise,
+  filesystem snapshots must hash every bounded file byte; equal size is not
+  evidence of equal content.
+- A wall-time timer firing proves its configured deadline was reached even when
+  a coarse or adjusted wall clock samples one millisecond low. Clamp the receipt
+  to the reached deadline and test it repeatedly rather than weakening the
+  timeout assertion.
+- Native sandbox capability probing can transiently miss a bounded descendant
+  census on a loaded host. One complete retry is acceptable because every retry
+  re-proves the full isolation contract; cache only a successful selection and
+  continue to fail every actual sandbox/check error closed.
+- The complete deterministic chain passes on the current dirty bytes, while the
+  successful 12/12 headless report is bound to superseded pre-split commit
+  `3c86a8e`. Neither is a
+  substitute for the final clean exact-HEAD, live C1-C4, or CI gates.
+
+## 2026-07-20 — Pre-production dirty-tree gate boundary
+
+- The compiled smoke suite passes in full on the current dirty tree. The exact
+  five-profile feature evaluator and its negative cases also pass, including OFF
+  plus cumulative C1, C1-C2, C1-C2-C3, and C1-C2-C3-C4 semantics. These are
+  deterministic evaluator/harness results, not live profile execution.
+- Native macOS Seatbelt with the required backend passes on the dirty tree,
+  including capability, tamper, and owned-descendant containment checks. That
+  does not substitute for the separate signed verifier run bound to a clean,
+  committed exact HEAD.
+- No current implementation commit or exact-HEAD receipt exists yet. The live
+  five-profile matrix has not run, and final headless, private-tmux, and exact
+  model revalidation remain open. Therefore this milestone is pre-production
+  validation only, not production certification.
+
 ## 2026-07-20 — Exact-route and isolation hardening truths
 
 - A run-pool boundary must be asynchronous and explicit. A new run cannot erase
@@ -17,22 +60,59 @@
   Unknown prices remain `null`; they are never inferred from a provider-reported
   aggregate. Prompt and response bytes belong only in digests, not metadata logs.
 - Multi-process hash-chained logs need atomic lock ownership and nonce-checked
-  stale-lock recovery. Retention must preserve receipts/evidence, reject unsafe
-  owners or links, and cap only the managed runtime tree.
+  stale-lock recovery. Retention must distinguish compact tracked proof and
+  structurally protected evidence from purgeable harness-owned raw/evidence,
+  reject unsafe owners or links, and journal every eligible deletion.
 - On macOS, a deny-default Seatbelt process needs literal read access to the root
   vnode for dyld, canonical `/private/...` temporary paths, and the concrete
   Command Line Tools executable rather than the `/usr/bin/git` xcode-select shim.
   Capability probing must prove outside-read, outside-write, and network denial
   before a receipt can claim OS enforcement.
-- Catalog presence, authenticated inference, structured output, and tool behavior
-  are separate provider gates. The exact roster hash is
-  `683bac3a4b8df5127c9c77a228288b8c87564e4a90089f8d70dd5181f76b9601`:
-  Z.ai GLM 5.2, both Fireworks GLM 5.2 routes, and all three Cerebras routes passed
-  live behavior; the exact Kimi K3, Sonnet 5, and Fable 5 OpenRouter names were
-  catalog-valid but inference returned HTTP 401. No substitute route is a PASS.
+- Catalog presence, authenticated inference, structured output, tool behavior,
+  and production-worker response identity are separate gates. The initial
+  OpenRouter HTTP 401 was traced to stale first-wins credential precedence. Once
+  the secured `0600` OpenCode auth source was prioritized, all nine exact routes
+  at roster hash
+  `683bac3a4b8df5127c9c77a228288b8c87564e4a90089f8d70dd5181f76b9601`
+  passed raw completion, structured-output, and tool probes without fallback.
+  That supersedes the earlier six-of-nine live result; it does not by itself
+  certify the Pi worker adapter.
+- Pi's OpenAI-compatible assistant-message surface may omit `responseModel` when
+  the upstream model equals the requested model, while a router that reports a
+  different backing model exposes it. The first one-sample matrix correctly
+  failed Cerebras with `response_model_identity_missing`; after positive adapter
+  identity was added, later 1-by-2 and 5-by-2 ancestor receipts passed Cerebras
+  and the permitted Fireworks backing model. Raw endpoint identity must never be
+  silently reused as worker identity, and the comparison must be repeated on the
+  final exact HEAD.
+- A comparison is meaningful only when routes share the same fixture digest and
+  each has at least five samples. The initial one-sample matrix was correctly
+  `insufficientData`; a later ancestor 5-by-2 matrix reached sufficient data and
+  passed 10/10, but its nullable prices and costs remain `pricing_unknown`, not
+  zero, and it does not certify the dirty or eventual final tree.
 - Runtime materialization may persist provider names and credential variable names,
   never credential values. Launchers remain offline by default and must reject
   extension/model/config overrides that weaken the exact-roster boundary.
+- A real Pi RPC or tmux load proves runtime discovery only to the commands actually
+  exercised. The isolated July 20 runs proved `/goal` prompt discovery, extension
+  registration, exact model selection, roster output, and idle status while
+  leaving the default tmux server unchanged. They did not start a goal, invoke a
+  model, exercise C1–C4, or establish a clean headless shutdown.
+- Trusted verification paths must canonicalize a fresh per-run source/cache root
+  and create artifacts with no-follow, exclusive writes before atomic promotion;
+  predictable source-cache or receipt paths otherwise admit symlink redirection.
+  A fresh offline dependency cache also fails closed when the exact HEAD cannot
+  install its dependencies. That is honest non-certification, not permission to
+  reuse ambient mutable modules.
+- The managed retention loop is intentionally narrow and keeps raw logs separate
+  from compact tracked proof. For harness-owned production evidence, successful
+  runs expire after 30 days, failures after 90 days, and incomplete runs after
+  14 days; the cap is 128 MiB per run and 512 MiB aggregate, retaining the 5 most
+  recent successes and 10 most recent failures when possible. Compact tracked
+  receipts/state, comparison heads and aggregates, the retention journal, and
+  explicit `PINNED`, `CURRENT`, or live evidence remain protected. Symlinks,
+  unsafe ownership, or protected-data pressure fail health closed instead of
+  widening the purge target.
 
 ---
 

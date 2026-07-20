@@ -49,8 +49,11 @@ A successful system has five properties:
   and success events cannot substitute for that transition.
 - Malformed, degraded, stale, unsigned, over-budget, restarted, or incomplete
   evidence fails closed.
-- Historical artifacts remain immutable. Corrections supersede claims explicitly
-  rather than rewriting old evidence into a stronger result.
+- Historical compact tracked receipts and state remain immutable. Corrections
+  supersede claims explicitly rather than rewriting old proof into a stronger
+  result. Ignored raw logs and harness-owned production evidence may expire only
+  under the documented ownership-scoped retention policy; deletion is journaled
+  and cannot turn an absent gate into PASS.
 
 ### Safety and ownership
 
@@ -69,9 +72,25 @@ A successful system has five properties:
 
 - All C1–C4 production features remain off by default until a separate real-corpus
   quality, latency, reliability, and cost decision authorizes a default change.
+- The model boundary is an explicit nine-route allowlist in `goal.md` and
+  `config/model-roster.json`. Any addition, alias, provider substitution, or
+  route rename is a contract change that requires operator authorization and
+  fresh catalog, raw-behavior, production-worker-identity, and comparison proof.
+- Model telemetry is metadata-only and retention-bounded. Unknown price stays
+  unknown; neither missing cost data nor purged raw logs may be represented as a
+  zero-cost or successful comparison result.
+- Proof-bearing telemetry is strict and complete: malformed records, broken
+  sequence/hash chains, stale heads, missing exact identity, or ledger-only
+  concurrency evidence fail certification rather than disappearing from it.
+- Retention distinguishes durable tracked proof from bounded local runtime data.
+  Compact tracked receipts/state, comparison heads and aggregates, the retention
+  journal, and explicitly `PINNED`, `CURRENT`, or live evidence are protected;
+  quota pressure caused by protected bytes fails closed rather than authorizing
+  broader cleanup.
 - Invalid flag dependency combinations fail before state or filesystem mutation.
-- All-off behavior remains regression-compatible; feature-on certification is
-  additive and explicitly named.
+- All-off behavior remains regression-compatible and produces no C1-C4 task,
+  worker telemetry, feature event, artifact, or repository mutation. Feature-on
+  certification is additive and explicitly named.
 - The source worktree, user configuration, and pre-existing untracked content are
   unchanged by disposable production tests.
 

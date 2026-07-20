@@ -42,7 +42,7 @@
         </p>
         <div class="hero-metrics" aria-label="Key harness properties">
           <div class="metric"><b>4</b><span>Required phases before evaluation</span></div>
-          <div class="metric"><b>13</b><span>Approved OpenRouter model entries</span></div>
+          <div class="metric"><b>9</b><span>Exact approved model profiles</span></div>
           <div class="metric"><b>18</b><span>Governed policy effects</span></div>
           <div class="metric"><b>0</b><span>External assets in this guide</span></div>
         </div>
@@ -52,14 +52,14 @@
         <section id="quick-start">
           <h2>Quick Start</h2>
           <p>
-            Build the extension, let Pi load <code>dist/index.js</code>, then start a goal with an explicit success criterion.
+            Build the extension, let Pi load <code>dist/index.js</code>, then use the tracked <code>/goal</code> prompt.
             The loop runs <code>research -> plan -> implement -> validate</code>, then an external evaluator decides whether the goal is met.
           </p>
           <pre><code>npm install
 npm run build
 
-# In Pi, from the repository that should own the goal:
-/goal-start Improve the checkout flow #criterion: npm run validate passes and the checkout smoke path is documented
+# In Pi, from this repository; /goal reads repository-root goal.md:
+/goal
 /goal-status --json</code></pre>
           <div class="grid">
             <div class="panel">
@@ -273,20 +273,18 @@ PolicyDecision {
         <section id="models">
           <h2>Model Selection</h2>
           <p>
-            The harness filters configured models against an approved OpenRouter allowlist.
-            The default primary is `openrouter/deepseek/deepseek-v4-flash`; default fallbacks are
-            `openrouter/deepseek/deepseek-v4-pro`, `openrouter/anthropic/claude-sonnet-4.6`, and
-            `openrouter/openrouter/fusion`.
+            The tracked roster is exact-only. Unlisted aliases and provider substitutions fail before
+            network or tool effects; OpenRouter provider fallback is disabled. Use <code>/goal-models --json</code>
+            for the run-frozen catalog and <code>/goal-telemetry-status --json</code> for comparison readiness.
           </p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Role</th><th>Approved Models</th></tr></thead>
               <tbody>
-                <tr><td>Primary</td><td><code>deepseek/deepseek-v4-flash</code></td></tr>
-                <tr><td>Fallback</td><td><code>xiaomi/mimo-v2.5</code>, <code>minimax/minimax-m3</code>, <code>tencent/hy3-preview</code>, <code>openrouter/owl-alpha</code>, <code>z-ai/glm-5.2</code></td></tr>
-                <tr><td>Evaluator</td><td><code>deepseek/deepseek-v4-pro</code></td></tr>
-                <tr><td>Reviewer</td><td><code>anthropic/claude-opus-4.7</code>, <code>anthropic/claude-opus-4.8</code>, <code>anthropic/claude-sonnet-4.6</code></td></tr>
-                <tr><td>Router</td><td><code>openrouter/fusion</code>, <code>openrouter/pareto-code</code>, <code>openrouter/auto</code></td></tr>
+                <tr><td>Z.ai</td><td><code>zai/glm-5.2</code></td></tr>
+                <tr><td>Fireworks</td><td><code>fireworks/accounts/fireworks/models/glm-5p2</code>, <code>fireworks/accounts/fireworks/routers/glm-5p2-fast</code></td></tr>
+                <tr><td>OpenRouter</td><td><code>openrouter/moonshotai/kimi-k3</code>, <code>openrouter/anthropic/claude-sonnet-5</code>, <code>openrouter/anthropic/claude-fable-5</code></td></tr>
+                <tr><td>Cerebras</td><td><code>cerebras/gpt-oss-120b</code>, <code>cerebras/zai-glm-4.7</code>, <code>cerebras/gemma-4-31b</code></td></tr>
               </tbody>
             </table>
           </div>

@@ -1,6 +1,6 @@
 # Exact model runtime validation — 2026-07-20
 
-This receipt records live provider evidence for the only nine model routes
+This receipt records earlier July 20 live provider evidence for the only nine model routes
 permitted by `config/model-roster.json`. It contains no credential values.
 Catalog presence, authenticated inference, and behavior/tool conformance are
 separate proof states.
@@ -19,13 +19,22 @@ separate proof states.
 | `openrouter_claude_sonnet_5` | `openrouter/anthropic/claude-sonnet-5` | listed | PASS / PASS / PASS (HTTP 200) | exact response model matched after credential repair |
 | `openrouter_claude_fable_5` | `openrouter/anthropic/claude-fable-5` | listed | PASS / PASS / PASS (HTTP 200) | exact response model matched after credential repair |
 
-All nine routes therefore have current authenticated completion, structured
-output, and tool-call proof. No substitute model or provider fallback was used.
+All nine routes therefore had authenticated completion, structured-output, and
+tool-call proof in the recorded runs. No substitute model or provider fallback
+was used. These receipts predate the final implementation and must be repeated
+on the clean candidate before they can be called current.
 The initial OpenRouter attempt returned HTTP 401 because first-wins local
 materialization selected a stale project credential and did not inspect the
 machine-wide OpenCode `openrouter-kimi` auth store. The repair selects that
 secure `0600` store before stale fallbacks and writes only to the ignored local
 `.env`; no credential value is present in this receipt.
+
+This table validates the raw provider-probe path. The first bounded production
+worker comparison separately failed Cerebras GPT-OSS closed with
+`response_model_identity_missing`. After the adapter required positive response
+identity, the 1-by-2 and sufficient 5-by-2 worker comparisons passed Cerebras
+GPT-OSS and the permitted Fireworks-fast backing identity. Those worker receipts
+also predate the final candidate and remain a separate proof boundary.
 
 ## Evidence binding
 
@@ -45,6 +54,10 @@ secure `0600` store before stale fallbacks and writes only to the ignored local
   `b7c5465476c934a031aeb50fc6b1a5a7d37c93ddbfc393a2cab910085bb56672`.
 - Roster catalog hash recorded by both probes:
   `683bac3a4b8df5127c9c77a228288b8c87564e4a90089f8d70dd5181f76b9601`.
+- Sufficient production-worker comparison:
+  `.pi/iterative-goal/managed/evidence/live-worker-matrix/worker-matrix-20260720202120269-94b6c1.json`
+  — 10 PASS / 0 FAIL with `sufficientData:true`, SHA-256
+  `ed90179e10665b418e89dd491434256516b583dc8193183e9250f28a37281dc8`.
 
 Raw probe JSON remains ignored, bounded local evidence. This compact receipt is
 the tracked handoff. Future credential rotation must rerun all three behavior

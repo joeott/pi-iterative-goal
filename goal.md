@@ -30,6 +30,49 @@ The selected production boundary is:
 - all feature defaults remain off after certification;
 - PR #8 is updated, not automatically merged.
 
+## Exact-only model and observability contract
+
+The production runtime may select only the following nine provider/model pairs.
+No alias, substitute, unlisted fallback, or tenth route is admissible:
+
+| Profile | Exact provider/model |
+| --- | --- |
+| `zai_glm_5_2` | `zai/glm-5.2` |
+| `fireworks_glm_5_2_max` | `fireworks/accounts/fireworks/models/glm-5p2` |
+| `fireworks_glm_5_2_fast` | `fireworks/accounts/fireworks/routers/glm-5p2-fast` |
+| `openrouter_kimi_k3` | `openrouter/moonshotai/kimi-k3` |
+| `cerebras_gpt_oss_120b` | `cerebras/gpt-oss-120b` |
+| `cerebras_glm_4_7` | `cerebras/zai-glm-4.7` |
+| `cerebras_gemma_4_31b` | `cerebras/gemma-4-31b` |
+| `openrouter_claude_sonnet_5` | `openrouter/anthropic/claude-sonnet-5` |
+| `openrouter_claude_fable_5` | `openrouter/anthropic/claude-fable-5` |
+
+OpenRouter requests must disable provider fallback. The Fireworks fast router is
+the sole explicit route-to-backing-model mapping: a response that names
+`accounts/fireworks/models/glm-5p2` is valid only for
+`accounts/fireworks/routers/glm-5p2-fast`. All other response identity must bind
+to the selected exact route. A catalog listing or raw endpoint probe does not
+substitute for identity proof through the production worker path.
+
+Every production worker invocation records metadata-only telemetry: route,
+requested and observed model identity, fixture digest, timing, token usage,
+tool/error counts, termination, gate status, and nullable cost. Model comparison
+is sufficient only for the same non-null fixture across at least two routes with
+at least five samples per route. Unknown pricing remains `null`, so no USD budget
+or cost-comparison gate may claim PASS until authoritative catalog prices exist.
+
+Managed runtime logs are hash-chained, ownership-scoped, ignored local evidence
+and remain separate from compact tracked receipts/state. The six-minute purge
+loop may delete only its narrow harness-owned raw and production-evidence
+namespaces. Production evidence expires after 30 days for success, 90 days for
+failure, and 14 days when incomplete; it is capped at 128 MiB per run and 512
+MiB in aggregate, while retaining the 5 most recent successes and 10 most recent
+failures when possible. Compact tracked receipts/state, comparison chain heads
+and aggregates, the retention journal, and evidence explicitly protected by
+`PINNED`, `CURRENT`, or a live run remain retained. Unsafe ownership, symlinks,
+or pressure caused by protected evidence fails logging health closed instead of
+broadening deletion or hiding the pressure.
+
 ## Completion criteria
 
 The session is complete only when all of the following are true:
@@ -52,12 +95,12 @@ The session is complete only when all of the following are true:
 
 | Lane | Outcome | Initial status | Exit gate |
 | --- | --- | --- | --- |
-| L0 — truth and control plane | Install this document quartet and `/goal` wrappers; supersede stale evidence claims | validating | Local wrappers, exact-nine runtime materialization, and control docs pass; commit/PR visibility remains |
+| L0 — truth and control plane | Install this document quartet and `/goal` wrappers; supersede stale evidence claims | validating | Local wrappers and exact-nine runtime are committed; reconciled control docs and PR visibility remain |
 | L1 — worker containment | Isolated Pi workers, scoped tools/env, real budgets, exact cancellation, approval capabilities | validating | Deterministic escape, budget, cancellation, response-identity, credential, and phase-attempt approval gates pass locally |
 | L2 — shard delivery and recovery | Complete patch capture, owned integration branch, bounded repair, crash replay, flag dependency semantics | validating | Deterministic complete-patch, immutable-base, chain-proof, promotion-CAS, lease, and restart gates pass locally |
-| L3 — trusted verification | Kernel-owned structured checks, immutable signed attestations, delivered-HEAD release gate | validating | macOS Seatbelt executes deny-default checks; forged/stale/tampered/manual PASS and validation-HEAD drift fail closed locally |
-| L4 — production matrix | Isolated headless and TUI runners plus live-model individual/combined scenarios | blocked-with-evidence | Six routes have live behavioral PASS; three exact OpenRouter routes are catalog-valid but blocked by HTTP 401; final CLI/tmux runs remain |
-| L5 — CI and PR closeout | Deterministic CI, compact evidence, documentation reconciliation, final PR #8 update | pending | Required checks green and final receipt names remote PR head |
+| L3 — trusted verification | Kernel-owned structured checks, immutable signed attestations, delivered-HEAD release gate | validating | Trusted implementation is committed and native macOS Seatbelt passes; signed clean exact-HEAD and CI-backend gates remain |
+| L4 — production matrix | Isolated headless and TUI runners plus live-model individual/combined scenarios | validating | Strict exact-five evaluator and negatives are committed and pass; live OFF/C1/C1-C2/C1-C2-C3/C1-C2-C3-C4, final headless/tmux, and final model revalidation remain |
+| L5 — CI and PR closeout | Deterministic CI, compact evidence, documentation reconciliation, final PR #8 update | implementing | Pinned exact-head workflow is committed locally; required checks must be green and the final receipt must name the remote PR head |
 
 Status values are `pending`, `researching`, `implementing`, `validating`,
 `blocked-with-evidence`, and `complete`. A lane becomes complete only when its
@@ -74,7 +117,9 @@ exit gate is attached to exact evidence.
 - A write lease remains held until process `close`; SIGTERM is followed by a
   bounded wait and exact process-group SIGKILL when necessary.
 - Capture patches from an immutable base with untracked, binary, rename, delete,
-  and worker-commit coverage. Zero diff never becomes completed or verified.
+  and worker-commit coverage. A `null`/failed capture never becomes completed or
+  verified; an exact no-op capture is distinct and cannot satisfy a production
+  delivery criterion without independent checks.
 - The integration result must be promoted to the session branch before validate
   or release. Current HEAD must equal the recorded delivered SHA.
 - Validation executes structured executable/argv checks with `shell:false` in a
@@ -118,6 +163,11 @@ exit gate is attached to exact evidence.
 - Each shard has at most three attempts. Budget exhaustion is terminal evidence,
   not permission to silently continue.
 
+These are acceptance ceilings, not current proof. Per-worker turn/token/time
+limits are enforced, but aggregate scenario/suite response and USD ledgers remain
+an open release gate; USD enforcement is unavailable while roster prices are
+unknown.
+
 ## Stop rules
 
 Stop the affected lane, preserve evidence, and update `state.md` when:
@@ -141,3 +191,8 @@ a broad workaround or a weaker completion claim.
 | 2026-07-20 13:22 CDT | L0 locally validated | Verified history preservation, narrow `.pi` admission, clean patch whitespace, and Pi RPC discovery of `/goal` | Still local and uncommitted; PR #8 does not yet contain the control plane |
 | 2026-07-20 14:50 CDT | L1–L3 deterministic hardening | Enforced custom worker tools and selected credentials, exact process budgets, complete Git delivery proof, phase-attempt approvals, signed trusted checks, telemetry, and bounded retention | Full local deterministic chain passes; changes remain uncommitted and do not yet certify PR HEAD |
 | 2026-07-20 14:50 CDT | Exact-nine provider probe | Bound runtime policy to roster hash `683bac3a...9601`; six routes passed live behavior and all three OpenRouter names passed catalog validation | OpenRouter inference remains blocked by HTTP 401; no substitution or fallback was accepted |
+| 2026-07-20 15:00 CDT | Exact-nine authentication repaired | Prioritized the secured OpenRouter credential source and repeated completion, structured-output, and tool probes | All nine exact raw routes pass; this does not yet prove production-worker response identity or a sufficient comparison |
+| 2026-07-20 15:04 CDT | Isolated runtime surfaces exercised | Loaded `/goal` and the exact extension in real Pi RPC mode; inspected the exact roster and idle goal status in a unique private-socket tmux session; default tmux sessions were unchanged | Command discovery and model selection pass on local commit `df429b6`; no goal was started, no model was invoked in these two runs, and the headless launcher was interrupted rather than cleanly completed |
+| 2026-07-20 15:10 CDT | Production worker comparison started | Sent one identical, no-tool fixture to Cerebras GPT-OSS 120B and Fireworks GLM 5.2 fast through `PiSubprocessAgentPool` | Fireworks passed with its permitted backing model; Cerebras failed closed because worker telemetry lacked positive response identity; one sample per route is insufficient and pricing remains unknown |
+| 2026-07-20 16:54 CDT | Pre-production deterministic gates green | Completed the compiled smoke suite, native macOS Seatbelt require-backend test, and exact-five feature evaluator/negative suite after retention and harness hardening | PASS applies only to the dirty working tree; no implementation commit, signed exact-HEAD receipt, live five-profile matrix, or final headless/tmux/model revalidation exists yet |
+| 2026-07-20 17:27 CDT | Dirty-tree deterministic closeout | Made OFF zero-effect, bound real worker overlap and exact reviewer roles, enforced strict chained telemetry, byte-complete snapshots, positive group extinction, stable sandbox selection, and truthful wall-time receipts; reran `npm run validate` | Complete deterministic PASS applies to current dirty bytes; successful headless run `headless-2026-07-20T22-15-02-556Z` applies only to superseded pre-split commit `3c86a8e`; clean exact-HEAD, live C1-C4, push, and CI remain |
