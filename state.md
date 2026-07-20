@@ -1,64 +1,66 @@
 # State
 
-Updated: 2026-07-20 17:27 CDT
+Updated: 2026-07-20 17:44 CDT
 Repository: `/Users/joe/Projects/pi-iterative-goal`
 Branch: `feat/deployment-plan-c0-c4`
-Local committed implementation HEAD: `5823a712b2cfad7848bee1bfe881bc9c866283ce`
+Local committed implementation HEAD: `fd41a9c2515489d9442ad7993ba84273c0b2c310`
 Remote branch/PR head: `275b23d3e0231c407019ca0ab9ee55cf8a7ce953`
-Pull request: #8, open, base `main`; local branch is 19 commits ahead and has
-not been pushed. GitHub reports no checks on the remote head.
+Pull request: #8, open, base `main`; before this state-only checkpoint the local
+branch is 22 commits ahead and has not been pushed. The remote head has no
+reported checks.
 
 ## Current objective
 
-Commit the reconciled control/validation documents while keeping protected and
-intermediate headless evidence unstaged. On the resulting exact clean commit,
-repeat deterministic, signed trusted-head, OpenRouter,
-headless CLI, private-socket tmux, production-worker, and cumulative C1-C4
-proof. Push only that candidate, then observe CI on the identical PR SHA. Do
-not merge or deploy.
+Freeze a clean documentation checkpoint over `fd41a9c`, then run every required
+proof on that exact commit: the full deterministic suite, signed trusted-head,
+three exact OpenRouter routes, isolated CLI, private-socket tmux, deterministic
+headless evidence, the 5-by-2 live worker comparison, and OFF plus cumulative
+C1-C4 production profiles. Push only that exact candidate and observe CI on the
+identical PR SHA. Do not merge or deploy.
 
 The largest remaining uncertainty is the real C1-C4 production matrix. It is
-not compilation, exact catalog membership, raw provider reachability, or the
-deterministic evaluator.
+not compilation, deterministic evaluation, exact catalog membership, or raw
+provider reachability.
 
 ## Current proof boundary
 
-The former unpublished aggregate `3c86a8e` was split without losing working-tree
-bytes into four reviewable commits: `3f909da` trusted verification, `16e6d9f`
-runtime recovery/operations, `dd8870c` production matrix, and `5823a71`
-headless/CI delivery gates. The working tree now contains documentation and
-generated headless pointers only. Therefore committed implementation proof,
-superseded live receipts, and dirty documentation still describe different
-boundaries. The remote PR remains at `275b23d`.
+The original unpublished aggregate `3c86a8e` remains split into reviewable
+L0-L3 commits. Two additional production-preflight fixes now follow the
+reconciled documentation commit `bc57ef6`:
 
-### Current dirty-tree deterministic proof
+- `8fe6562` makes nested validation commands prefer the already allowlisted
+  CommandLineTools `git` binary inside macOS Seatbelt and adds a native sandbox
+  regression check.
+- `fd41a9c` derives live matrix tool/action/criterion prompts from cumulative
+  feature depth, so OFF requests zero feature stimulus and C1 never requests or
+  exposes the C2 shard-plan tool.
 
-- `npm run validate` passed end to end after one reproduced and repaired
-  wall-time measurement failure. It covers the exact nine-profile runtime,
-  typecheck/build, Tests 1-83 plus crash-resume Test 78b, telemetry/retention,
-  exact roster and failover, strict production-matrix negatives, byte-complete
-  snapshot tests, trusted dependencies, native trusted security, workspace,
-  long-session lifecycle, agent budgets, and worker containment.
-- `node scripts/test-agent-budgets.mjs` passed five consecutive times after
-  timeout receipts were clamped to their reached deadline instead of allowing
-  a coarse wall-clock sample below the configured maximum.
-- `node scripts/test-trusted-security.mjs --require-backend` passed with the
-  native macOS Seatbelt backend. Successful capability selection is now cached
-  process-locally after one bounded full-probe retry; an unavailable backend or
-  failed sandboxed check still fails closed.
-- `npm run test:prod-feature-matrix`, the owned-group self-test, and the bounded
-  tree-snapshot self-test pass. OFF permits no C1-C4 action, task, telemetry,
-  feature event, plan, claim, patch, merge, or HEAD change. Enabled profiles
-  bind coordinator and workers to exact Z.ai GLM-5.2 identities, bind C1 IDs to
-  exact reviewer roles, require ledger and actual-worker overlap, strictly
-  verify chained telemetry, require a clean boundary worktree, hash every
-  bounded snapshot byte, and require positive post-close process-group
-  extinction.
+The tracked tree is clean before this state update. Only protected context,
+review, and historical headless directories are visible as untracked. The
+remote PR still points to `275b23d`.
 
-These results validate the current dirty bytes only. They are not yet signed
-exact-HEAD evidence, CI proof, or production C1-C4 certification.
+### Deterministic and trusted verification
 
-### Earlier live proof retained for comparison
+- On clean tracked HEAD `bc57ef69088c2b04565a1b40f7555dc26ae28be5`,
+  `npm run validate` passed end to end. Coverage includes the exact nine-profile
+  runtime, typecheck/build, Tests 1-83 plus crash-resume Test 78b,
+  telemetry/retention, exact roster/failover, strict production-matrix
+  positives and negatives, byte-complete bounded snapshots, trusted
+  dependencies/security, workspace hardening, lifecycle/private-tmux monitor,
+  agent budgets, and worker containment.
+- A signed `trusted:head` attempt on `bc57ef6` correctly failed because nested
+  `git init` resolved through `/usr/bin/git`, whose xcrun shim could not read
+  `/var/select/developer_dir` inside the deny-default Seatbelt profile. The
+  failed receipt remains under
+  `.pi/iterative-goal/runs/trusted-head-2026-07-20T22-38-31-372Z-0adc7ca9/`.
+- After `8fe6562`, `node scripts/test-trusted-security.mjs --require-backend`
+  passes with the native `macos-sandbox-exec` backend, including the new nested
+  `git init` regression. A fresh signed exact-HEAD receipt is still required.
+- After `fd41a9c`, `npm run test:prod-feature-matrix` passes with OFF zero-effect
+  and cumulative C1-C4 prompt/tool alignment. The complete deterministic suite
+  has not yet been repeated over these two new commits.
+
+### Live proof retained for comparison
 
 - Exact catalog hash
   `683bac3a4b8df5127c9c77a228288b8c87564e4a90089f8d70dd5181f76b9601`
@@ -69,32 +71,33 @@ exact-HEAD evidence, CI proof, or production C1-C4 certification.
   (`2bd757024df0f4cd7d31c48afbab08e87b16bd32fb1f231941939eec9ff0c3cb`)
   and `2026-07-20T20-00-46-491Z.json`
   (`b7c5465476c934a031aeb50fc6b1a5a7d37c93ddbfc393a2cab910085bb56672`),
-  each 15 PASS / 0 FAIL. They predate the final receipt schema.
-- The 5-by-2 Cerebras GPT-OSS / Fireworks fast worker comparison receipt
+  each 15 PASS / 0 FAIL. They are earlier evidence, not final-head proof.
+- The 5-by-2 Cerebras GPT-OSS / Fireworks fast worker receipt
   `worker-matrix-20260720202120269-94b6c1.json`
   (`ed90179e10665b418e89dd491434256516b583dc8193183e9250f28a37281dc8`)
-  passed 10/10 with `sufficientData:true`. Price data was unavailable, so no
-  aggregate USD comparison is claimed.
-- A real headless Pi run at `68ecf15` selected `zai/glm-5.2`, executed the
-  exact `goal_shell pwd` call, and exited zero. Private tmux run
-  `pr8-final-20260720T201619Z` used and destroyed one exact private socket and
-  session without changing the default tmux server.
-- Headless evidence run `headless-2026-07-20T22-15-02-556Z` on the now-superseded
-  pre-split commit object `3c86a8e` passed 12/12 checks and every reported
-  feature. It is useful earlier evidence, not proof of the current split commits
-  or eventual final commit. Earlier failed headless runs remain preserved and
-  are not successes.
+  passed 10/10 with `sufficientData:true`. Provider price data was unavailable,
+  so no aggregate USD comparison is claimed.
+- A diagnostic isolated CLI run on `bc57ef6`, launched with explicit `.env`
+  loading, exited zero, selected `zai/glm-5.2`, discovered `/goal`, and kept the
+  tracked tree clean. Pi enumerated built-in models, as expected; the committed
+  request boundary enforces the exact nine during selection restoration and
+  `before_provider_request`. This diagnostic does not replace a final-head
+  request-boundary probe. Private tmux was intentionally deferred once new
+  tracked fixes became necessary.
+- Headless run `headless-2026-07-20T22-15-02-556Z` on superseded pre-split
+  commit object `3c86a8e` passed 12/12 checks and every reported feature. It and
+  the earlier failed runs remain preserved, but none proves the final commit.
 
 ## Lane scoreboard
 
 | Lane | Status | Evidence / remaining gate |
 | --- | --- | --- |
-| L0 truth/control | validating | Goal quartet, `/goal` prompt, exact roster, launchers, and 19 unpublished local commits exist; this reconciled state still needs to land on the final PR head |
-| L1 containment | validating | Full deterministic containment/lifecycle suite passes on dirty bytes; clean exact-HEAD CLI/tmux rerun remains |
-| L2 delivery/recovery | validating | Crash-resume, exact patch/tree delivery, strict telemetry, and matrix negatives pass; live cumulative delivery remains |
-| L3 trusted verification | validating | Native Seatbelt require-backend passes; signed clean exact-HEAD receipt and CI backends remain |
-| L4 production matrix | validating | Evaluator is deterministic and fail-closed; none of OFF/C1/C1-C2/C1-C2-C3/C1-C2-C3-C4 has run live on the final implementation |
-| L5 CI/PR closeout | implementing | Pinned exact-head workflow is committed locally; documentation commit, push, remote-SHA binding, and observed checks remain |
+| L0 truth/control | validating | Goal quartet, `/goal` prompt, exact-nine roster, launchers, and 22 unpublished implementation commits exist; this state-only checkpoint must land before the candidate is frozen |
+| L1 containment | validating | Deterministic containment/lifecycle passed on `bc57ef6`; exact-final CLI, private tmux, and enumerable-unlisted-model request-boundary checks remain |
+| L2 delivery/recovery | validating | Crash resume, exact patch/tree delivery, strict telemetry, and prompt-contract tests pass; live cumulative delivery remains |
+| L3 trusted verification | validating | Native Seatbelt plus nested-git regression passes after `8fe6562`; signed clean exact-HEAD receipt and both CI backends remain |
+| L4 production matrix | blocked on execution | Deterministic evaluator and prompt contract are fail-closed; OFF/C1/C1-C2/C1-C2-C3/C1-C2-C3-C4 have not run live on the final candidate |
+| L5 CI/PR closeout | implementing | Pinned exact-head workflow is local only; exact push, remote-SHA binding, and observed checks remain |
 
 ## Protected local state
 
@@ -105,8 +108,11 @@ Preserve and do not stage wholesale:
 - `ai_docs/context_004_merge_and_test_prompt.md`;
 - `ai_docs/reviews/adversarial-slice-001.jsonl`;
 - `ai_docs/reviews/slice-001.diff`;
-- failed or intermediate untracked headless run directories unless a compact
-  final receipt explicitly selects them.
+- failed, intermediate, or superseded untracked headless run directories.
+
+`stash@{0}` contains only pre-final tracked headless pointer files from the
+superseded `3c86a8e` run. Preserve it until final proof is complete; do not pop
+or drop it into the candidate.
 
 Raw model, worker, and harness logs are local evidence. Retention may purge only
 ownership-scoped eligible runs within the documented age/size policy; compact
@@ -115,20 +121,19 @@ live evidence remain protected, and protected pressure fails closed.
 
 ## Immediate ordered queue
 
-1. Commit the reconciled control and validation documents without staging
-   protected files or the pre-final generated headless pointers/runs.
-2. On the exact clean candidate, rerun `npm run validate`, native Seatbelt, the
-   strict matrix evaluator, and `trusted:head`; preserve signed receipts.
-3. Repeat the three exact OpenRouter probes, isolated headless CLI,
-   private-socket tmux, deterministic headless evidence, and the 5-by-2 live
-   worker comparison on that same commit.
-4. Run live OFF and all four cumulative feature profiles. Preserve exact
-   failure receipts and keep L4 open if any profile fails.
-5. Reconcile the goal quartet and compact validation receipts to the actual
-   final results, commit that checkpoint, rerun the checkout-independent gates,
-   and push the exact candidate.
-6. Confirm PR #8 remote head equals the pushed SHA and observe GitHub Actions to
-   green or record the exact external blocker. Do not merge or deploy.
+1. Commit this state checkpoint without staging protected files.
+2. On the resulting exact clean candidate, run `npm run validate`, native
+   Seatbelt, and `trusted:head`; preserve signed receipts.
+3. Re-probe the three exact OpenRouter models and repeat the 5-by-2 live worker
+   comparison on that same commit.
+4. Run isolated CLI and private-socket tmux scenarios, including rejection or
+   restoration of an enumerable model outside the exact-nine request boundary.
+5. Run deterministic headless evidence, preserve its complete untracked run,
+   and restore only its two tracked latest-pointer files to the candidate.
+6. Run live OFF and all four cumulative feature profiles. Preserve exact
+   receipts and keep L4 open if any profile fails.
+7. Confirm the tracked tree and HEAD are unchanged, push that exact SHA, verify
+   PR #8 points to it, and observe GitHub Actions. Do not merge or deploy.
 
 ## Resume commands
 
@@ -144,12 +149,11 @@ npm run test:prod-feature-matrix
 
 ## Claims not yet established
 
-- exact-final-HEAD deterministic, headless CLI, tmux, worker, trusted, or C1-C4
-  proof;
-- live OFF/C1/C1-C2/C1-C2-C3/C1-C2-C3-C4 matrix execution;
+- exact-final-HEAD deterministic, signed trusted, OpenRouter, worker, headless,
+  CLI, or private-tmux proof;
+- live OFF/C1/C1-C2/C1-C2-C3/C1-C2-C3-C4 execution;
 - CI-green status on the final PR head;
-- deployment, merge, or real-corpus quality certification;
-- aggregate USD comparison while provider pricing is unknown.
+- deployment, merge, real-corpus quality, or aggregate USD comparison.
 
-This document must be reconciled again after the clean exact-HEAD and live
-results. Until then, the production matrix remains the explicit critical path.
+Until the live cumulative matrix completes, production feature certification
+remains the explicit critical path.
