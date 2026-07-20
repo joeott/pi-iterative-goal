@@ -1,0 +1,122 @@
+[
+  {
+    "id": "C3-ADV-001",
+    "severity": "high",
+    "category": "dead-code",
+    "requirementIds": ["C3", "C4"],
+    "message": "C3 engine had no production caller; rollback story vacuous; shards d/t could never render outside tests.",
+    "location": "src/kernel/scheduler.ts:865",
+    "status": "resolved",
+    "resolution": "runSchedulerHook wired at the plan->implement seam in lifecycle.ts (flag-gated, try/catch degrade); detectErrorCascadeSignatures called by executeShardPlan post-execution with report.cascadeSignatures. Test 73 drives the real transition both flag ways."
+  },
+  {
+    "id": "C3-ADV-002",
+    "severity": "medium",
+    "category": "spec-gap",
+    "requirementIds": ["C3", "S6.5"],
+    "message": "No failure-triggered global re-plan; misleading comment about failures adding usage data.",
+    "location": "src/kernel/scheduler.ts:1011-1023",
+    "status": "resolved",
+    "resolution": "failureSinceReplan triggers a cadence-guarded replanUnstarted on shard_failed; comment corrected (failures never enter the cost model). Test 79."
+  },
+  {
+    "id": "C3-ADV-003",
+    "severity": "medium",
+    "category": "telemetry-honesty",
+    "requirementIds": ["C3"],
+    "message": "A single telemetry sample flipped conservative_fallback to full HEFT; unrelated-role samples 'calibrated' the dispatch role.",
+    "location": "src/kernel/scheduler.ts:334-336",
+    "status": "resolved",
+    "resolution": "MIN_COST_SAMPLES=2 per dispatch role required before leaving conservative_fallback; replanUnstarted returns previous under thin telemetry. Test 74."
+  },
+  {
+    "id": "C3-ADV-004",
+    "severity": "medium",
+    "category": "monitor-correctness",
+    "requirementIds": ["C3"],
+    "message": "Cascade monitor conflated plans/cycles (episodes keyed by bare shardId).",
+    "location": "src/kernel/scheduler.ts:773-817",
+    "status": "resolved",
+    "resolution": "Episodes and consumers keyed by (planId, cycle, shardId); non-matching events skipped; settle events carry cycle. Test 75."
+  },
+  {
+    "id": "C3-ADV-005",
+    "severity": "medium",
+    "category": "ordering-correctness",
+    "requirementIds": ["C3"],
+    "message": "Contract-only edges oriented by partition order could invert true flow and gate readiness wrongly.",
+    "location": "src/kernel/scheduler.ts:270-282",
+    "status": "resolved",
+    "resolution": "ShardDagEdge.kind distinguishes dependsOn vs contract; readiness gate uses dependsOn edges only; contract edges still feed rank hand-off costs. Test 76."
+  },
+  {
+    "id": "C3-ADV-006",
+    "severity": "low",
+    "category": "telemetry-honesty",
+    "requirementIds": ["C3"],
+    "message": "Usage counters never validated; poisoned telemetry skewed ranks.",
+    "location": "src/kernel/scheduler.ts:302-304,334-358",
+    "status": "resolved",
+    "resolution": "usableUsage() guard skips non-finite/negative records in buildCostModel. Test 77."
+  },
+  {
+    "id": "C3-ADV-007",
+    "severity": "low",
+    "category": "ledger-integrity",
+    "requirementIds": ["C3"],
+    "message": "Claim dedupe key ignored cycle despite docstring.",
+    "location": "src/state.ts:379-384,1178-1184, src/domain/shard.ts:118",
+    "status": "resolved",
+    "resolution": "Dedupe/find keys are (planId, cycle, shardId) in record methods and replay handlers; events carry cycle. Test 71 extended."
+  },
+  {
+    "id": "C3-ADV-008",
+    "severity": "low",
+    "category": "ledger-integrity",
+    "requirementIds": ["C3"],
+    "message": "Orphan shard_completed/failed events appended with no matching claim.",
+    "location": "src/state.ts:1208-1215, src/kernel/scheduler.ts:931-934",
+    "status": "resolved",
+    "resolution": "recordShardFinished skips the event when no claim exists; executor build-error path claims-then-fails to preserve claimed->settled shape. Test 71."
+  },
+  {
+    "id": "C3-ADV-009",
+    "severity": "low",
+    "category": "crash-recovery",
+    "requirementIds": ["C3"],
+    "message": "No crash reconciliation for claims stuck in claimed.",
+    "location": "src/state.ts:636",
+    "status": "resolved",
+    "resolution": "reconcileRunningSubagents extended: claimed claims whose taskId was reconciled are failed with process_restart via hash-chained shard_failed. Test 78."
+  },
+  {
+    "id": "C3-ADV-010",
+    "severity": "low",
+    "category": "robustness",
+    "requirementIds": ["C3"],
+    "message": "awardBid([]) returned undefined -> TypeError.",
+    "location": "src/kernel/scheduler.ts:504-506,425-436",
+    "status": "resolved",
+    "resolution": "Empty candidates/shortlist yield conservative fallback with stated reason (never a bare TypeError). Test 74."
+  },
+  {
+    "id": "C3-ADV-011",
+    "severity": "low",
+    "category": "error-containment",
+    "requirementIds": ["C3"],
+    "message": "No exception containment around the dispatch body.",
+    "location": "src/kernel/scheduler.ts:908-982,1007",
+    "status": "resolved",
+    "resolution": "dispatchShard wrapped in try/catch; any throw settles that shard as shard_failed (claim-then-fail if pre-claim) without aborting siblings."
+  },
+  {
+    "id": "C3-ADV-012",
+    "severity": "low",
+    "category": "spec-ambiguity",
+    "requirementIds": ["C3"],
+    "message": "Monitor's strict verification reading undocumented.",
+    "location": "src/kernel/scheduler.ts:796-798",
+    "status": "resolved",
+    "resolution": "Module header documents: only the failed shard's re-completion or merge_verified heals; a consumer's own clean completion deliberately does not."
+  }
+]

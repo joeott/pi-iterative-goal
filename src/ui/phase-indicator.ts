@@ -64,7 +64,7 @@ export interface RenderModel {
   taskDone: number;
   taskTotal: number;
   inProgressTask: string | null;
-  /** Dormant until Chapter 6's shard_posted/shard_completed events land. */
+  /** Active shard fan-out progress (Campaign 3: shard_posted + shard_completed ledger); null while no fan_out plan exists. */
   shards: { done: number; total: number } | null;
   /** Null until subagent activity exists (Campaign 1 swarm line, §5.2). */
   swarm: { done: number; running: number; failed: number; total: number } | null;
@@ -88,7 +88,7 @@ export function renderModel(state: IterativeGoalState, now: number = Date.now())
     taskDone: items.filter((item) => item.status === "completed").length,
     taskTotal: items.length,
     inProgressTask: state.taskPlan.items.find((item) => item.status === "in_progress")?.title ?? null,
-    shards: null,
+    shards: shardSummary(state),
     swarm: swarmSummary(state),
     evaluator: es
       ? {
@@ -124,6 +124,23 @@ function swarmSummary(state: IterativeGoalState): RenderModel["swarm"] {
     running: tasks.filter((task) => task.status === "running").length,
     failed: tasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
   };
+}
+
+/**
+ * Shard counts from the ledger-backed shard state (Campaign 3, §6.4–6.5):
+ * the latest fan_out plan sets the total; shard_completed claim records for
+ * the same (planId, cycle) set the done count. Null while no fan-out exists
+ * — same additive forward-compat pattern as the swarm line.
+ */
+function shardSummary(state: IterativeGoalState): RenderModel["shards"] {
+  const plans = state.shards?.plans ?? [];
+  const active = [...plans].reverse().find((plan) => plan.decision === "fan_out" && plan.shards.length > 0);
+  if (!active) return null;
+  const claims = (state.shards?.claims ?? []).filter(
+    (claim) => claim.planId === active.id && claim.cycle === active.cycle,
+  );
+  const done = claims.filter((claim) => claim.status === "completed").length;
+  return { done, total: active.shards.length };
 }
 
 export function formatElapsed(ms: number): string {

@@ -103,8 +103,40 @@ export interface PendingShardPlan {
   phaseAttemptId: string;
 }
 
-/** Shard state carried on IterativeGoalState; rebuilt from shard_posted events under replay. */
+/** Claim lifecycle (§6.5): every award is ledgered shard_claimed → completed | failed. */
+export type ShardClaimStatus = "claimed" | "completed" | "failed";
+
+/**
+ * One shard-step award + outcome (Campaign 3). Lives beside ShardState for
+ * cohesion — it is part of the replayed shard state — and follows the plain-
+ * interface ledger-record precedent of SubagentTaskRecord in src/types.ts:
+ * trusted at write time (same contract as SubagentTaskRecord); the runId
+ * guard is the only check. A repair loop re-claim REPLACES the prior record
+ * for the same (planId, cycle, shardId) — the full history stays in
+ * events.jsonl; state keeps the latest episode.
+ */
+export interface ShardClaimRecord {
+  shardId: string;
+  /** Owning shard plan (PlanSpec id); claims match plans on (planId, cycle). */
+  planId: string;
+  runId: string;
+  cycle: number;
+  status: ShardClaimStatus;
+  /** Concurrency slot the HEFT placement pre-assigned; null when no placement exists (posted-order / conservative fallback execution). */
+  workerSlot: number | null;
+  /** HEFT upward rank at award time; null when no telemetry-calibrated ranks exist. */
+  rank: number | null;
+  /** Subagent task id the claim was dispatched under (subagent_started/finished pair). */
+  taskId: string | null;
+  claimedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+/** Shard state carried on IterativeGoalState; rebuilt from shard_* events under replay. */
 export interface ShardState {
   pendingPlan: PendingShardPlan | null;
   plans: ShardPlan[];
+  /** Campaign 3 scheduler ledger: latest claim episode per (planId, cycle, shardId). */
+  claims: ShardClaimRecord[];
 }

@@ -17,6 +17,7 @@ import {
 import { verifyImplementationAgainstPlan } from "../workspace/change-set.js";
 import { shutdownRunAgentPools } from "../agents/run-pool.js";
 import { runSharderHook } from "./sharder.js";
+import { runSchedulerHook } from "./scheduler.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
 
@@ -325,6 +326,20 @@ async function advanceToNextPhase(
       services.log(`Sharder hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
       // Degradation observability (C2-ADV-006): the decline is visible, not silent.
       ctx.ui.notify("Iterative goal sharder failed; implement phase continues single-slice.", "warning");
+    }
+
+    // C3 scheduler attach seam (§6.4–6.5, C3-ADV-001): same transition,
+    // immediately after the sharder — when the sharder just committed a
+    // fan_out plan (or one is already ledgered for this cycle), schedule and
+    // execute it through dispatchAgentTask. Flag-gated inside
+    // runSchedulerHook (default OFF — returns before touching anything, so
+    // flag-off behavior is byte-identical); a scheduler failure degrades to
+    // the single-slice implement prompt, never wedges the loop motor.
+    try {
+      await runSchedulerHook({ stateManager, cwd: ctx.cwd, log: services.log });
+    } catch (err) {
+      services.log(`Scheduler hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      ctx.ui.notify("Iterative goal scheduler failed; implement phase continues single-slice.", "warning");
     }
   }
 

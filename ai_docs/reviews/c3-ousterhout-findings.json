@@ -1,0 +1,92 @@
+[
+  {
+    "id": "C3-OUS-001",
+    "severity": "high",
+    "category": "dead-code",
+    "requirementIds": ["C3", "C4"],
+    "message": "executeShardPlan unreachable in production; C3 shipped as test-only dead code.",
+    "location": "src/kernel/scheduler.ts:865",
+    "status": "resolved",
+    "resolution": "runSchedulerHook wired at the plan->implement seam (flag-gated, degrades safely); monitor's production caller is executeShardPlan. Test 73."
+  },
+  {
+    "id": "C3-OUS-002",
+    "severity": "medium",
+    "category": "interface-width",
+    "requirementIds": ["C3"],
+    "message": "38 exported symbols for zero production consumers; ~7 exports with no consumer anywhere.",
+    "location": "src/kernel/scheduler.ts",
+    "status": "resolved",
+    "resolution": "Consumer-less helpers unexported (usageTokens, meanExecutionCost, topologicalOrder, conservativeFallbackSchedule, postedOrderSchedule, poolWorkerCandidates); Award interface deleted."
+  },
+  {
+    "id": "C3-OUS-003",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C3"],
+    "message": "'Import cycle otherwise' justification technically inaccurate.",
+    "location": "src/domain/shard.ts:109-116",
+    "status": "resolved",
+    "resolution": "Comment reworded: cohesion with ShardState + SubagentTaskRecord precedent."
+  },
+  {
+    "id": "C3-OUS-004",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C3"],
+    "message": "v1-limits header omitted blocked-not-repair; workerSlot doc contradicted executor behavior.",
+    "location": "src/kernel/scheduler.ts:26-39, src/domain/shard.ts:123-124",
+    "status": "resolved",
+    "resolution": "Header lists blocked-not-repair (repair loop is C4's); workerSlot recorded null under posted_order/fallback, matching the rewritten doc. Test 72."
+  },
+  {
+    "id": "C3-OUS-005",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C3"],
+    "message": "'Validated structurally at write time' claim inaccurate.",
+    "location": "src/domain/shard.ts:110-114",
+    "status": "resolved",
+    "resolution": "Reworded: 'trusted at write time (same contract as SubagentTaskRecord); the runId guard is the only check'."
+  },
+  {
+    "id": "C3-OUS-006",
+    "severity": "low",
+    "category": "speculative-generality",
+    "requirementIds": ["C3", "C4"],
+    "message": "merge_verified acceptance near-dead; monitor unwired.",
+    "location": "src/kernel/scheduler.ts:796",
+    "status": "resolved",
+    "resolution": "Monitor wired into executeShardPlan (production caller named in docstring and header); merge_verified clause kept for C4."
+  },
+  {
+    "id": "C3-OUS-007",
+    "severity": "low",
+    "category": "pass-through",
+    "requirementIds": ["C3"],
+    "message": "ScheduledStep.bids diagnostic-only pass-through bag.",
+    "location": "src/kernel/scheduler.ts:512-521",
+    "status": "resolved",
+    "resolution": "Field doc marks bids diagnostic-only (persisted nowhere, never consumed downstream)."
+  },
+  {
+    "id": "C3-OUS-008",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C3"],
+    "message": "'Bounded contract-net bidding' unhedged in header.",
+    "location": "src/kernel/scheduler.ts:8",
+    "status": "resolved",
+    "resolution": "Header now: 'single-round contract-net-style award (satisficing, §6.5 — one announce/bid/award round per step)'."
+  },
+  {
+    "id": "C3-OUS-009",
+    "severity": "low",
+    "category": "robustness",
+    "requirementIds": ["C3"],
+    "message": "awardBid had no empty-bids guard.",
+    "location": "src/kernel/scheduler.ts:504-506,612-613",
+    "status": "resolved",
+    "resolution": "Empty shortlist yields conservative fallback with stated reason. Test 74."
+  }
+]

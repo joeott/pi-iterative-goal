@@ -27,6 +27,13 @@
  *     spectral (Fiedler) prior + Kernighan–Lin refinement enforced as
  *     assertions, coupling-density gate declining fan-out, shard_posted
  *     ledger + replay, hook flag-off by default (§6.1–6.3, §8.5)
+ * 21. C3 scheduler: telemetry-calibrated HEFT costs only (no telemetry →
+ *     conservative fallback, no hard-coded tables), critical-path-first
+ *     ordering, drift/failure-triggered re-plan of unstarted steps only,
+ *     bounded contract-net fan-out, error-cascade ledger monitor, shard claim
+ *     ledger + replay + crash reconciliation, shards d/t status field,
+ *     executor dispatch via dispatchAgentTask, plan→implement lifecycle
+ *     wiring flag-off by default (§6.4–6.5, §8.6)
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -4289,6 +4296,997 @@ const c2 = await (async () => {
   eq(fresh.getState().shards.pendingPlan, null);
 
   console.log("✓ Test 65: C2 shard_plan_proposed replays into pendingPlan; guards consume it after restart");
+}
+
+// ── C3 shared fixtures: critical-path shard plan + telemetry records ──
+
+const c3 = await (async () => {
+  // Four-shard fixture DAG: shard-1 and shard-2 are independent; shard-3
+  // joins them (t-3 dependsOn t-1, t-2); shard-4 exits. The KNOWN critical
+  // path runs through shard-2: its seam to shard-3 carries contract weight 3
+  // against shard-1's weight 1, so rank(shard-2) > rank(shard-1) for any
+  // positive per-role cost and hand-off rate.
+  function criticalPathPlan(runId) {
+    const task = (id, title, dependsOn, file, requiredCapabilities = []) => ({
+      id, title, dependsOn, satisfies: [], allowedPaths: [{ kind: "exact", path: file }],
+      requiredCapabilities, checks: [], rollback: "git checkout -- <files>", risk: "low",
+    });
+    const shard = (id, index, taskIds, files, contracts) => ({
+      id, index, files: [files], taskIds,
+      allowedPaths: [{ kind: "exact", path: files }],
+      crossShardContracts: contracts,
+    });
+    return {
+      id: "plan-c3", version: 1, createdAt: new Date().toISOString(),
+      tasks: [
+        task("t-1", "light base", [], "a/a.ts"),
+        task("t-2", "heavy-seam base", [], "b/b.ts"),
+        task("t-3", "join", ["t-1", "t-2"], "c/c.ts"),
+        task("t-4", "exit", ["t-3"], "d/d.ts"),
+      ],
+      runId, cycle: 1,
+      shards: [
+        shard("shard-1", 0, ["t-1"], "a/a.ts", [{ from: "a/a.ts", to: "c/c.ts", weight: 1 }]),
+        shard("shard-2", 1, ["t-2"], "b/b.ts", [{ from: "b/b.ts", to: "c/c.ts", weight: 3 }]),
+        // Contracts list each cut edge on BOTH incident shards (C2 record shape).
+        shard("shard-3", 2, ["t-3"], "c/c.ts", [
+          { from: "c/c.ts", to: "a/a.ts", weight: 1 },
+          { from: "c/c.ts", to: "b/b.ts", weight: 3 },
+        ]),
+        shard("shard-4", 3, ["t-4"], "d/d.ts", []),
+      ],
+      cutWeight: 4, totalEdgeWeight: 4, couplingDensity: 1, balanceTolerance: 0.34,
+      decision: "fan_out", decisionReason: "c3 fixture",
+      algorithm: {
+        prior: "spectral-fiedler", priorSplit: "sign", refinement: "kernighan-lin",
+        bisections: 2, refinementPasses: 2, refinementEvaluatedSwaps: 12,
+        refinementSwapsExecuted: 0, refinementImproved: false, initialCutWeight: 4,
+      },
+      postedAt: new Date().toISOString(),
+    };
+  }
+
+  // Cascade fixture: one upstream shard feeding TWO direct downstream
+  // consumers — the error-cascade signature needs ≥2 consumers.
+  function fanOutPlan(runId) {
+    const base = criticalPathPlan(runId);
+    return {
+      ...base,
+      id: "plan-c3-fanout",
+      tasks: [
+        { id: "t-1", title: "producer", dependsOn: [], satisfies: [], allowedPaths: [{ kind: "exact", path: "a/a.ts" }], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" },
+        { id: "t-2", title: "consumer one", dependsOn: ["t-1"], satisfies: [], allowedPaths: [{ kind: "exact", path: "b/b.ts" }], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" },
+        { id: "t-3", title: "consumer two", dependsOn: ["t-1"], satisfies: [], allowedPaths: [{ kind: "exact", path: "c/c.ts" }], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" },
+      ],
+      shards: [
+        { id: "shard-1", index: 0, files: ["a/a.ts"], taskIds: ["t-1"], allowedPaths: [{ kind: "exact", path: "a/a.ts" }], crossShardContracts: [] },
+        { id: "shard-2", index: 1, files: ["b/b.ts"], taskIds: ["t-2"], allowedPaths: [{ kind: "exact", path: "b/b.ts" }], crossShardContracts: [] },
+        { id: "shard-3", index: 2, files: ["c/c.ts"], taskIds: ["t-3"], allowedPaths: [{ kind: "exact", path: "c/c.ts" }], crossShardContracts: [] },
+      ],
+    };
+  }
+
+  // Persisted-usage record in the exact SubagentTaskRecord shape the ledger
+  // rebuilds from subagent_finished events.
+  function telemetryRecord(taskId, runId, role, input, output, status = "completed") {
+    return {
+      taskId, batchId: "c3-telemetry", runId, role, mode: "parallel",
+      backend: "pi-subprocess", detectedBackend: "none",
+      workspace: "read_only_snapshot", allowedPaths: [], status,
+      startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z",
+      usage: status === "completed" ? { input, output, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } : null,
+      error: null,
+    };
+  }
+
+  return { criticalPathPlan, fanOutPlan, telemetryRecord };
+})();
+
+// ── Test 66: C3 telemetry-calibrated costs only — both directions (§6.4, §8.6 headline) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const {
+    buildCostModel, computeUpwardRanks, scheduleShardPlan, loadSchedulerConfig, buildShardDag,
+  } = await import("../dist/kernel/scheduler.js");
+
+  const config = { ...loadSchedulerConfig(os.tmpdir()), enabled: true };
+
+  // (a) NO telemetry → refusal, never a hard-coded cost table: no cost model,
+  // and the schedule computes no ranks and no timed placements.
+  eq(buildCostModel([]), null, "empty telemetry yields no cost model");
+  eq(buildCostModel([c3.telemetryRecord("x", "r", "Implementer", 100, 20, "running")]), null,
+    "in-flight/failed runs carry no usable distribution");
+  const noTelemetry = scheduleShardPlan(c3.criticalPathPlan("run-c3"), { costModel: null, config });
+  eq(noTelemetry.strategy, "conservative_fallback");
+  eq(noTelemetry.costSource, "none");
+  ok(noTelemetry.reason.includes("refusing any hard-coded cost table"), "fallback reason states the refusal");
+  ok(noTelemetry.steps.every((step) => step.rank === null && step.slot === null && step.est === null && step.eft === null),
+    "conservative placement computes no ranks and no EFTs");
+  // Conservative placement is still readiness-based (dependency-respecting).
+  ok(noTelemetry.order.indexOf("shard-3") > noTelemetry.order.indexOf("shard-1")
+    && noTelemetry.order.indexOf("shard-3") > noTelemetry.order.indexOf("shard-2")
+    && noTelemetry.order.indexOf("shard-4") > noTelemetry.order.indexOf("shard-3"),
+    "fallback order respects the DAG");
+
+  // (b) Telemetry persisted with subagent_finished events → the rank
+  // computation reads exactly those empirical distributions. Persist through
+  // the ledger (the production read path), not an in-memory shortcut.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c3-telemetry-"));
+  const pi = { appendEntry() {} };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Telemetry calibration", "Ranks read persisted usage distributions");
+  for (const [taskId, role, input, output] of [
+    ["tele-1", "Implementer", 80, 20],
+    ["tele-2", "Implementer", 120, 20],
+    ["tele-3", "Scout", 980, 20],
+  ]) {
+    stateManager.recordSubagentStarted({
+      ...c3.telemetryRecord(taskId, run.runId, role, input, output), status: "running", usage: null,
+    });
+    stateManager.recordSubagentFinished(taskId, {
+      runId: run.runId, status: "completed",
+      usage: { input, output, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+    });
+  }
+  // Replay rebuilds the distributions from subagent_finished events — the
+  // cost model provably reads PERSISTED telemetry.
+  const replayed = stateManager.replayActiveState();
+  const costModel = buildCostModel(replayed.swarm.tasks);
+  ok(costModel, "cost model calibrated from replayed subagent_finished usage");
+  eq(costModel.samples, 3);
+  eq(costModel.perRole.Implementer.meanTokens, 120, "(100+140)/2 — empirical per-role mean");
+  eq(costModel.perRole.Scout.meanTokens, 1000);
+  ok(Math.abs(costModel.globalMeanTokens - (100 + 140 + 1000) / 3) < 1e-9);
+  eq(costModel.handoffPerUnit, 20, "measured mean output tokens calibrate c̄");
+
+  // Ranks change exactly as the persisted distribution changes.
+  const dag = buildShardDag(c3.criticalPathPlan(run.runId));
+  const implementerRanks = computeUpwardRanks(dag, costModel, "Implementer");
+  eq(implementerRanks.get("shard-4"), 120, "exit rank = w̄ (Implementer mean)");
+  eq(implementerRanks.get("shard-2"), 120 + (3 * 20 + 240), "rank_up = w̄ + c̄·weight + rank_succ");
+  const scoutRanks = computeUpwardRanks(dag, costModel, "Scout");
+  eq(scoutRanks.get("shard-4"), 1000, "per-role calibration: Scout pays its own measured mean");
+  const unobserved = computeUpwardRanks(dag, costModel, "Planner");
+  ok(Math.abs(unobserved.get("shard-4") - (100 + 140 + 1000) / 3) < 1e-9,
+    "unobserved role falls back to the global measured mean (still telemetry-derived)");
+
+  const scheduled = scheduleShardPlan(c3.criticalPathPlan(run.runId), { costModel, config });
+  eq(scheduled.strategy, "heft");
+  eq(scheduled.costSource, "telemetry");
+
+  console.log("✓ Test 66: C3 ranks read persisted usage distributions; no telemetry refuses hard-coded costs (both asserted)");
+}
+
+// ── Test 67: C3 fixture DAG with a known critical path is scheduled critical-path-first (§8.6) ──
+
+{
+  const {
+    buildShardDag, buildCostModel, computeUpwardRanks, scheduleShardPlan, loadSchedulerConfig,
+  } = await import("../dist/kernel/scheduler.js");
+
+  const plan = c3.criticalPathPlan("run-c3");
+  const dag = buildShardDag(plan);
+  eq(dag.cyclic, false);
+  // Contract weight merges onto the dependsOn edge it crosses (c̄ on the seam).
+  const seam = dag.edges.find((edge) => edge.from === "shard-2" && edge.to === "shard-3");
+  eq(seam.contractWeight, 3, "heavy seam rides the shard-2→shard-3 dependency edge");
+  eq(dag.edges.find((edge) => edge.from === "shard-1" && edge.to === "shard-3").contractWeight, 1);
+  eq(dag.edges.find((edge) => edge.from === "shard-3" && edge.to === "shard-4").contractWeight, 0);
+
+  // w̄ = 120 (Implementer), handoffPerUnit = 20 — measured values from test 66's shape.
+  const costModel = buildCostModel([
+    c3.telemetryRecord("p1", "run-c3", "Implementer", 80, 20),
+    c3.telemetryRecord("p2", "run-c3", "Implementer", 120, 20),
+  ]);
+  const ranks = computeUpwardRanks(dag, costModel);
+  // Exact upward-rank formula: rank_up(n_i) = w̄_i + max(c̄_{i,j} + rank_up(n_j)).
+  eq(ranks.get("shard-4"), 120);
+  eq(ranks.get("shard-3"), 240);
+  eq(ranks.get("shard-1"), 380, "120 + (1×20 + 240)");
+  eq(ranks.get("shard-2"), 420, "120 + (3×20 + 240) — the critical path");
+
+  const config = { ...loadSchedulerConfig(os.tmpdir()), enabled: true };
+  const schedule = scheduleShardPlan(plan, { costModel, config });
+  eq(schedule.strategy, "heft");
+  eq(schedule.order[0], "shard-2", "critical path scheduled first (not posted order)");
+  deepStrictEqual(schedule.order, ["shard-2", "shard-1", "shard-3", "shard-4"]);
+
+  // EFT placement: dependency waits include the cross-slot hand-off cost.
+  const byId = new Map(schedule.steps.map((step) => [step.shardId, step]));
+  eq(byId.get("shard-2").est, 0);
+  eq(byId.get("shard-3").est, 140, "join waits for max(own-slot pred, remote pred + c̄)");
+  ok(byId.get("shard-4").est >= byId.get("shard-3").eft, "exit starts no earlier than the join's finish");
+  eq(byId.get("shard-4").eft, 380, "makespan on two effectively-used slots");
+  ok(schedule.steps.every((step) => step.rank !== null && step.eft !== null), "HEFT schedule is fully ranked/placed");
+
+  console.log("✓ Test 67: C3 fixture DAG scheduled critical-path-first with exact upward ranks and EFT waits");
+}
+
+// ── Test 68: C3 telemetry drift re-ranks UNSTARTED steps; started steps are frozen (§6.4/§6.5, §8.6) ──
+
+{
+  const {
+    buildCostModel, scheduleShardPlan, loadSchedulerConfig,
+    detectTelemetryDrift, replanUnstarted, shouldReplan,
+  } = await import("../dist/kernel/scheduler.js");
+
+  const config = { ...loadSchedulerConfig(os.tmpdir()), enabled: true };
+  const plan = c3.criticalPathPlan("run-c3");
+  const baseline = buildCostModel([
+    c3.telemetryRecord("p1", "run-c3", "Implementer", 80, 20),
+    c3.telemetryRecord("p2", "run-c3", "Implementer", 120, 20),
+  ]);
+  const schedule = scheduleShardPlan(plan, { costModel: baseline, config });
+  const startedBefore = schedule.steps.find((step) => step.shardId === "shard-2");
+  eq(schedule.order[0], "shard-2");
+
+  // Below threshold → no drift, no re-plan.
+  const calm = detectTelemetryDrift(baseline, [
+    ...[c3.telemetryRecord("p1", "run-c3", "Implementer", 80, 20),
+      c3.telemetryRecord("p2", "run-c3", "Implementer", 120, 20),
+      c3.telemetryRecord("p3", "run-c3", "Implementer", 90, 20)],
+  ], config.driftThreshold);
+  eq(calm.drifted, false, "small deviations stay under the threshold");
+  ok(calm.maxDeviation < config.driftThreshold);
+
+  // Injected drift beyond threshold: fresh mean 270 vs baseline 120 → 1.25.
+  const driftedRecords = [
+    c3.telemetryRecord("p1", "run-c3", "Implementer", 80, 20),
+    c3.telemetryRecord("p2", "run-c3", "Implementer", 120, 20),
+    c3.telemetryRecord("p3", "run-c3", "Implementer", 400, 20),
+    c3.telemetryRecord("p4", "run-c3", "Implementer", 400, 20),
+  ];
+  const drift = detectTelemetryDrift(baseline, driftedRecords, config.driftThreshold);
+  eq(drift.drifted, true);
+  eq(drift.maxDeviation, 1.25, "|270−120|/120 — independently computed");
+  eq(drift.perRole.Implementer, 1.25);
+  eq(drift.hasFreshTelemetry, true);
+  eq(detectTelemetryDrift(baseline, [], config.driftThreshold).drifted, false,
+    "no fresh telemetry is not drift (no new information)");
+
+  // The periodic global re-plan: shard-2 already started — frozen verbatim.
+  const started = new Set(["shard-2"]);
+  const replanned = replanUnstarted(schedule, plan, started, buildCostModel(driftedRecords), config);
+  eq(replanned.strategy, "heft");
+  const frozen = replanned.steps.find((step) => step.shardId === "shard-2");
+  deepStrictEqual(
+    { rank: frozen.rank, slot: frozen.slot, est: frozen.est, eft: frozen.eft },
+    { rank: startedBefore.rank, slot: startedBefore.slot, est: startedBefore.est, eft: startedBefore.eft },
+    "started step is never re-ranked or re-placed",
+  );
+  // Unstarted steps carry the recalibrated ranks (w̄ 120 → 270).
+  const reranked = new Map(replanned.steps.filter((step) => !started.has(step.shardId)).map((step) => [step.shardId, step]));
+  eq(reranked.get("shard-4").rank, 270);
+  eq(reranked.get("shard-3").rank, 540);
+  eq(reranked.get("shard-1").rank, 830, "270 + (1×20 + 540) — re-ranked on drifted telemetry");
+  ok(replanned.reason.includes("re-plan"));
+  // Frozen steps seed the placement: the exit step cannot start before the
+  // started step's RECORDED finish contributes to its slot.
+  ok(replanned.steps.every((step) => started.has(step.shardId) || step.eft !== null), "unstarted steps re-placed");
+
+  // Cadence guard: re-plan at most once per replanIntervalMs.
+  eq(shouldReplan(10_000, 10_000 + 59_999, config), false, "inside the cadence window");
+  eq(shouldReplan(10_000, 10_000 + 60_000, config), true, "cadence window elapsed");
+
+  // Re-plan only applies to HEFT schedules: a fallback schedule has no ranks
+  // to refresh and is returned unchanged.
+  const fallback = scheduleShardPlan(plan, { costModel: null, config });
+  eq(replanUnstarted(fallback, plan, started, buildCostModel(driftedRecords), config), fallback);
+
+  console.log("✓ Test 68: C3 drift beyond threshold re-ranks unstarted steps only; cadence-bounded, threshold-honest");
+}
+
+// ── Test 69: C3 announcement shortlist never exceeds the pool's concurrency cap (§6.5, §8.6) ──
+
+{
+  const {
+    buildShortlist, solicitBids, awardBid, scheduleShardPlan, buildCostModel, buildShardDag, loadSchedulerConfig,
+  } = await import("../dist/kernel/scheduler.js");
+
+  const config = { ...loadSchedulerConfig(os.tmpdir()), enabled: true, concurrency: 4 };
+  eq(config.concurrency, 4);
+  const candidates = Array.from({ length: 6 }, (_, slot) => ({ slot, capabilities: ["fs.write", "process.exec"] }));
+  const step = { shardId: "shard-x", index: 0, taskIds: [], requiredCapabilities: [], dependsOn: [] };
+
+  // Six capable workers, cap four — the shortlist is bounded, not a broadcast.
+  const shortlist = buildShortlist(step, candidates, 4);
+  eq(shortlist.length, 4, "shortlist bounded by the pool concurrency cap");
+  deepStrictEqual(shortlist.map((candidate) => candidate.slot), [0, 1, 2, 3]);
+
+  // Capability targeting: announcements go only to full matches when they exist.
+  const picky = { ...step, requiredCapabilities: ["fs.write", "custom.x"] };
+  const mixed = [
+    { slot: 0, capabilities: ["fs.write"] },
+    { slot: 1, capabilities: ["process.exec"] },
+    { slot: 2, capabilities: ["fs.write", "custom.x"] },
+    { slot: 3, capabilities: ["fs.write"] },
+    { slot: 4, capabilities: ["fs.write", "custom.x"] },
+    { slot: 5, capabilities: [] },
+  ];
+  deepStrictEqual(buildShortlist(picky, mixed, 4).map((candidate) => candidate.slot), [2, 4],
+    "targeted shortlist: only capable workers are announced to");
+  ok(buildShortlist(picky, mixed, 4).length <= 4);
+
+  // Satisficing: with no full match, the best partial matches are kept — still bounded.
+  const nobody = { ...step, requiredCapabilities: ["custom.z"] };
+  const partial = buildShortlist(nobody, mixed, 4);
+  ok(partial.length <= 4, "bounded even when satisficing");
+
+  // Award is a single winner per step (Σ_i x_{i,j} = 1), and capability match
+  // moves the bid: the fs.write-capable worker beats an incapable one at equal cost.
+  const dag = buildShardDag(c3.criticalPathPlan("run-c3"));
+  const costModel = buildCostModel([c3.telemetryRecord("p1", "run-c3", "Implementer", 120, 20)]);
+  const bids = solicitBids(picky, [{ slot: 0, capabilities: [] }, { slot: 1, capabilities: ["fs.write", "custom.x"] }],
+    dag, new Map(), [0, 0], costModel, config);
+  eq(bids.length, 2);
+  const winner = awardBid(bids);
+  eq(winner.slot, 1, "α·Cap tips the award toward the capable worker");
+  eq(bids.filter((bid) => bid.slot === winner.slot).length, 1, "exactly one award per step");
+
+  // End-to-end through the scheduler: every step's announcement respected the cap.
+  const twoSampleModel = buildCostModel([
+    c3.telemetryRecord("p1", "run-c3", "Implementer", 100, 20),
+    c3.telemetryRecord("p2", "run-c3", "Implementer", 140, 20),
+  ]);
+  const schedule = scheduleShardPlan(c3.criticalPathPlan("run-c3"), { costModel: twoSampleModel, config, candidates });
+  ok(schedule.steps.every((scheduledStep) => scheduledStep.shortlistSize <= config.concurrency),
+    "no step announced to more than the pool's concurrency cap");
+  ok(schedule.steps.every((scheduledStep) => scheduledStep.bids.length === scheduledStep.shortlistSize));
+
+  console.log("✓ Test 69: C3 contract-net fan-out is bounded by the pool cap; awards are targeted and singular");
+}
+
+// ── Test 70: C3 error-cascade ledger monitor flags the blackboard failure signature (§7.3, §8.6) ──
+
+{
+  const { buildShardDag, detectErrorCascadeSignatures } = await import("../dist/kernel/scheduler.js");
+
+  const dag = buildShardDag(c3.fanOutPlan("run-c3"));
+  // Sanity: shard-1 feeds both shard-2 and shard-3 directly.
+  deepStrictEqual(dag.edges.map((edge) => `${edge.from}->${edge.to}`).sort(), ["shard-1->shard-2", "shard-1->shard-3"]);
+
+  const failedAt = "2026-01-01T00:00:01.000Z";
+  const claimedAt = "2026-01-01T00:00:02.000Z";
+  // Ledger-shaped events for this DAG's (planId, cycle) — the monitor's scope.
+  const ev = (type, shardId, sequence, timestamp) =>
+    ({ type, shardId, planId: "plan-c3-fanout", cycle: 1, timestamp, sequence });
+
+  // The signature: failed shard's output consumed by ≥2 downstream steps
+  // without an intervening verification event.
+  const poisoned = detectErrorCascadeSignatures([
+    ev("shard_failed", "shard-1", 2, failedAt),
+    ev("shard_claimed", "shard-2", 3, claimedAt),
+    ev("shard_claimed", "shard-3", 4, "2026-01-01T00:00:03.000Z"),
+  ], dag);
+  eq(poisoned.length, 1, "one signature per failure episode");
+  eq(poisoned[0].failedShardId, "shard-1");
+  deepStrictEqual(poisoned[0].consumers, ["shard-2", "shard-3"]);
+  eq(poisoned[0].failedAt, failedAt);
+  eq(poisoned[0].sequence, 4, "flagged at the second consumer's claim");
+
+  // Intervening verification (a successful repair re-run) heals the episode.
+  eq(detectErrorCascadeSignatures([
+    ev("shard_failed", "shard-1", 2, failedAt),
+    ev("shard_claimed", "shard-1", 3, claimedAt),
+    ev("shard_completed", "shard-1", 4, "2026-01-01T00:00:03.000Z"),
+    ev("shard_claimed", "shard-2", 5, "2026-01-01T00:00:04.000Z"),
+    ev("shard_claimed", "shard-3", 6, "2026-01-01T00:00:05.000Z"),
+  ], dag).length, 0, "verified repair before consumption → no cascade");
+
+  // A single consumer does not meet the ≥2 signature bar.
+  eq(detectErrorCascadeSignatures([
+    ev("shard_failed", "shard-1", 2, failedAt),
+    ev("shard_claimed", "shard-2", 3, claimedAt),
+  ], dag).length, 0);
+
+  // Claims of non-downstream shards are not consumption.
+  eq(detectErrorCascadeSignatures([
+    ev("shard_failed", "shard-2", 2, failedAt),
+    ev("shard_claimed", "shard-3", 3, claimedAt),
+  ], dag).length, 0, "shard-3 is not downstream of shard-2");
+
+  // A healed episode followed by a fresh failure re-arms the monitor.
+  const rearmed = detectErrorCascadeSignatures([
+    ev("shard_failed", "shard-1", 2, failedAt),
+    ev("shard_claimed", "shard-2", 3, claimedAt),
+    ev("shard_claimed", "shard-3", 4, "2026-01-01T00:00:03.000Z"),
+    ev("shard_completed", "shard-1", 5, "2026-01-01T00:00:04.000Z"),
+    ev("shard_failed", "shard-1", 6, "2026-01-01T00:00:05.000Z"),
+    ev("shard_claimed", "shard-2", 7, "2026-01-01T00:00:06.000Z"),
+    ev("shard_claimed", "shard-3", 8, "2026-01-01T00:00:07.000Z"),
+  ], dag);
+  eq(rearmed.length, 2, "each unhealed failure episode is flagged");
+
+  console.log("✓ Test 70: C3 error-cascade monitor flags unverified failed-output fan-out, heals on verification");
+}
+
+// ── Test 71: C3 shard claim ledger hash-chains + replays; indicator renders shards d/t (§6.5, §8.6) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { renderModel, formatStatusLine } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c3-claims-"));
+  const pi = { appendEntry() {} };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Shard claims", "Claim ledger replays and renders");
+
+  // Dormant until a fan_out plan exists (same additive pattern as swarm).
+  eq(renderModel(stateManager.getState()).shards, null);
+  ok(!formatStatusLine(renderModel(stateManager.getState())).includes("shards"));
+
+  const plan = c3.criticalPathPlan(run.runId);
+  stateManager.recordShardPlan(plan);
+  const claimedAt = new Date().toISOString();
+  stateManager.recordShardClaimed({
+    shardId: "shard-2", planId: plan.id, runId: run.runId, cycle: plan.cycle,
+    status: "claimed", workerSlot: 0, rank: 420, taskId: "sched-c1-shard-2",
+    claimedAt, finishedAt: null, error: null,
+  }, { strategy: "heft", rank: 420, slot: 0, est: 0, eft: 120, shortlistSize: 4 });
+  stateManager.recordShardClaimed({
+    shardId: "shard-1", planId: plan.id, runId: run.runId, cycle: plan.cycle,
+    status: "claimed", workerSlot: 1, rank: 380, taskId: "sched-c1-shard-1",
+    claimedAt, finishedAt: null, error: null,
+  });
+  stateManager.recordShardFinished("shard-2", { runId: run.runId, planId: plan.id, cycle: plan.cycle, status: "completed", taskId: "sched-c1-shard-2" });
+  stateManager.recordShardFinished("shard-1", { runId: run.runId, planId: plan.id, cycle: plan.cycle, status: "failed", taskId: "sched-c1-shard-1", error: "boom" });
+
+  // C3-ADV-008: an orphan settle (no matching claim) is skipped and ledgered nowhere.
+  stateManager.recordShardFinished("ghost-shard", { runId: run.runId, planId: plan.id, cycle: plan.cycle, status: "completed" });
+  eq(fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((event) => event.type === "shard_completed").length, 1, "orphan settle appends no event");
+
+  // C3-ADV-007: the dedupe key is (planId, cycle, shardId) — a claim for the
+  // SAME shard id under a different cycle coexists, never silently replaces.
+  stateManager.recordShardClaimed({
+    shardId: "shard-2", planId: plan.id, runId: run.runId, cycle: plan.cycle + 1,
+    status: "claimed", workerSlot: 0, rank: 500, taskId: "sched-c2-shard-2",
+    claimedAt, finishedAt: null, error: null,
+  });
+  eq(stateManager.getState().shards.claims.length, 3, "different-cycle claim coexists");
+  eq(stateManager.getState().shards.claims.find((claim) => claim.shardId === "shard-2" && claim.cycle === plan.cycle).status,
+    "completed", "cycle-1 record untouched by the cycle-2 claim");
+
+  // Cross-run guard: records tagged with a foreign runId are ignored (C1 parity).
+  stateManager.recordShardClaimed({
+    shardId: "shard-3", planId: plan.id, runId: "some-other-run", cycle: plan.cycle,
+    status: "claimed", workerSlot: null, rank: null, taskId: null,
+    claimedAt, finishedAt: null, error: null,
+  });
+  eq(stateManager.getState().shards.claims.length, 3, "foreign-run claim ignored");
+
+  const claims = stateManager.getState().shards.claims;
+  eq(claims.find((claim) => claim.shardId === "shard-2" && claim.cycle === plan.cycle).status, "completed");
+  eq(claims.find((claim) => claim.shardId === "shard-1").status, "failed");
+  eq(claims.find((claim) => claim.shardId === "shard-1").error, "boom");
+
+  // Ledger shape: the award evidence rides shard_claimed (§6.5 auditable allocation).
+  const events = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const claimedEvents = events.filter((event) => event.type === "shard_claimed");
+  eq(claimedEvents.length, 3);
+  eq(claimedEvents[0].shardId, "shard-2");
+  eq(claimedEvents[0].claim.rank, 420);
+  eq(claimedEvents[0].evidence.strategy, "heft");
+  eq(claimedEvents[0].evidence.shortlistSize, 4);
+  eq(events.filter((event) => event.type === "shard_completed").length, 1);
+  eq(events.filter((event) => event.type === "shard_failed").length, 1);
+  eq(events.find((event) => event.type === "shard_failed").error, "boom");
+  eq(events.find((event) => event.type === "shard_completed").cycle, plan.cycle, "settle events carry the cycle");
+
+  // Hash chain + replay: claim state is rebuilt from events.
+  const replayed = stateManager.replayActiveState();
+  ok(replayed, "replay verifies the hash chain");
+  eq(replayed.shards.claims.length, 3);
+  eq(replayed.shards.claims.find((claim) => claim.shardId === "shard-2" && claim.cycle === plan.cycle).status, "completed");
+  eq(replayed.shards.claims.find((claim) => claim.shardId === "shard-1").status, "failed");
+  eq(replayed.shards.claims.find((claim) => claim.shardId === "shard-2" && claim.cycle === plan.cycle).rank, 420);
+
+  // Restart path: a fresh manager restores claims from events.jsonl.
+  const fresh = createStateManager({ appendEntry() {} });
+  const restored = fresh.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } });
+  ok(restored, "restore replays the run");
+  eq(restored.shards.claims.length, 3);
+  eq(restored.shards.claims.find((claim) => claim.shardId === "shard-1").status, "failed");
+
+  // Phase indicator: shards {done}/{total} rendered from shard state — the
+  // active plan's (planId, cycle) scopes the count, so the cycle-2 claim
+  // does not pollute it.
+  const model = renderModel(restored);
+  deepStrictEqual(model.shards, { done: 1, total: 4 });
+  ok(formatStatusLine(model).includes("shards 1/4"), "status bar renders shards d/t");
+
+  // Tamper with a claim record → replay fails closed.
+  const eventsPath = stateManager.getEventsPath();
+  const raw = fs.readFileSync(eventsPath, "utf8");
+  fs.writeFileSync(eventsPath, raw.replace('"type":"shard_claimed"', '"type":"shard_claimedX"'));
+  eq(stateManager.replayActiveState(), null, "tampered shard_claimed fails the hash chain");
+
+  console.log("✓ Test 71: C3 claim ledger hash-chains, replays, restores, fails closed; indicator renders shards 1/4");
+}
+
+// ── Test 72: C3 executor dispatches through dispatchAgentTask; flag-off rollback keeps posted order (§6.5, §8.6) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
+  const { PolicyEngine } = await import("../dist/policy/engine.js");
+  const { executeShardPlan, loadSchedulerConfig } = await import("../dist/kernel/scheduler.js");
+
+  // Flag parsing: defaults off; settings enable; tuning clamps.
+  const noSettings = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c3-flag-default-"));
+  const defaults = loadSchedulerConfig(noSettings);
+  eq(defaults.enabled, false, "scheduler lands flag-off (§8.6 rollback)");
+  eq(defaults.concurrency, 4);
+  eq(defaults.driftThreshold, 0.5);
+  eq(defaults.replanIntervalMs, 60_000);
+  const tuned = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-c3-flag-tuned-"));
+  fs.mkdirSync(path.join(tuned, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(tuned, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { scheduler: { enabled: true, concurrency: 99, driftThreshold: -1, replanIntervalMs: -5, alpha: 999 } } }));
+  const tunedConfig = loadSchedulerConfig(tuned);
+  eq(tunedConfig.enabled, true);
+  eq(tunedConfig.concurrency, 8, "concurrency clamps to the swarm hard cap");
+  eq(tunedConfig.driftThreshold, 0.05);
+  eq(tunedConfig.replanIntervalMs, 0);
+  eq(tunedConfig.alpha, 100);
+
+  // ── Flag OFF (rollback): posted order through the existing dispatch at
+  // default concurrency — C2 output stays executable end-to-end. ──
+  const repoOff = c1.makeGitRepo("pi-ig-c3-exec-off-");
+  const piOff = { appendEntry() {} };
+  const managerOff = createStateManager(piOff);
+  eq(managerOff.restore({ cwd: repoOff, sessionManager: { getEntries: () => [] } }), null);
+  const runOff = managerOff.createRun("Rollback execution", "Posted order at default concurrency");
+  const spawnOff = c1.makeFakeSpawn({ latencyMs: 5 });
+  const reportOff = await executeShardPlan(c3.criticalPathPlan(runOff.runId), {
+    stateManager: managerOff,
+    pool: new PiSubprocessAgentPool(repoOff, { spawnImpl: spawnOff }),
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repoOff })),
+    cwd: repoOff,
+    backend: "pi-subprocess",
+    detectedBackend: "none",
+    config: loadSchedulerConfig(repoOff),
+  });
+  eq(reportOff.strategy, "posted_order");
+  eq(reportOff.schedulerEnabled, false);
+  deepStrictEqual(reportOff.claimOrder, ["shard-1", "shard-2", "shard-3", "shard-4"], "posted order, not rank order");
+  eq(reportOff.completed.length, 4);
+  eq(reportOff.failed.length, 0);
+  eq(spawnOff.spawns.length, 4, "every shard dispatched through the pool");
+  ok(managerOff.getState().shards.claims.every((claim) => claim.workerSlot === null && claim.rank === null),
+    "posted-order claims record no pre-assigned slot and no rank (C3-OUS-004)");
+  const eventsOff = fs.readFileSync(managerOff.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  eq(eventsOff.filter((event) => event.type === "shard_claimed").length, 4);
+  eq(eventsOff.filter((event) => event.type === "shard_completed").length, 4);
+  eq(eventsOff.filter((event) => event.type === "subagent_started").length, 4,
+    "dispatch rides the C1 broker-gated ledger path");
+  eq(eventsOff.filter((event) => event.type === "subagent_finished").length, 4);
+  ok(managerOff.replayActiveState(), "hash chain verifies after rollback execution");
+
+  // ── Flag ON with telemetry: HEFT order, claims ledgered with awards. ──
+  const repoOn = c1.makeGitRepo("pi-ig-c3-exec-on-");
+  const piOn = { appendEntry() {} };
+  const managerOn = createStateManager(piOn);
+  eq(managerOn.restore({ cwd: repoOn, sessionManager: { getEntries: () => [] } }), null);
+  const runOn = managerOn.createRun("HEFT execution", "Critical path claimed first");
+  // Seed the telemetry the schedule calibrates from (same usage shape as the
+  // fake spawner, so execution adds fresh samples without tripping drift).
+  for (const [taskId, input] of [["seed-1", 80], ["seed-2", 120]]) {
+    managerOn.recordSubagentStarted({
+      ...c3.telemetryRecord(taskId, runOn.runId, "Implementer", input, 20), status: "running", usage: null,
+    });
+    managerOn.recordSubagentFinished(taskId, {
+      runId: runOn.runId, status: "completed",
+      usage: { input, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+    });
+  }
+  const spawnOn = c1.makeFakeSpawn({ latencyMs: 5 });
+  const reportOn = await executeShardPlan(c3.criticalPathPlan(runOn.runId), {
+    stateManager: managerOn,
+    pool: new PiSubprocessAgentPool(repoOn, { spawnImpl: spawnOn }),
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repoOn })),
+    cwd: repoOn,
+    backend: "pi-subprocess",
+    detectedBackend: "none",
+    config: { ...loadSchedulerConfig(repoOn), enabled: true },
+  });
+  eq(reportOn.strategy, "heft");
+  eq(reportOn.schedulerEnabled, true);
+  eq(reportOn.claimOrder[0], "shard-2", "critical path claimed first under HEFT");
+  eq(reportOn.claimOrder.at(-1), "shard-4", "exit shard claimed last (readiness-gated)");
+  eq(reportOn.completed.length, 4);
+  eq(reportOn.failed.length, 0);
+  eq(reportOn.blocked.length, 0);
+  eq(reportOn.replans, 0, "fresh samples within the drift threshold — no re-plan");
+  eq(spawnOn.spawns.length, 4);
+  const stateOn = managerOn.getState();
+  eq(stateOn.shards.claims.length, 4);
+  ok(stateOn.shards.claims.every((claim) => claim.status === "completed" && claim.rank !== null),
+    "every claim settled with its HEFT rank recorded");
+  const eventsOn = fs.readFileSync(managerOn.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  eq(eventsOn.filter((event) => event.type === "shard_claimed").length, 4);
+  eq(eventsOn.filter((event) => event.type === "shard_completed").length, 4);
+  eq(eventsOn.filter((event) => event.type === "subagent_finished").length, 6, "2 seeded + 4 executed");
+  const replayedOn = managerOn.replayActiveState();
+  ok(replayedOn, "hash chain verifies after HEFT execution");
+  eq(replayedOn.shards.claims.filter((claim) => claim.status === "completed").length, 4);
+  const { renderModel, formatStatusLine } = await import("../dist/ui/phase-indicator.js");
+  ok(formatStatusLine(renderModel(replayedOn)).includes("shards 4/4"), "status bar shows the completed fan-out");
+
+  console.log("✓ Test 72: C3 executor claims critical-path-first via dispatchAgentTask; flag-off keeps posted order");
+}
+
+// ── Test 73: C3 scheduler wired at the plan→implement seam — flag-on executes, flag-off untouched (C3-ADV-001/C3-OUS-001) ──
+
+{
+  const { registerGoalLifecycle } = await import("../dist/kernel/lifecycle.js");
+  const { getRunAgentPool, shutdownRunAgentPools } = await import("../dist/agents/run-pool.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+
+  // ── Flag ON: a fan_out plan on the ledger executes at the transition,
+  // through the real advanceToNextPhase and the C1 pool registry. ──
+  const repo = c1.makeGitRepo("pi-ig-c3-hook-on-");
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: { scheduler: { enabled: true } } }));
+  const rig = c2.makeLifecycleRig(repo);
+  eq(rig.stateManager.restore(rig.ctx), null);
+  const run = rig.stateManager.createRun("Scheduler hook", "fan_out plan executes at the plan→implement transition");
+  rig.stateManager.acquireLock(run.runId, "ph-plan-1");
+  rig.stateManager.setPhase("plan");
+  // The sharder's output for this cycle, ledgered (C2 surface; hook consumes it).
+  rig.stateManager.recordShardPlan(c3.criticalPathPlan(run.runId));
+  // Pre-register the fake pool in the C1 registry — the hook's pool source.
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  getRunAgentPool(run.runId, repo, { poolFactory: () => new PiSubprocessAgentPool(repo, { spawnImpl }) });
+
+  registerGoalLifecycle(rig.pi, rig.stateManager, rig.services);
+  await rig.handlers.get("agent_end")({}, rig.ctx);
+
+  eq(rig.stateManager.getState().phase, "implement", "transition still advanced");
+  eq(spawnImpl.spawns.length, 4, "all four shards dispatched via the pre-registered pool");
+  const eventsOn = c2.readEvents(rig.stateManager);
+  eq(eventsOn.filter((event) => event.type === "shard_claimed").length, 4, "claims ledgered via the live loop");
+  eq(eventsOn.filter((event) => event.type === "shard_completed").length, 4);
+  eq(eventsOn.filter((event) => event.type === "subagent_started").length, 4, "dispatch rode dispatchAgentTask's ledger path");
+  eq(eventsOn.filter((event) => event.type === "subagent_finished").length, 4);
+  eq(rig.stateManager.getState().shards.claims.filter((claim) => claim.status === "completed").length, 4);
+  // No telemetry in this run → the documented conservative path executed the fan-out.
+  eq(eventsOn.find((event) => event.type === "shard_claimed").evidence.strategy, "conservative_fallback");
+  ok(rig.stateManager.replayActiveState(), "hash chain verifies after hook execution");
+  await shutdownRunAgentPools();
+
+  // ── Flag OFF (default): the hook returns before touching anything — zero
+  // shard_claimed, transition byte-identical to pre-C3. ──
+  const repoOff = c1.makeGitRepo("pi-ig-c3-hook-off-");
+  const rigOff = c2.makeLifecycleRig(repoOff);
+  eq(rigOff.stateManager.restore(rigOff.ctx), null);
+  const runOff = rigOff.stateManager.createRun("Scheduler hook off", "flag-off leaves the transition untouched");
+  rigOff.stateManager.acquireLock(runOff.runId, "ph-plan-1");
+  rigOff.stateManager.setPhase("plan");
+  rigOff.stateManager.recordShardPlan(c3.criticalPathPlan(runOff.runId));
+
+  registerGoalLifecycle(rigOff.pi, rigOff.stateManager, rigOff.services);
+  await rigOff.handlers.get("agent_end")({}, rigOff.ctx);
+
+  eq(rigOff.stateManager.getState().phase, "implement", "transition advanced exactly as before");
+  const eventsOff = c2.readEvents(rigOff.stateManager);
+  eq(eventsOff.filter((event) => event.type === "shard_claimed").length, 0, "flag off → zero claims");
+  eq(eventsOff.filter((event) => event.type === "subagent_started").length, 0, "flag off → nothing dispatched");
+  eq(rigOff.stateManager.getState().shards.claims.length, 0);
+  ok(rigOff.sent.at(-1).includes("[ITERATIVE-GOAL PHASE 3/4: IMPLEMENT]"),
+    "single-slice implement prompt rendered unchanged");
+
+  console.log("✓ Test 73: C3 hook executes a ledgered fan_out plan at the real transition; flag-off is byte-identical");
+}
+
+// ── Test 74: C3 MIN_COST_SAMPLES — thin or unrelated telemetry cannot calibrate HEFT (C3-ADV-003/C3-ADV-010) ──
+
+{
+  const { buildCostModel, scheduleShardPlan, loadSchedulerConfig, MIN_COST_SAMPLES } = await import("../dist/kernel/scheduler.js");
+
+  eq(MIN_COST_SAMPLES, 2, "documented minimum: one sample is a point, not a distribution");
+  const plan = c3.criticalPathPlan("run-c3");
+  const config = { ...loadSchedulerConfig(os.tmpdir()), enabled: true };
+
+  // n = 1 sample of the dispatch role → conservative fallback.
+  const one = scheduleShardPlan(plan, {
+    costModel: buildCostModel([c3.telemetryRecord("a", "run-c3", "Implementer", 100, 20)]),
+    config,
+  });
+  eq(one.strategy, "conservative_fallback");
+  ok(one.reason.includes("too thin"), "fallback reason names the thin telemetry");
+  ok(one.steps.every((step) => step.rank === null), "no ranks on one sample");
+
+  // n = 2 samples of the dispatch role → HEFT.
+  const twoModel = buildCostModel([
+    c3.telemetryRecord("a", "run-c3", "Implementer", 100, 20),
+    c3.telemetryRecord("b", "run-c3", "Implementer", 140, 20),
+  ]);
+  const two = scheduleShardPlan(plan, { costModel: twoModel, config });
+  eq(two.strategy, "heft");
+
+  // Samples of unrelated roles alone must not calibrate the dispatch role
+  // through the global mean.
+  const unrelated = scheduleShardPlan(plan, {
+    costModel: buildCostModel([
+      c3.telemetryRecord("a", "run-c3", "Scout", 100, 20),
+      c3.telemetryRecord("b", "run-c3", "Scout", 140, 20),
+      c3.telemetryRecord("c", "run-c3", "Scout", 180, 20),
+    ]),
+    config,
+  });
+  eq(unrelated.strategy, "conservative_fallback", "three Scout samples do not calibrate an Implementer dispatch");
+
+  // C3-ADV-010: an empty candidate list degrades like missing telemetry —
+  // stated reason, never a bare TypeError from awardBid([]).
+  const noWorkers = scheduleShardPlan(plan, { costModel: twoModel, config, candidates: [] });
+  eq(noWorkers.strategy, "conservative_fallback");
+  ok(noWorkers.reason.includes("no worker candidates"), "empty candidate list has a stated fallback reason");
+
+  console.log("✓ Test 74: C3 thin/unrelated telemetry and empty candidates all fall back with stated reasons");
+}
+
+// ── Test 75: C3 cascade monitor is scoped to the DAG's (planId, cycle) (C3-ADV-004) ──
+
+{
+  const { buildShardDag, detectErrorCascadeSignatures } = await import("../dist/kernel/scheduler.js");
+
+  const dag = buildShardDag(c3.fanOutPlan("run-c3")); // planId plan-c3-fanout, cycle 1
+  const failedAt = "2026-01-01T00:00:01.000Z";
+
+  // Cycle-2 claims of the SAME plan must not feed the cycle-1 episode.
+  eq(detectErrorCascadeSignatures([
+    { type: "shard_failed", shardId: "shard-1", planId: "plan-c3-fanout", cycle: 1, timestamp: failedAt, sequence: 2 },
+    { type: "shard_claimed", shardId: "shard-2", planId: "plan-c3-fanout", cycle: 2, timestamp: "2026-01-01T00:00:02.000Z", sequence: 3 },
+    { type: "shard_claimed", shardId: "shard-3", planId: "plan-c3-fanout", cycle: 2, timestamp: "2026-01-01T00:00:03.000Z", sequence: 4 },
+  ], dag).length, 0, "cycle-2 claims do not feed a cycle-1 episode");
+
+  // Events of a different plan are not this DAG's episodes either.
+  eq(detectErrorCascadeSignatures([
+    { type: "shard_failed", shardId: "shard-1", planId: "other-plan", cycle: 1, timestamp: failedAt, sequence: 2 },
+    { type: "shard_claimed", shardId: "shard-2", planId: "other-plan", cycle: 1, timestamp: "2026-01-01T00:00:02.000Z", sequence: 3 },
+    { type: "shard_claimed", shardId: "shard-3", planId: "other-plan", cycle: 1, timestamp: "2026-01-01T00:00:03.000Z", sequence: 4 },
+  ], dag).length, 0, "other plans' events are skipped");
+
+  // Control: the same-shape cycle-1 sequence still flags.
+  const control = detectErrorCascadeSignatures([
+    { type: "shard_failed", shardId: "shard-1", planId: "plan-c3-fanout", cycle: 1, timestamp: failedAt, sequence: 2 },
+    { type: "shard_claimed", shardId: "shard-2", planId: "plan-c3-fanout", cycle: 1, timestamp: "2026-01-01T00:00:02.000Z", sequence: 3 },
+    { type: "shard_claimed", shardId: "shard-3", planId: "plan-c3-fanout", cycle: 1, timestamp: "2026-01-01T00:00:03.000Z", sequence: 4 },
+  ], dag);
+  eq(control.length, 1, "matching planId+cycle still flags");
+
+  console.log("✓ Test 75: C3 cascade monitor ignores other cycles/plans; matching scope still flags");
+}
+
+// ── Test 76: C3 contract-only edges inform ranks but never gate readiness (C3-ADV-005) ──
+
+{
+  const { buildShardDag, buildCostModel, computeUpwardRanks, executeShardPlan, loadSchedulerConfig } = await import("../dist/kernel/scheduler.js");
+  const { createStateManager } = await import("../dist/state.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
+  const { PolicyEngine } = await import("../dist/policy/engine.js");
+
+  // Inverted probe: partition order orients the contract sa→sb, but sb is the
+  // true producer — the phantom direction must not gate execution.
+  const contractOnlyPlan = (runId) => ({
+    id: "plan-c3-contract", version: 1, createdAt: new Date().toISOString(),
+    tasks: [
+      { id: "t-a", title: "consumer", dependsOn: [], satisfies: [], allowedPaths: [{ kind: "exact", path: "x/sa.ts" }], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" },
+      { id: "t-b", title: "producer", dependsOn: [], satisfies: [], allowedPaths: [{ kind: "exact", path: "y/sb.ts" }], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" },
+    ],
+    runId, cycle: 1,
+    shards: [
+      { id: "sa", index: 0, files: ["x/sa.ts"], taskIds: ["t-a"], allowedPaths: [{ kind: "exact", path: "x/sa.ts" }], crossShardContracts: [{ from: "x/sa.ts", to: "y/sb.ts", weight: 2 }] },
+      { id: "sb", index: 1, files: ["y/sb.ts"], taskIds: ["t-b"], allowedPaths: [{ kind: "exact", path: "y/sb.ts" }], crossShardContracts: [{ from: "y/sb.ts", to: "x/sa.ts", weight: 2 }] },
+    ],
+    cutWeight: 2, totalEdgeWeight: 2, couplingDensity: 1, balanceTolerance: 0.34,
+    decision: "fan_out", decisionReason: "c3 contract-only fixture",
+    algorithm: {
+      prior: "spectral-fiedler", priorSplit: "sign", refinement: "kernighan-lin",
+      bisections: 1, refinementPasses: 1, refinementEvaluatedSwaps: 1,
+      refinementSwapsExecuted: 0, refinementImproved: false, initialCutWeight: 2,
+    },
+    postedAt: new Date().toISOString(),
+  });
+
+  const dag = buildShardDag(contractOnlyPlan("run-c3"));
+  const contractEdge = dag.edges.find((edge) => edge.kind === "contract");
+  ok(contractEdge, "contract-only pair yields a contract edge");
+  eq(contractEdge.from, "sa", "partition order orients the phantom sa→sb");
+  eq(dag.steps.find((step) => step.shardId === "sb").dependsOn.length, 0,
+    "contract-only edge does NOT enter the readiness gate");
+  eq(dag.edges.filter((edge) => edge.kind === "dependsOn").length, 0);
+
+  // ...while the contract weight still feeds the rank hand-off cost.
+  // w̄ = (120+160)/2 = 140 tokens, handoffPerUnit = 20 (measured outputs).
+  const costModel = buildCostModel([
+    c3.telemetryRecord("p1", "run-c3", "Implementer", 100, 20),
+    c3.telemetryRecord("p2", "run-c3", "Implementer", 140, 20),
+  ]);
+  const ranks = computeUpwardRanks(dag, costModel);
+  eq(ranks.get("sb"), 140, "exit rank = w̄");
+  eq(ranks.get("sa"), 140 + 2 * 20 + 140, "rank_up includes the contract hand-off");
+
+  // Execution probe: with a stalled pool, BOTH shards dispatch while neither
+  // has finished — the inverted phantom direction cannot serialize them.
+  const repo = c1.makeGitRepo("pi-ig-c3-contract-");
+  const pi = { appendEntry() {} };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Contract readiness", "Inverted contract does not gate");
+  const spawnImpl = c1.makeManualSpawn();
+  const execution = executeShardPlan(contractOnlyPlan(run.runId), {
+    stateManager,
+    pool: new PiSubprocessAgentPool(repo, { spawnImpl }),
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repo })),
+    cwd: repo,
+    backend: "pi-subprocess",
+    detectedBackend: "none",
+    config: { ...loadSchedulerConfig(repo), enabled: true },
+  });
+  while (spawnImpl.pending.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+  eq(spawnImpl.pending.length, 2, "both shards in flight concurrently — readiness not gated by the contract");
+  spawnImpl.pending[0].finish(0);
+  spawnImpl.pending[1].finish(0);
+  const report = await execution;
+  eq(report.failed.length, 0);
+  eq(report.blocked.length, 0);
+  deepStrictEqual(report.completed, ["sa", "sb"]);
+
+  console.log("✓ Test 76: C3 contract-only edges feed rank hand-off costs but never gate execution readiness");
+}
+
+// ── Test 77: C3 poisoned usage counters are skipped, ranks unaffected (C3-ADV-006) ──
+
+{
+  const { buildCostModel, buildShardDag, computeUpwardRanks } = await import("../dist/kernel/scheduler.js");
+
+  const clean = [
+    c3.telemetryRecord("a", "run-c3", "Implementer", 100, 20),
+    c3.telemetryRecord("b", "run-c3", "Implementer", 140, 20),
+  ];
+  const negative = c3.telemetryRecord("c", "run-c3", "Implementer", -1e9, 20);
+  const nan = c3.telemetryRecord("d", "run-c3", "Implementer", 100, 20);
+  nan.usage.output = Number.NaN;
+  const infinity = c3.telemetryRecord("e", "run-c3", "Implementer", Number.POSITIVE_INFINITY, 20);
+
+  const cleanModel = buildCostModel(clean);
+  deepStrictEqual(buildCostModel([...clean, negative]), cleanModel, "negative counters skipped entirely");
+  deepStrictEqual(buildCostModel([...clean, nan]), cleanModel, "NaN counters skipped");
+  deepStrictEqual(buildCostModel([...clean, infinity]), cleanModel, "non-finite counters skipped");
+  eq(buildCostModel([negative]), null, "a ledger of only poisoned records is no telemetry at all");
+
+  const dag = buildShardDag(c3.criticalPathPlan("run-c3"));
+  deepStrictEqual(
+    [...computeUpwardRanks(dag, buildCostModel([...clean, negative, nan])).entries()],
+    [...computeUpwardRanks(dag, cleanModel).entries()],
+    "ranks identical with and without the poisoned records",
+  );
+
+  console.log("✓ Test 77: C3 non-finite/negative usage counters are skipped; cost model and ranks unaffected");
+}
+
+// ── Test 78: C3 crash reconciliation fails claims whose dispatch task reconciled (C3-ADV-009) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+
+  const tmp = c1.makeGitRepo("pi-ig-c3-claim-reconcile-");
+  const managerA = createStateManager({ appendEntry() {} });
+  eq(managerA.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } }), null);
+  const run = managerA.createRun("Claim reconcile", "Claimed shards reconcile on restore");
+  const plan = c3.criticalPathPlan(run.runId);
+  managerA.recordShardPlan(plan);
+  managerA.recordSubagentStarted({
+    taskId: "sched-c1-shard-2", batchId: "sched-plan-c3-c1", runId: run.runId, role: "Implementer", mode: "parallel",
+    backend: "pi-subprocess", detectedBackend: "none", workspace: "isolated_worktree",
+    allowedPaths: ["b/b.ts"], status: "running", startedAt: new Date().toISOString(),
+    finishedAt: null, usage: null, error: null,
+  });
+  const claimedAt = new Date().toISOString();
+  managerA.recordShardClaimed({
+    shardId: "shard-2", planId: plan.id, runId: run.runId, cycle: plan.cycle,
+    status: "claimed", workerSlot: 0, rank: 420, taskId: "sched-c1-shard-2",
+    claimedAt, finishedAt: null, error: null,
+  });
+  // A claim whose taskId has no running record is NOT reconciled (narrow rule).
+  managerA.recordShardClaimed({
+    shardId: "shard-1", planId: plan.id, runId: run.runId, cycle: plan.cycle,
+    status: "claimed", workerSlot: 1, rank: 380, taskId: "sched-c1-shard-1",
+    claimedAt, finishedAt: null, error: null,
+  });
+
+  // Simulated crash + restart: a fresh manager restores from disk.
+  const managerB = createStateManager({ appendEntry() {} });
+  const restored = managerB.restore({ cwd: tmp, sessionManager: { getEntries: () => [] } });
+  ok(restored, "restore replays the crashed run");
+  const claim2 = restored.shards.claims.find((claim) => claim.shardId === "shard-2");
+  eq(claim2.status, "failed", "claim whose task reconciled fails with it");
+  eq(claim2.error, "process_restart");
+  ok(claim2.finishedAt);
+  const claim1 = restored.shards.claims.find((claim) => claim.shardId === "shard-1");
+  eq(claim1.status, "claimed", "claim with an un-reconciled taskId is untouched");
+
+  const events = fs.readFileSync(managerB.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const reconciled = events.filter((event) => event.type === "shard_failed" && event.shardId === "shard-2");
+  eq(reconciled.length, 1, "claim reconciliation appends a hash-chained shard_failed");
+  eq(reconciled[0].error, "process_restart");
+  eq(reconciled[0].cycle, plan.cycle);
+  eq(reconciled[0].taskId, "sched-c1-shard-2");
+  ok(managerB.replayActiveState(), "hash chain still verifies after claim reconciliation");
+
+  console.log("✓ Test 78: C3 restore reconciliation fails orphaned claimed shards with process_restart");
+}
+
+// ── Test 79: C3 shard failure triggers a cadence-guarded global re-plan (C3-ADV-002) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
+  const { PolicyEngine } = await import("../dist/policy/engine.js");
+  const { executeShardPlan, loadSchedulerConfig } = await import("../dist/kernel/scheduler.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c3-failreplan-");
+  const pi = { appendEntry() {} };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("Failure re-plan", "A shard failure re-ranks unstarted work");
+  // Telemetry matching the fake spawner's usage exactly — no drift trigger,
+  // isolating the FAILURE trigger (and proving failures never enter the model).
+  for (const [taskId] of [["seed-1"], ["seed-2"]]) {
+    stateManager.recordSubagentStarted({
+      ...c3.telemetryRecord(taskId, run.runId, "Implementer", 120, 40), status: "running", usage: null,
+    });
+    stateManager.recordSubagentFinished(taskId, {
+      runId: run.runId, status: "completed",
+      usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+    });
+  }
+
+  const spawnImpl = c1.makeManualSpawn();
+  const execution = executeShardPlan(c3.criticalPathPlan(run.runId), {
+    stateManager,
+    pool: new PiSubprocessAgentPool(repo, { spawnImpl }),
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repo })),
+    cwd: repo,
+    backend: "pi-subprocess",
+    detectedBackend: "none",
+    config: { ...loadSchedulerConfig(repo), enabled: true, replanIntervalMs: 0 },
+  });
+  // HEFT claims shard-2 (critical head) and shard-1 first; fail shard-2.
+  while (spawnImpl.pending.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+  eq(spawnImpl.pending.length, 2);
+  spawnImpl.pending[0].finish(1); // shard-2 — the first claim — fails
+  spawnImpl.pending[1].finish(0); // shard-1 completes
+  const report = await execution;
+
+  deepStrictEqual(report.failed, ["shard-2"]);
+  deepStrictEqual(report.completed, ["shard-1"]);
+  deepStrictEqual(report.blocked, ["shard-3", "shard-4"], "dependents of the failure stay blocked (no auto-repair in v1)");
+  ok(report.replans >= 1, "the failure triggered the §6.5 global critic");
+  eq(report.cascadeSignatures.length, 0, "blocked dependents were never claimed — no consumption, no cascade");
+
+  // The failure settled with the cycle on the ledger (C3-ADV-007 shape), and
+  // the failed task's usage never entered the cost model (buildCostModel
+  // filters completed-with-usage — asserted by replans happening on identical
+  // means, but the model check is direct):
+  const events = c2.readEvents(stateManager);
+  eq(events.find((event) => event.type === "shard_failed").cycle, 1);
+  const { buildCostModel } = await import("../dist/kernel/scheduler.js");
+  const model = buildCostModel(stateManager.getState().swarm.tasks);
+  eq(model.samples, 3, "2 seeds + 1 completion; the FAILED task's usage is excluded");
+  eq(model.perRole.Implementer.meanTokens, 160, "mean unaffected by the failed run's counters");
+
+  console.log("✓ Test 79: C3 shard failure triggers a cadence-guarded re-plan; dependents stay blocked");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

@@ -77,7 +77,7 @@ import {
   filterAllowedModels,
   normalizeConfiguredModel,
 } from "./domain/models.js";
-import type { PendingShardPlan, ShardPlan } from "./domain/shard.js";
+import type { PendingShardPlan, ShardClaimRecord, ShardPlan } from "./domain/shard.js";
 import { logDebug } from "./logging.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
@@ -138,6 +138,13 @@ export interface StateManagerAPI {
   setPendingShardPlan(entry: PendingShardPlan): void;
   clearPendingShardPlan(): void;
   recordShardPlan(shardPlan: ShardPlan): void;
+
+  // ── New: scheduler claim ledger (Campaign 3) ───────────────────
+  recordShardClaimed(claim: ShardClaimRecord, evidence?: Record<string, unknown>): void;
+  recordShardFinished(
+    shardId: string,
+    finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null },
+  ): void;
   updateDlpState(dlp: CyberDlpState): void;
   updateSanitizationState(sanitizer: CyberSanitizationState): void;
   recordAttestation(attestation: ActionAttestation): void;
@@ -367,6 +374,35 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       replayed.shards.pendingPlan = null;
       replayed.shards.plans.push(event.shardPlan as ShardPlan);
     },
+    shard_claimed(replayed, event) {
+      const claim = event.claim as ShardClaimRecord;
+      // Latest episode wins (repair loops re-claim); history stays in the log.
+      const index = replayed.shards.claims.findIndex(
+        (item) => item.planId === claim.planId && item.cycle === claim.cycle && item.shardId === claim.shardId,
+      );
+      if (index >= 0) replayed.shards.claims[index] = claim;
+      else replayed.shards.claims.push(claim);
+    },
+    shard_completed(replayed, event) {
+      const claim = replayed.shards.claims.find(
+        (item) => item.planId === event.planId && item.cycle === event.cycle && item.shardId === event.shardId,
+      );
+      if (!claim) return; // Same unknown-record tolerance as subagent_finished.
+      claim.status = "completed";
+      claim.finishedAt = event.timestamp;
+      claim.error = null;
+      if (typeof event.taskId === "string") claim.taskId = event.taskId;
+    },
+    shard_failed(replayed, event) {
+      const claim = replayed.shards.claims.find(
+        (item) => item.planId === event.planId && item.cycle === event.cycle && item.shardId === event.shardId,
+      );
+      if (!claim) return;
+      claim.status = "failed";
+      claim.finishedAt = event.timestamp;
+      claim.error = typeof event.error === "string" ? event.error : null;
+      if (typeof event.taskId === "string") claim.taskId = event.taskId;
+    },
     project_instructions_updated(replayed, event) {
       replayed.projectInstructions = event.projectInstructions;
     },
@@ -540,6 +576,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!raw.shards || typeof raw.shards !== "object") raw.shards = { pendingPlan: null, plans: [] };
     if (!Array.isArray(raw.shards.plans)) raw.shards.plans = [];
     if (!("pendingPlan" in raw.shards)) raw.shards.pendingPlan = null;
+    if (!Array.isArray(raw.shards.claims)) raw.shards.claims = [];
     raw.constraints = {
       ...(raw.constraints ?? {}),
       neverStopUntilEvaluatorGoalMet: true,
@@ -597,10 +634,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   // restores in-flight tasks as running; only at load time do we mark them
   // failed, since the pool that ran them died with the previous process.
   // Each reconciliation is itself a hash-chained subagent_finished event.
+  // C3 extension (C3-ADV-009): a shard claim stuck in claimed whose dispatch
+  // task was reconciled must fail with it — otherwise the shard ledger keeps
+  // a claim the swarm ledger already buried, and shards d/t diverges.
   function reconcileRunningSubagents(): void {
     if (!state) return;
     const orphaned = state.swarm.tasks.filter((task) => task.status === "running");
     if (orphaned.length === 0) return;
+    const reconciledTaskIds = new Set(orphaned.map((task) => task.taskId));
     for (const task of orphaned) {
       const finishedAt = new Date().toISOString();
       task.status = "failed";
@@ -616,6 +657,27 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       });
     }
     logDebug("state", `reconciled ${orphaned.length} orphaned running subagent task(s) as failed: process_restart`);
+    const orphanedClaims = state.shards.claims.filter(
+      (claim) => claim.status === "claimed" && claim.taskId !== null && reconciledTaskIds.has(claim.taskId),
+    );
+    for (const claim of orphanedClaims) {
+      const finishedAt = new Date().toISOString();
+      claim.status = "failed";
+      claim.finishedAt = finishedAt;
+      claim.error = "process_restart";
+      appendEvent({
+        type: "shard_failed",
+        shardId: claim.shardId,
+        planId: claim.planId,
+        cycle: claim.cycle,
+        taskId: claim.taskId,
+        error: "process_restart",
+        timestamp: finishedAt,
+      });
+    }
+    if (orphanedClaims.length > 0) {
+      logDebug("state", `reconciled ${orphanedClaims.length} orphaned claimed shard(s) as failed: process_restart`);
+    }
   }
 
   function ensureRunDirs(): void {
@@ -905,7 +967,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         },
         releaseAuthorization: null,
         swarm: { backend: null, detectedBackend: null, tasks: [] },
-        shards: { pendingPlan: null, plans: [] },
+        shards: { pendingPlan: null, plans: [], claims: [] },
       };
 
       ensureRunDirs();
@@ -1127,6 +1189,69 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         cycle: shardPlan.cycle,
         decision: shardPlan.decision,
         timestamp: shardPlan.postedAt,
+      });
+    },
+
+    // ── Scheduler claim ledger (Campaign 3, §6.5) ────────────────
+
+    recordShardClaimed(claim: ShardClaimRecord, evidence: Record<string, unknown> = {}): void {
+      if (!state) return;
+      if (claim.runId !== state.runId) {
+        logDebug("state", `recordShardClaimed ignored for shard ${claim.shardId}: claim runId ${claim.runId} != current runId ${state.runId}`);
+        return;
+      }
+      // Every award is ledgered (§6.5): allocation stays auditable/replayable.
+      // State keeps the latest episode per (planId, cycle, shardId) — a new
+      // cycle's plan reuses plan ids, so the cycle is part of the key
+      // (C3-ADV-007); the log keeps all episodes.
+      const index = state.shards.claims.findIndex(
+        (item) => item.planId === claim.planId && item.cycle === claim.cycle && item.shardId === claim.shardId,
+      );
+      if (index >= 0) state.shards.claims[index] = claim;
+      else state.shards.claims.push(claim);
+      appendEvent({
+        type: "shard_claimed",
+        shardId: claim.shardId,
+        planId: claim.planId,
+        cycle: claim.cycle,
+        claim,
+        evidence,
+        timestamp: claim.claimedAt,
+      });
+    },
+
+    recordShardFinished(
+      shardId: string,
+      finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null },
+    ): void {
+      if (!state) return;
+      if (finish.runId !== state.runId) {
+        logDebug("state", `recordShardFinished ignored for shard ${shardId}: finish runId ${finish.runId} != current runId ${state.runId}`);
+        return;
+      }
+      const claim = state.shards.claims.find(
+        (item) => item.planId === finish.planId && item.cycle === finish.cycle && item.shardId === shardId,
+      );
+      // Orphan settle (C3-ADV-008): a settle with no matching claim has no
+      // state effect, so ledgering it would claim a transition nothing made —
+      // skip the event and say why. Callers settle claim-then-fail instead.
+      if (!claim) {
+        logDebug("state", `recordShardFinished skipped for shard ${shardId} (plan ${finish.planId} cycle ${finish.cycle}): no matching claim — orphan ${finish.status} not ledgered`);
+        return;
+      }
+      const finishedAt = new Date().toISOString();
+      claim.status = finish.status;
+      claim.finishedAt = finishedAt;
+      claim.error = finish.status === "failed" ? (finish.error ?? null) : null;
+      if (finish.taskId) claim.taskId = finish.taskId;
+      appendEvent({
+        type: finish.status === "completed" ? "shard_completed" : "shard_failed",
+        shardId,
+        planId: finish.planId,
+        cycle: finish.cycle,
+        taskId: finish.taskId ?? null,
+        error: finish.status === "failed" ? (finish.error ?? null) : null,
+        timestamp: finishedAt,
       });
     },
 
