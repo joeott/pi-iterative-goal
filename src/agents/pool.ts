@@ -1,10 +1,20 @@
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Value } from "typebox/value";
 import { normalizeRepoPath } from "../domain/path-scope.js";
 import { prepareIsolatedWorktree } from "../workspace/worktrees.js";
 import type { IsolatedWorkspace } from "../workspace/worktrees.js";
 import type { AgentRole } from "./roles.js";
+import { requireModelRoute, type ModelProfileId } from "../domain/model-roster.js";
+import {
+  WORKER_ENV,
+  encodeWorkerAllowedPaths,
+  type WorkerMode,
+} from "../worker-extension.js";
 
 export type { AgentRole } from "./roles.js";
 // The isolated-worktree primitive lives in src/workspace/worktrees.ts (C4
@@ -16,6 +26,19 @@ export type { IsolatedWorkspace } from "../workspace/worktrees.js";
 /** Swarm fan-out band (§5.1): default 4, hard cap 8 — the single source. */
 export const DEFAULT_SWARM_CONCURRENCY = 4;
 export const MAX_SWARM_CONCURRENCY = 8;
+
+export const DEFAULT_MODEL_PROFILE_BY_ROLE: Readonly<Record<AgentRole, ModelProfileId>> = Object.freeze({
+  Scout: "cerebras_gpt_oss_120b",
+  "Requirements analyst": "openrouter_kimi_k3",
+  Planner: "openrouter_kimi_k3",
+  Implementer: "fireworks_glm_5_2_fast",
+  "Test engineer": "fireworks_glm_5_2_fast",
+  "Security reviewer": "openrouter_claude_sonnet_5",
+  "Architecture/Ousterhout advisor": "openrouter_claude_sonnet_5",
+  "Documentation reviewer": "cerebras_gemma_4_31b",
+  "Release reviewer": "openrouter_claude_fable_5",
+  Integrator: "fireworks_glm_5_2_max",
+});
 
 /** What pool.cancel() found for the task id. */
 export type PoolCancelStatus = "running" | "queued" | "unknown";
@@ -56,6 +79,22 @@ export interface AgentResult<T = unknown> {
   patch?: string | null;
   /** True when the run succeeded but output failed schema validation (prose preserved). */
   degraded?: boolean;
+  outputTruncated?: boolean;
+  /** Kernel-observed hard budget stop; output/patch remains evidence only. */
+  budgetExhausted?: AgentBudgetExhaustion;
+  /** Exact provider-reported identity from the last assistant response. */
+  responseModel: string | null;
+  /** Tool calls observed in finalized assistant content across all turns. */
+  toolCallCount: number;
+  /** Failed finalized tool-result messages observed across all turns. */
+  toolErrorCount: number;
+  timing: {
+    startedAt: string;
+    firstTokenAt: string | null;
+    endedAt: string;
+    latencyMs: number;
+    ttftMs: number | null;
+  };
   usage: {
     input: number;
     output: number;
@@ -64,6 +103,17 @@ export interface AgentResult<T = unknown> {
     cost: number;
     turns: number;
   };
+}
+
+export type AgentBudgetLimit = "maxTurns" | "maxTokens" | "maxCost" | "timeoutMs";
+
+export interface AgentBudgetExhaustion {
+  reason: "budget_exhausted";
+  limit: AgentBudgetLimit;
+  maximum: number;
+  /** Null means the provider omitted/invalidated a required usage measurement. */
+  observed: number | null;
+  detectedAt: string;
 }
 
 export interface AgentPool {
@@ -84,6 +134,12 @@ export interface AgentPool {
 export interface PiSubprocessAgentPoolOptions {
   /** Injectable spawn for tests; defaults to node:child_process.spawn. */
   spawnImpl?: typeof spawn;
+  /** Explicit executable for production launchers/tests; defaults to the repository-local Pi binary. */
+  piExecutable?: string;
+  /** Per-stream in-memory cap. Full output belongs in bounded managed logs, never an unbounded JS string. */
+  maxCapturedBytes?: number;
+  /** Grace between exact process-group TERM and KILL; injectable for tests. */
+  killGraceMs?: number;
 }
 
 export class PiSubprocessAgentPool implements AgentPool {
@@ -94,9 +150,18 @@ export class PiSubprocessAgentPool implements AgentPool {
   private readonly cancelledTasks = new Set<string>();
   private readonly queuedTasks = new Set<string>();
   private readonly spawnImpl: typeof spawn;
+  private readonly piExecutable: string;
+  private readonly maxCapturedBytes: number;
+  private readonly killGraceMs: number;
+  private readonly closeWaiters = new Map<string, Promise<void>>();
+  private readonly closeResolvers = new Map<string, () => void>();
+  private readonly killEscalations = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly cwd: string, options: PiSubprocessAgentPoolOptions = {}) {
     this.spawnImpl = options.spawnImpl ?? spawn;
+    this.piExecutable = options.piExecutable ?? resolvePiExecutable(cwd);
+    this.maxCapturedBytes = Math.max(64 * 1024, options.maxCapturedBytes ?? 5 * 1024 * 1024);
+    this.killGraceMs = Math.max(1, options.killGraceMs ?? 5_000);
   }
 
   async submit<T>(task: AgentTask<T>, signal?: AbortSignal): Promise<AgentResult<T>> {
@@ -105,97 +170,276 @@ export class PiSubprocessAgentPool implements AgentPool {
     if (this.cancelledTasks.has(task.id)) {
       return failedResult(task, `Task ${task.id} was cancelled before admission; it never executed.`);
     }
+    if (signal?.aborted) {
+      this.cancelledTasks.add(task.id);
+      return failedResult(task, `Task ${task.id} was cancelled before admission; it never executed.`);
+    }
+    const invalidBudget = validateTaskBudget(task);
+    if (invalidBudget) return failedResult(task, invalidBudget);
+    let args: string[];
+    try {
+      args = buildPiSubprocessArgs(task);
+    } catch (err) {
+      return failedResult(task, err instanceof Error ? err.message : String(err));
+    }
     let workspace: IsolatedWorkspace | null = null;
     let runCwd = this.cwd;
     if (task.workspace === "isolated_worktree") {
       const conflict = this.findWriteScopeConflict(task);
       if (conflict) return failedResult(task, conflict);
       this.activeWriteScopes.set(task.id, task.allowedPaths);
-      try {
-        workspace = prepareIsolatedWorktree(this.cwd, task.id);
-        runCwd = workspace.path;
-      } catch (err) {
-        this.activeWriteScopes.delete(task.id);
-        return failedResult(task, err instanceof Error ? err.message : String(err));
-      }
+    }
+    try {
+      // Readers get the same tracked-HEAD snapshot boundary as writers. This
+      // excludes ambient untracked files (notably .env) from the child root.
+      workspace = prepareIsolatedWorktree(this.cwd, task.id);
+      runCwd = workspace.path;
+    } catch (err) {
+      this.activeWriteScopes.delete(task.id);
+      return failedResult(task, err instanceof Error ? err.message : String(err));
     }
 
-    const args = buildPiSubprocessArgs(task);
+    const workerRuntimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-worker-runtime-"));
+    fs.chmodSync(workerRuntimeDir, 0o700);
+
+    let workerEnvironment: NodeJS.ProcessEnv;
+    try {
+      workerEnvironment = buildWorkerEnvironment(process.env, {
+        repoRoot: runCwd,
+        mode: task.workspace,
+        allowedPaths: task.allowedPaths,
+        modelProfile: task.modelProfile || DEFAULT_MODEL_PROFILE_BY_ROLE[task.role],
+        runtimeDir: workerRuntimeDir,
+      });
+    } catch (err) {
+      this.activeWriteScopes.delete(task.id);
+      workspace?.cleanup();
+      cleanupWorkerRuntimeDir(workerRuntimeDir);
+      return failedResult(task, err instanceof Error ? err.message : String(err));
+    }
 
     return await new Promise<AgentResult<T>>((resolve) => {
-      const proc = this.spawnImpl("pi", args, { cwd: runCwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+      const startedMs = Date.now();
+      const startedAt = new Date(startedMs).toISOString();
+      let firstTokenAt: string | null = null;
+      let firstTokenMs: number | null = null;
+      let outputTruncated = false;
+      let settled = false;
+      let aborted = false;
+      let budgetExhausted: AgentBudgetExhaustion | null = null;
+      const proc = this.spawnImpl(this.piExecutable, args, {
+        cwd: runCwd,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+        env: workerEnvironment,
+      });
       this.running.set(task.id, proc);
+      const closeWaiter = new Promise<void>((resolveClose) => this.closeResolvers.set(task.id, resolveClose));
+      this.closeWaiters.set(task.id, closeWaiter);
       let stdout = "";
       let stderr = "";
       let stdoutLineBuffer = "";
       const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+      const resultMetadata: MutableAgentResultMetadata = {
+        responseModel: null,
+        toolCallCount: 0,
+        toolErrorCount: 0,
+      };
+      const exhaustBudget = (
+        limit: AgentBudgetLimit,
+        maximum: number,
+        observed: number | null,
+        signalChild = true,
+      ): void => {
+        if (budgetExhausted) return;
+        budgetExhausted = {
+          reason: "budget_exhausted",
+          limit,
+          maximum,
+          observed,
+          detectedAt: new Date().toISOString(),
+        };
+        // Budget enforcement owns the exact child process group. The write
+        // scope is intentionally retained until `close`, including throughout
+        // the bounded TERM -> KILL grace period.
+        if (signalChild) {
+          signalOwnedProcess(proc, "SIGTERM");
+          this.scheduleKillEscalation(task.id, proc);
+        }
+      };
+      const enforceBudget = (observation: UsageObservation, signalChild = true): void => {
+        if (budgetExhausted || !observation.assistantTurn) return;
+        // Exactly-at-limit is a valid terminal response. A tool-use response at
+        // the limit would necessarily begin another provider turn, so stop it
+        // before that continuation can be admitted.
+        if (usage.turns > task.budget.maxTurns || (usage.turns === task.budget.maxTurns && observation.continues)) {
+          exhaustBudget("maxTurns", task.budget.maxTurns, usage.turns, signalChild);
+          return;
+        }
+        const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+        if (!observation.tokensMeasured) {
+          exhaustBudget("maxTokens", task.budget.maxTokens, null, signalChild);
+          return;
+        }
+        if (tokens > task.budget.maxTokens || (tokens === task.budget.maxTokens && observation.continues)) {
+          exhaustBudget("maxTokens", task.budget.maxTokens, tokens, signalChild);
+          return;
+        }
+        if (task.budget.maxCost !== undefined) {
+          if (!observation.costMeasured) {
+            exhaustBudget("maxCost", task.budget.maxCost, null, signalChild);
+            return;
+          }
+          if (usage.cost > task.budget.maxCost || (usage.cost === task.budget.maxCost && observation.continues)) {
+            exhaustBudget("maxCost", task.budget.maxCost, usage.cost, signalChild);
+          }
+        }
+      };
       const timeout = setTimeout(() => {
-        proc.kill("SIGTERM");
-        setTimeout(() => proc.kill("SIGKILL"), 5_000).unref();
+        exhaustBudget("timeoutMs", task.budget.timeoutMs, Date.now() - startedMs);
       }, task.budget.timeoutMs);
       timeout.unref();
 
-      const abort = () => proc.kill("SIGTERM");
+      const abort = () => {
+        aborted = true;
+        this.cancelledTasks.add(task.id);
+        signalOwnedProcess(proc, "SIGTERM");
+        this.scheduleKillEscalation(task.id, proc);
+      };
       signal?.addEventListener("abort", abort, { once: true });
 
       proc.stdout.on("data", (chunk) => {
         const text = chunk.toString();
-        stdout += text;
+        if (firstTokenMs === null) {
+          firstTokenMs = Date.now();
+          firstTokenAt = new Date(firstTokenMs).toISOString();
+        }
+        const remaining = this.maxCapturedBytes - Buffer.byteLength(stdout);
+        if (remaining > 0) stdout += Buffer.from(text).subarray(0, remaining).toString();
+        if (Buffer.byteLength(text) > Math.max(0, remaining)) outputTruncated = true;
         const lines = (stdoutLineBuffer + text).split(/\r?\n/);
-        stdoutLineBuffer = lines.pop() ?? "";
-        for (const line of lines) accumulateUsageFromJsonLine(line, usage);
+        const pendingLine = lines.pop() ?? "";
+        if (Buffer.byteLength(pendingLine) > this.maxCapturedBytes) {
+          // A finalized JSON event must fit within the same bounded capture
+          // envelope as its output. Once framing exceeds that envelope, usage
+          // is not trustworthy, so fail closed instead of parsing a tail.
+          stdoutLineBuffer = "";
+          outputTruncated = true;
+          exhaustBudget("maxTokens", task.budget.maxTokens, null);
+        } else {
+          stdoutLineBuffer = pendingLine;
+        }
+        for (const line of lines) {
+          const observation = accumulateUsageFromJsonLine(line, usage, resultMetadata);
+          enforceBudget(observation);
+        }
       });
-      proc.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      proc.stderr.on("data", (chunk) => {
+        const text = chunk.toString();
+        const remaining = this.maxCapturedBytes - Buffer.byteLength(stderr);
+        if (remaining > 0) stderr += Buffer.from(text).subarray(0, remaining).toString();
+        if (Buffer.byteLength(text) > Math.max(0, remaining)) outputTruncated = true;
+      });
       proc.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        // Pi normally newline-terminates JSON mode events. Parse a final
+        // complete line even when the child exits without that delimiter so a
+        // provider cannot evade accounting through framing.
+        if (stdoutLineBuffer.trim()) {
+          enforceBudget(accumulateUsageFromJsonLine(stdoutLineBuffer, usage, resultMetadata), false);
+          stdoutLineBuffer = "";
+        }
+        if (code === 0 && usage.turns === 0 && budgetExhausted === null) {
+          // JSON mode success without one finalized, measured assistant turn
+          // provides no trustworthy token accounting.
+          exhaustBudget("maxTokens", task.budget.maxTokens, null, false);
+        }
         clearTimeout(timeout);
         signal?.removeEventListener("abort", abort);
         this.running.delete(task.id);
         this.activeWriteScopes.delete(task.id);
+        this.clearKillEscalation(task.id);
+        this.resolveCloseWaiter(task.id);
         // Capture failure is NOT "no changes" (C4-ADV-011): capturePatch
         // throws on git error; the reader path degrades to null and the
         // merge layer rejects null instead of verifying vanished work.
         let patch: string | null = null;
         try {
-          patch = workspace?.capturePatch() ?? null;
+          patch = task.workspace === "isolated_worktree" ? workspace?.capturePatch() ?? null : null;
         } catch {
           patch = null;
         }
         const workspacePath = workspace?.path;
         workspace?.cleanup();
+        cleanupWorkerRuntimeDir(workerRuntimeDir);
         const outputText = extractFinalText(stdout);
         const structured = validateStructuredOutput<T>(task, outputText);
         // Schema degradation: a validation failure never discards outputText —
         // prose reaches the supervisor with a validation note in stderr and the
         // result marked degraded instead of failed (C1-OUS-002 / C1-ADV-007).
-        const degraded = code === 0 && !structured.ok;
+        const degraded = code === 0 && budgetExhausted === null && !aborted && !structured.ok;
+        const endedMs = Date.now();
+        const timing = {
+          startedAt,
+          firstTokenAt,
+          endedAt: new Date(endedMs).toISOString(),
+          latencyMs: endedMs - startedMs,
+          ttftMs: firstTokenMs === null ? null : firstTokenMs - startedMs,
+        };
         resolve({
           taskId: task.id,
           role: task.role,
-          ok: code === 0,
+          ok: code === 0 && budgetExhausted === null && !aborted,
           outputText: patch ? `${outputText}\n\n[ISOLATED_WORKTREE_PATCH]\n${patch}`.trim() : outputText,
           structuredOutput: structured.value,
           exitCode: code,
-          stderr: [stderr, structured.error].filter(Boolean).join("\n"),
+          stderr: [
+            stderr,
+            structured.error,
+            budgetExhausted ? formatBudgetExhaustion(budgetExhausted) : "",
+            aborted ? "cancelled_by_abort_signal" : "",
+          ].filter(Boolean).join("\n"),
           workspacePath,
           patch,
           ...(degraded ? { degraded: true } : {}),
+          ...(outputTruncated ? { outputTruncated: true } : {}),
+          ...(budgetExhausted ? { budgetExhausted } : {}),
+          ...resultMetadata,
+          timing,
           usage,
         });
       });
       proc.on("error", (err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         this.running.delete(task.id);
         this.activeWriteScopes.delete(task.id);
+        this.clearKillEscalation(task.id);
+        this.resolveCloseWaiter(task.id);
         const workspacePath = workspace?.path;
         workspace?.cleanup();
+        cleanupWorkerRuntimeDir(workerRuntimeDir);
+        const endedMs = Date.now();
         resolve({
           taskId: task.id,
           role: task.role,
           ok: false,
           outputText: "",
           exitCode: null,
-          stderr: err.message,
+          stderr: [err.message, aborted ? "cancelled_by_abort_signal" : ""].filter(Boolean).join("\n"),
           workspacePath,
+          ...resultMetadata,
+          timing: {
+            startedAt,
+            firstTokenAt,
+            endedAt: new Date(endedMs).toISOString(),
+            latencyMs: endedMs - startedMs,
+            ttftMs: firstTokenMs === null ? null : firstTokenMs - startedMs,
+          },
           usage,
         });
       });
@@ -221,8 +465,11 @@ export class PiSubprocessAgentPool implements AgentPool {
     const proc = this.running.get(taskId);
     if (proc) {
       this.cancelledTasks.add(taskId);
-      proc.kill("SIGTERM");
-      this.activeWriteScopes.delete(taskId);
+      // The lease/write scope remains held until the owned process group
+      // actually emits close. Releasing at signal time permits overlapping
+      // writers while a slow child is still mutating the worktree.
+      signalOwnedProcess(proc, "SIGTERM");
+      this.scheduleKillEscalation(taskId, proc);
       return "running";
     }
     if (this.queuedTasks.delete(taskId)) {
@@ -237,11 +484,20 @@ export class PiSubprocessAgentPool implements AgentPool {
   async shutdown(): Promise<void> {
     for (const [taskId, proc] of this.running.entries()) {
       this.cancelledTasks.add(taskId);
-      proc.kill("SIGTERM");
+      signalOwnedProcess(proc, "SIGTERM");
     }
+    this.queuedTasks.clear();
+    await waitForSettled([...this.closeWaiters.values()], 5_000);
+    for (const proc of this.running.values()) signalOwnedProcess(proc, "SIGKILL");
+    await waitForSettled([...this.closeWaiters.values()], 1_000);
+    // If a broken spawn implementation never emits close, retain no reusable
+    // pool state after shutdown; production children received SIGKILL above.
     this.running.clear();
     this.activeWriteScopes.clear();
-    this.queuedTasks.clear();
+    this.closeWaiters.clear();
+    this.closeResolvers.clear();
+    for (const timer of this.killEscalations.values()) clearTimeout(timer);
+    this.killEscalations.clear();
   }
 
   noteQueued(taskId: string): void {
@@ -275,29 +531,121 @@ export class PiSubprocessAgentPool implements AgentPool {
     }
     return null;
   }
+
+  private resolveCloseWaiter(taskId: string): void {
+    this.closeResolvers.get(taskId)?.();
+    this.closeResolvers.delete(taskId);
+    this.closeWaiters.delete(taskId);
+  }
+
+  private scheduleKillEscalation(taskId: string, proc: ReturnType<typeof spawn>): void {
+    if (this.killEscalations.has(taskId)) return;
+    const timer = setTimeout(() => {
+      this.killEscalations.delete(taskId);
+      // The identity check prevents a delayed timer from signalling a later
+      // task that happens to reuse the same task id.
+      if (this.running.get(taskId) === proc) signalOwnedProcess(proc, "SIGKILL");
+    }, this.killGraceMs);
+    timer.unref();
+    this.killEscalations.set(taskId, timer);
+  }
+
+  private clearKillEscalation(taskId: string): void {
+    const timer = this.killEscalations.get(taskId);
+    if (timer) clearTimeout(timer);
+    this.killEscalations.delete(taskId);
+  }
+}
+
+interface UsageObservation {
+  assistantTurn: boolean;
+  tokensMeasured: boolean;
+  costMeasured: boolean;
+  continues: boolean;
+}
+
+interface MutableAgentResultMetadata {
+  responseModel: string | null;
+  toolCallCount: number;
+  toolErrorCount: number;
 }
 
 function accumulateUsageFromJsonLine(
   line: string,
   usage: AgentResult["usage"],
-): void {
-  if (!line.trim()) return;
+  metadata: MutableAgentResultMetadata,
+): UsageObservation {
+  const observation: UsageObservation = {
+    assistantTurn: false,
+    tokensMeasured: true,
+    costMeasured: true,
+    continues: false,
+  };
+  if (!line.trim()) return observation;
   try {
     const event = JSON.parse(line);
     const message = event.message;
-    if (message?.usage) {
-      usage.input += message.usage.input ?? 0;
-      usage.output += message.usage.output ?? 0;
-      usage.cacheRead += message.usage.cacheRead ?? 0;
-      usage.cacheWrite += message.usage.cacheWrite ?? 0;
-      usage.cost += message.usage.cost?.total ?? 0;
+    const assistantEnd = event.type === "message_end" && message?.role === "assistant";
+    // message_start/message_update carry evolving cumulative usage snapshots.
+    // Only the finalized assistant message is additive; summing streaming
+    // snapshots would double-count and falsely exhaust hard budgets.
+    if (assistantEnd && message?.usage) {
+      const input = finiteNonNegative(message.usage.input);
+      const output = finiteNonNegative(message.usage.output);
+      const cacheRead = finiteNonNegative(message.usage.cacheRead ?? 0);
+      const cacheWrite = finiteNonNegative(message.usage.cacheWrite ?? 0);
+      const cost = finiteNonNegative(message.usage.cost?.total);
+      observation.tokensMeasured = input !== null && output !== null && cacheRead !== null && cacheWrite !== null;
+      observation.costMeasured = cost !== null;
+      if (input !== null) usage.input += input;
+      if (output !== null) usage.output += output;
+      if (cacheRead !== null) usage.cacheRead += cacheRead;
+      if (cacheWrite !== null) usage.cacheWrite += cacheWrite;
+      if (cost !== null) usage.cost += cost;
     }
-    if (event.type === "message_end" && message?.role === "assistant") {
+    if (assistantEnd) {
       usage.turns += 1;
+      observation.assistantTurn = true;
+      observation.continues = message.stopReason === "toolUse" || message.stopReason === "tool_use";
+      metadata.responseModel = typeof message.responseModel === "string" && message.responseModel.length > 0
+        ? message.responseModel
+        : null;
+      if (Array.isArray(message.content)) {
+        metadata.toolCallCount += message.content.filter((part: unknown) => (
+          !!part && typeof part === "object" && (part as { type?: unknown }).type === "toolCall"
+        )).length;
+      }
+      if (!message?.usage) {
+        observation.tokensMeasured = false;
+        observation.costMeasured = false;
+      }
+    }
+    if (event.type === "message_end" && message?.role === "toolResult" && message.isError === true) {
+      metadata.toolErrorCount += 1;
     }
   } catch {
     // Preserve raw output even if the subprocess emits non-JSON lines.
   }
+  return observation;
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function validateTaskBudget(task: AgentTask): string | null {
+  const { maxTurns, maxTokens, timeoutMs, maxCost } = task.budget;
+  if (!Number.isSafeInteger(maxTurns) || maxTurns <= 0) return `Task ${task.id} has invalid maxTurns budget.`;
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) return `Task ${task.id} has invalid maxTokens budget.`;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return `Task ${task.id} has invalid timeoutMs budget.`;
+  if (maxCost !== undefined && (!Number.isFinite(maxCost) || maxCost <= 0)) {
+    return `Task ${task.id} has invalid maxCost budget.`;
+  }
+  return null;
+}
+
+function formatBudgetExhaustion(exhaustion: AgentBudgetExhaustion): string {
+  return `budget_exhausted:${exhaustion.limit} observed=${exhaustion.observed ?? "unavailable"} maximum=${exhaustion.maximum}`;
 }
 
 export function buildPiSubprocessArgs(task: AgentTask): string[] {
@@ -320,18 +668,26 @@ export function buildPiSubprocessArgs(task: AgentTask): string[] {
     "Do not claim success without evidence.",
   ].join("\n");
 
-  const args = ["--mode", "json", "-p", "--no-session"];
-  if (task.workspace === "read_only_snapshot") {
-    args.push("--tools", "read,grep,find,ls");
-  } else {
-    args.push("--tools", "read,grep,find,ls,edit,write,bash");
-  }
-  if (task.modelProfile) args.push("--model", task.modelProfile);
+  // Workers get no ambient extensions, built-in tools, skills, templates,
+  // context files, or session history. One explicit extension owns the entire
+  // child capability surface, so neither Bash nor an ambient user tool can be
+  // enabled by configuration discovery.
+  const args = [
+    "--mode", "json", "-p", "--no-session",
+    "--no-extensions", "--extension", resolveWorkerExtensionPath(),
+    "--no-builtin-tools", "--no-skills", "--no-prompt-templates", "--no-context-files",
+  ];
+  args.push("--tools", task.workspace === "isolated_worktree"
+    ? "read,grep,find,ls,edit,write"
+    : "read,grep,find,ls");
+  const route = requireModelRoute(task.modelProfile || DEFAULT_MODEL_PROFILE_BY_ROLE[task.role]);
+  args.push("--model", route.piSelection, "--thinking", route.reasoning.piThinkingLevel);
   args.push(prompt);
   return args;
 }
 
 function failedResult<T>(task: AgentTask<T>, stderr: string): AgentResult<T> {
+  const now = new Date().toISOString();
   return {
     taskId: task.id,
     role: task.role,
@@ -339,8 +695,100 @@ function failedResult<T>(task: AgentTask<T>, stderr: string): AgentResult<T> {
     outputText: "",
     exitCode: null,
     stderr,
+    responseModel: null,
+    toolCallCount: 0,
+    toolErrorCount: 0,
+    timing: { startedAt: now, firstTokenAt: null, endedAt: now, latencyMs: 0, ttftMs: null },
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
   };
+}
+
+export function resolvePiExecutable(repoRoot: string): string {
+  const local = path.join(path.resolve(repoRoot), "node_modules", ".bin", "pi");
+  return fs.existsSync(local) ? local : "pi";
+}
+
+export function resolveWorkerExtensionPath(): string {
+  return fileURLToPath(new URL("../worker-extension.js", import.meta.url));
+}
+
+export interface WorkerEnvironmentConfig {
+  repoRoot: string;
+  mode: WorkerMode;
+  allowedPaths: readonly string[];
+  modelProfile: string;
+  runtimeDir: string;
+}
+
+export function buildWorkerEnvironment(
+  source: NodeJS.ProcessEnv,
+  config?: WorkerEnvironmentConfig,
+): NodeJS.ProcessEnv {
+  const ambient = [
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "NO_COLOR",
+    "PI_OFFLINE",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+  ] as const;
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ambient) if (source[key] !== undefined) env[key] = source[key];
+
+  if (config) {
+    const route = requireModelRoute(config.modelProfile);
+    for (const key of route.credential.environment) {
+      if (source[key] !== undefined) env[key] = source[key];
+    }
+    env[WORKER_ENV.root] = fs.realpathSync(path.resolve(config.repoRoot));
+    env[WORKER_ENV.mode] = config.mode;
+    env[WORKER_ENV.allowedPaths] = encodeWorkerAllowedPaths(config.allowedPaths);
+    env[WORKER_ENV.modelProfile] = route.profileId;
+    env.PI_CODING_AGENT_DIR = fs.realpathSync(config.runtimeDir);
+    env.PI_CODING_AGENT_SESSION_DIR = fs.realpathSync(config.runtimeDir);
+  } else {
+    // Backward-compatible diagnostics helper: production pool launches always
+    // supply config and therefore receive only the selected route credential.
+    for (const key of ["ZAI_API_KEY", "Z_AI_API_KEY", "FIREWORKS_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY"] as const) {
+      if (source[key] !== undefined) env[key] = source[key];
+    }
+  }
+  // Disable Pi's install telemetry in disposable workers; model-comparison
+  // telemetry is recorded locally by this harness instead.
+  env.PI_TELEMETRY = "0";
+  return env;
+}
+
+function cleanupWorkerRuntimeDir(runtimeDir: string): void {
+  const parent = fs.realpathSync(os.tmpdir());
+  if (!fs.existsSync(runtimeDir)) return;
+  const resolved = fs.realpathSync(runtimeDir);
+  if (path.dirname(resolved) !== parent || !path.basename(resolved).startsWith("pi-ig-worker-runtime-")) {
+    throw new Error(`refusing to clean unowned worker runtime directory: ${runtimeDir}`);
+  }
+  fs.rmSync(resolved, { recursive: true, force: true });
+}
+
+function signalOwnedProcess(proc: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  const pid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null;
+  if (pid !== null) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch {
+      // Fake spawns and platforms without group signalling fall back to the
+      // exact ChildProcess handle; never use a name-wide pkill.
+    }
+  }
+  try { proc.kill(signal); } catch { /* already closed */ }
+}
+
+async function waitForSettled(waiters: Promise<void>[], timeoutMs: number): Promise<void> {
+  if (waiters.length === 0) return;
+  await Promise.race([
+    Promise.allSettled(waiters).then(() => undefined),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      timer.unref();
+    }),
+  ]);
 }
 
 export function pathsOverlap(left: string[], right: string[]): boolean {
@@ -374,7 +822,7 @@ export function createAgentTask(role: AgentRole, instructions: string, overrides
     permittedEffects: overrides.permittedEffects ?? [],
     allowedPaths: overrides.allowedPaths ?? [],
     workspace: overrides.workspace ?? "read_only_snapshot",
-    modelProfile: overrides.modelProfile ?? "",
+    modelProfile: overrides.modelProfile ?? DEFAULT_MODEL_PROFILE_BY_ROLE[role],
     dependsOn: overrides.dependsOn ?? [],
     budget: overrides.budget ?? { maxTurns: 4, maxTokens: 16000, timeoutMs: 300_000 },
   };

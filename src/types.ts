@@ -215,6 +215,16 @@ export interface SubagentTaskRecord {
   backend: string;
   /** Detection result, carried separately — never asserted as the executed backend. */
   detectedBackend: string;
+  /** Exact, allowlisted model-route profile resolved before ledger admission. */
+  routeId: string;
+  provider: string;
+  requestedModel: string;
+  familyId: string;
+  servingVariant: string;
+  reasoningEffort: string | null;
+  serviceTier: string | null;
+  /** Non-null only when orchestration selected this route as a fallback. */
+  fallbackReason: string | null;
   workspace: "read_only_snapshot" | "isolated_worktree";
   allowedPaths: string[];
   status: SubagentTaskStatus;
@@ -373,6 +383,8 @@ export interface IterativeGoalState {
   sanitizer: CyberSanitizationState;
   sandbox: CyberSandboxState;
   signing: CyberSigningState;
+  /** Security-critical verifier policy captured before the first model phase. */
+  trustedVerification: TrustedVerificationPolicyState;
   attestations: ActionAttestation[];
   unifyCasProfile: CyberUnifyCasProfile;
   lock: RunLock;
@@ -383,6 +395,12 @@ export interface IterativeGoalState {
   swarm: SwarmState;
   /** Campaign 2 sharder: pending typed plan + committed shard plans (§6.1–6.3). */
   shards: ShardState;
+}
+
+export interface TrustedVerificationPolicyState {
+  required: boolean;
+  checksHash: string | null;
+  pinnedAt: string;
 }
 
 // ── Durable task planning ───────────────────────────────────────────
@@ -478,6 +496,11 @@ export interface CyberSigningState {
 
 export interface ApprovalRequest {
   token: string;
+  /** Run/cycle/phase-attempt/cwd scope minted by the harness; optional only for old-state migration. */
+  runId?: string;
+  cycle?: number;
+  phaseAttemptId?: string;
+  cwd?: string;
   requestedAction: string;
   blastRadiusAssessment: string;
   justification: string;
@@ -490,6 +513,9 @@ export interface ApprovalRequest {
   expiresAt: string | null;
   status: "pending" | "approved" | "denied" | "expired";
   resolvedAt: string | null;
+  /** Single-use consumption marker. */
+  usedAt?: string | null;
+  usedForCommand?: string | null;
 }
 
 export interface ApprovalState {

@@ -61,6 +61,7 @@ import {
   type SubagentTaskStatus,
   type SubagentUsageCounters,
   type TaskPlanState,
+  type TrustedVerificationPolicyState,
   type ProjectInstructionsState,
   PHASE_ORDER,
 } from "./types.js";
@@ -79,6 +80,7 @@ import {
 } from "./domain/models.js";
 import type { PendingShardPlan, ShardClaimRecord, ShardMergeRecord, ShardPlan } from "./domain/shard.js";
 import { logDebug } from "./logging.js";
+import { validateApprovalForCommand } from "./domain/approval.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
 const DEFAULT_AWS_CLI_CONFIG = {
@@ -96,7 +98,12 @@ export interface StateManagerAPI {
   isActive(): boolean;
   isPaused(): boolean;
   getVersion(): number;
-  createRun(goal: string, goalCriterion: string, config?: Partial<IterativeGoalState["config"]>): IterativeGoalState;
+  createRun(
+    goal: string,
+    goalCriterion: string,
+    config?: Partial<IterativeGoalState["config"]>,
+    trustedVerification?: TrustedVerificationPolicyState,
+  ): IterativeGoalState;
   setCapabilities(snapshot: CapabilitySnapshot): void;
   setProjectInstructions(projectInstructions: ProjectInstructionsState): void;
   recordError(error: IterativeGoalError): void;
@@ -150,13 +157,21 @@ export interface StateManagerAPI {
   recordMergeProposed(merge: ShardMergeRecord): void;
   recordMergeVerified(
     shardId: string,
-    verdict: { runId: string; planId: string; cycle: number; gate: ShardMergeRecord["gate"]; verifiedAt?: string },
+    verdict: {
+      runId: string;
+      planId: string;
+      cycle: number;
+      integrationCommitSha: string;
+      gate: ShardMergeRecord["gate"];
+      verifiedAt?: string;
+    },
   ): void;
   updateDlpState(dlp: CyberDlpState): void;
   updateSanitizationState(sanitizer: CyberSanitizationState): void;
   recordAttestation(attestation: ActionAttestation): void;
   requestApproval(request: ApprovalRequest): void;
   resolveApproval(token: string, status: "approved" | "denied" | "expired"): ApprovalRequest | null;
+  consumeApproval(token: string, command: string, cwd: string): { ok: true; request: ApprovalRequest } | { ok: false; reason: string };
 
   // ── New: artifact path helpers ─────────────────────────────────
   getRunDir(): string;
@@ -184,6 +199,19 @@ function writeFileAtomic(filePath: string, content: string): void {
   fs.fsyncSync(fd);
   fs.closeSync(fd);
   fs.renameSync(tmpPath, filePath);
+}
+
+function writeSecretFileAtomic(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  const fd = fs.openSync(tmpPath, "wx", 0o600);
+  try {
+    fs.writeFileSync(fd, content, "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmpPath, filePath);
+  fs.chmodSync(filePath, 0o600);
 }
 
 // ── JSONL append (atomic via tmp→fsync→rename not practical; use append.) ──
@@ -353,6 +381,13 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       replayed.status = request.status === "approved" ? "running" : "policy_denied";
       replayed.lock.phaseStatus = request.status === "approved" ? "running" : "paused";
     },
+    approval_consumed(replayed, event) {
+      const request = replayed.approvals.history.find((item) => item.token === event.token);
+      if (request) {
+        request.usedAt = event.usedAt;
+        request.usedForCommand = event.command;
+      }
+    },
     capabilities_updated(replayed, event) {
       replayed.capabilities = event.capabilities;
     },
@@ -440,6 +475,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       merge.verifiedAt = event.timestamp;
       merge.error = null;
       if (event.gate) merge.gate = event.gate as ShardMergeRecord["gate"];
+      merge.integrationCommitSha = typeof event.integrationCommitSha === "string"
+        ? event.integrationCommitSha
+        : null;
     },
     project_instructions_updated(replayed, event) {
       replayed.projectInstructions = event.projectInstructions;
@@ -606,6 +644,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!raw.sandbox) raw.sandbox = defaultSandboxState();
     if (!raw.signing) raw.signing = createSigningState(raw.runId ?? "restored-run");
     if (!raw.signing.privateKeyPem) raw.signing.available = false;
+    if (!raw.trustedVerification) {
+      raw.trustedVerification = { required: false, checksHash: null, pinnedAt: new Date(0).toISOString() };
+    }
     if (!raw.attestations) raw.attestations = [];
     if (!raw.unifyCasProfile) raw.unifyCasProfile = { ...DEFAULT_UNIFY_CAS_PROFILE };
     if (!raw.swarm || typeof raw.swarm !== "object") raw.swarm = { backend: null, detectedBackend: null, tasks: [] };
@@ -618,6 +659,11 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     // C4 merge ledger backfill: runs ledgered before merge-back replay into
     // the new field as empty — no merge events exist to replay into it.
     if (!Array.isArray(raw.shards.merges)) raw.shards.merges = [];
+    for (const merge of raw.shards.merges) {
+      if (merge && typeof merge === "object" && !("integrationCommitSha" in merge)) {
+        merge.integrationCommitSha = null;
+      }
+    }
     raw.constraints = {
       ...(raw.constraints ?? {}),
       neverStopUntilEvaluatorGoalMet: true,
@@ -812,6 +858,45 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!fs.existsSync(attestationsPath)) fs.writeFileSync(attestationsPath, "");
     const taskPlanPath = path.join(runDir, "task-plan.jsonl");
     if (!fs.existsSync(taskPlanPath)) fs.writeFileSync(taskPlanPath, "");
+    hydrateOrPersistSigningKey();
+  }
+
+  /**
+   * The private run signer is intentionally excluded from session/state/event
+   * persistence, but a long-running goal must survive a supervisor restart.
+   * Keep it in one run-owned 0600 file and accept it only when it derives the
+   * public key already pinned in the hash-chained run state.
+   */
+  function hydrateOrPersistSigningKey(): void {
+    if (!state || !runDir) return;
+    const keyPath = path.join(runDir, ".signing-private.pem");
+    if (!fs.existsSync(keyPath)) {
+      if (!state.signing.available || !state.signing.privateKeyPem) return;
+      writeSecretFileAtomic(keyPath, state.signing.privateKeyPem);
+      return;
+    }
+
+    try {
+      const metadata = fs.lstatSync(keyPath);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o077) !== 0) {
+        throw new Error("run signing key ownership or mode is unsafe");
+      }
+      if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
+        throw new Error("run signing key is owned by another user");
+      }
+      if (metadata.size <= 0 || metadata.size > 16 * 1024) throw new Error("run signing key has an invalid size");
+      const privateKeyPem = fs.readFileSync(keyPath, "utf8");
+      const derivedPublicKey = crypto.createPublicKey(crypto.createPrivateKey(privateKeyPem))
+        .export({ type: "spki", format: "pem" })
+        .toString();
+      if (derivedPublicKey !== state.signing.runPublicKey) throw new Error("run signing key does not match the pinned public key");
+      state.signing.privateKeyPem = privateKeyPem;
+      state.signing.available = true;
+    } catch (error) {
+      state.signing.privateKeyPem = undefined;
+      state.signing.available = false;
+      logDebug("state", `run signing key unavailable after secure restore: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   function ensurePhaseDirs(cycle: number, phase: Phase): string {
@@ -978,7 +1063,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       return path.join(runDir, "cycles", String(cycle), phase, filename);
     },
 
-    createRun(goal: string, goalCriterion: string, config?: Partial<IterativeGoalState["config"]>): IterativeGoalState {
+    createRun(
+      goal: string,
+      goalCriterion: string,
+      config?: Partial<IterativeGoalState["config"]>,
+      trustedVerification?: TrustedVerificationPolicyState,
+    ): IterativeGoalState {
       const runId = `ig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       state = {
@@ -1058,6 +1148,11 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         sanitizer: defaultSanitizationState(),
         sandbox: defaultSandboxState(),
         signing: createSigningState(runId),
+        trustedVerification: trustedVerification ?? {
+          required: false,
+          checksHash: null,
+          pinnedAt: new Date().toISOString(),
+        },
         attestations: [],
         unifyCasProfile: { ...DEFAULT_UNIFY_CAS_PROFILE },
         lock: {
@@ -1421,7 +1516,14 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     recordMergeVerified(
       shardId: string,
-      verdict: { runId: string; planId: string; cycle: number; gate: ShardMergeRecord["gate"]; verifiedAt?: string },
+      verdict: {
+        runId: string;
+        planId: string;
+        cycle: number;
+        integrationCommitSha: string;
+        gate: ShardMergeRecord["gate"];
+        verifiedAt?: string;
+      },
     ): void {
       if (!state) return;
       if (verdict.runId !== state.runId) {
@@ -1444,6 +1546,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       merge.verifiedAt = verifiedAt;
       merge.error = null;
       merge.gate = verdict.gate;
+      merge.integrationCommitSha = verdict.integrationCommitSha;
       // Event type is exactly "merge_verified" — the C3 cascade monitor
       // heals failure episodes on it (C4 contract note).
       appendEvent({
@@ -1453,6 +1556,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         cycle: verdict.cycle,
         gate: verdict.gate,
         integrationBranch: merge.integrationBranch,
+        integrationCommitSha: verdict.integrationCommitSha,
         patchSha256: merge.patchSha256,
         timestamp: verifiedAt,
       });
@@ -1482,6 +1586,12 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     requestApproval(request: ApprovalRequest): void {
       if (!state) return;
+      if (request.runId !== state.runId
+        || request.cycle !== state.cycle
+        || !request.phaseAttemptId
+        || request.phaseAttemptId !== state.lock.activePhaseId) {
+        throw new Error("approval request scope must match the active run, cycle, and phase attempt");
+      }
       state.approvals.pending.push(request);
       state.status = "pending_approval";
       state.lock.phaseStatus = "paused";
@@ -1496,19 +1606,50 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       const idx = state.approvals.pending.findIndex((request) => request.token === token);
       if (idx < 0) return null;
       const [request] = state.approvals.pending.splice(idx, 1);
+      const now = new Date();
+      const effectiveStatus = status === "approved"
+        && (
+          !request.expiresAt
+          || !Number.isFinite(Date.parse(request.expiresAt))
+          || Date.parse(request.expiresAt) <= now.getTime()
+          || !request.phaseAttemptId
+          || request.phaseAttemptId !== state.lock.activePhaseId
+        )
+        ? "expired"
+        : status;
       const resolved: ApprovalRequest = {
         ...request,
-        status,
-        resolvedAt: new Date().toISOString(),
+        status: effectiveStatus,
+        resolvedAt: now.toISOString(),
       };
       state.approvals.history.push(resolved);
-      state.status = status === "approved" ? "running" : "policy_denied";
-      state.lock.phaseStatus = status === "approved" ? "running" : "paused";
+      state.status = effectiveStatus === "approved" ? "running" : "policy_denied";
+      state.lock.phaseStatus = effectiveStatus === "approved" ? "running" : "paused";
       persistLock();
       if (runDir) appendJsonLine(path.join(runDir, "approvals.jsonl"), { type: "approval_resolved", ...resolved });
       appendEvent({ type: "approval_resolved", request: resolved, timestamp: new Date().toISOString() });
       persistAllInternal();
       return resolved;
+    },
+
+    consumeApproval(token: string, command: string, cwd: string): { ok: true; request: ApprovalRequest } | { ok: false; reason: string } {
+      if (!state) return { ok: false, reason: "no active run" };
+      const request = state.approvals.history.find((item) => item.token === token);
+      const validation = validateApprovalForCommand(request, {
+        runId: state.runId,
+        cycle: state.cycle,
+        phaseAttemptId: state.lock.activePhaseId ?? "",
+        command,
+        cwd,
+      });
+      if (!validation.ok) return validation;
+      const usedAt = new Date().toISOString();
+      validation.request.usedAt = usedAt;
+      validation.request.usedForCommand = command;
+      appendEvent({ type: "approval_consumed", token, command, usedAt, timestamp: usedAt });
+      if (runDir) appendJsonLine(path.join(runDir, "approvals.jsonl"), { type: "approval_consumed", token, command, usedAt });
+      persistAllInternal();
+      return { ok: true, request: validation.request };
     },
 
     setCapabilities(snapshot: CapabilitySnapshot): void {

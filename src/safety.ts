@@ -83,8 +83,6 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*which\b/,
   /^\s*whereis\b/,
   /^\s*type\b/,
-  /^\s*env\b/,
-  /^\s*printenv\b/,
   /^\s*uname\b/,
   /^\s*whoami\b/,
   /^\s*id\b/,
@@ -96,18 +94,14 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*git\s+ls-/i,
   /^\s*npm\s+(list|ls|view|info|search|outdated|audit)/i,
   /^\s*yarn\s+(list|info|why|audit)/i,
-  /^\s*node\s+--version/i,
-  /^\s*python\s+--version/i,
-  /^\s*curl\s/i,
-  /^\s*wget\s+-O\s*-/i,
+  /^\s*node\s+--version\s*$/i,
+  /^\s*python3?\s+--version\s*$/i,
   /^\s*jq\b/,
   /^\s*sed\s+-n/i,
-  /^\s*awk\b/,
   /^\s*rg\b/,
   /^\s*fd\b/,
   /^\s*bat\b/,
   /^\s*eza\b/,
-  /^\s*npx\s/,
   /^\s*go\s+(version|env|tool)/i,
   /^\s*cargo\s+(version|check|clippy|tree|metadata)/i,
   /^\s*cd\s/,
@@ -142,6 +136,11 @@ export function isDestructive(command: string): boolean {
 
 export function isSafeReadOnly(command: string): boolean {
   return SAFE_PATTERNS.some((p) => p.test(command));
+}
+
+/** Anything outside the narrow direct-exec read allowlist needs a capability. */
+export function requiresOperatorApproval(command: string): boolean {
+  return isDestructive(command) || !isSafeReadOnly(command);
 }
 
 export function isGitFinalization(command: string): boolean {

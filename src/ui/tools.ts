@@ -3,8 +3,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import * as crypto from "node:crypto";
+import * as path from "node:path";
 import { createErrorRecord } from "../errors.js";
-import { findFirstHealthyFallback } from "../kernel/workflow-engine.js";
+import { findFirstHealthyFallback, loadConfiguredModel } from "../kernel/workflow-engine.js";
 import { type StateManagerAPI } from "../state.js";
 import { PlanSpecSchema, type PlanSpec, type PlanTask } from "../domain/plan.js";
 import { normalizeRepoPath, type PathScope } from "../domain/path-scope.js";
@@ -148,7 +149,7 @@ export function registerGoalCoreTools(
     ],
     parameters: PhaseResultParams,
 
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return recordPhaseResult(params as unknown as Record<string, unknown>, "goal_report_phase_result");
     },
   });
@@ -271,14 +272,29 @@ export function registerGoalCoreTools(
       exact_aws_actions: Type.Optional(Type.Array(Type.String())),
       data_access_scope: Type.Optional(Type.String()),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const state = stateManager.getState();
       if (!state) {
         return { content: [{ type: "text" as const, text: "No active run; approval request ignored." }], details: { rejected: true } };
       }
+      if (!state.lock.activePhaseId) {
+        return { content: [{ type: "text" as const, text: "No active phase attempt; approval request rejected." }], details: { rejected: true } };
+      }
       const token = `APPROVAL_${state.runId}_${state.cycle}_${crypto.randomBytes(4).toString("hex")}`;
+      const now = Date.now();
+      const maximumExpiry = now + 10 * 60_000;
+      const requestedExpiry = typeof params.expires_at === "string" ? Date.parse(params.expires_at) : NaN;
+      // The untrusted requester may shorten a token lifetime, never extend it.
+      const expiryMs = Number.isFinite(requestedExpiry)
+        ? Math.min(requestedExpiry, maximumExpiry)
+        : maximumExpiry;
+      const expiresAt = new Date(expiryMs).toISOString();
       const request = {
         token,
+        runId: state.runId,
+        cycle: state.cycle,
+        phaseAttemptId: state.lock.activePhaseId,
+        cwd: path.resolve(ctx.cwd),
         requestedAction: String(params.requested_action),
         blastRadiusAssessment: String(params.blast_radius_assessment),
         justification: String(params.justification),
@@ -288,9 +304,11 @@ export function registerGoalCoreTools(
         exactAwsActions: (params.exact_aws_actions as string[] | undefined) ?? [],
         dataAccessScope: typeof params.data_access_scope === "string" ? params.data_access_scope : null,
         requestedAt: new Date().toISOString(),
-        expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
+        expiresAt,
         status: "pending" as const,
         resolvedAt: null,
+        usedAt: null,
+        usedForCommand: null,
       };
       stateManager.requestApproval(request);
       return {
@@ -612,37 +630,61 @@ export function registerGoalCoreTools(
       }
 
       if (params.kind === "model_incompatible" && state && state.config.fallbackModels.length > 0) {
-        const fallback = findFirstHealthyFallback(state);
-        if (fallback) {
-          const model = ctx.modelRegistry.find(fallback.provider, fallback.model);
-          if (model) {
-            await pi.setModel(model);
+        const currentAttempt = state.phaseAttempts.at(-1);
+        const from = currentAttempt
+          ? { provider: currentAttempt.modelProvider, model: currentAttempt.modelModel }
+          : state.config.primaryModel;
+        const attempted: Array<{ provider: string; model: string }> = [from];
 
-            const currentAttempt = state.phaseAttempts.at(-1);
-            if (currentAttempt) {
-              currentAttempt.fallbackChain.push({
-                provider: fallback.provider, model: fallback.model, reason: "model_incompatible",
-              });
-            }
+        while (true) {
+          const fallback = findFirstHealthyFallback(state, attempted);
+          if (!fallback) break;
+          attempted.push(fallback);
+          const loaded = await loadConfiguredModel(ctx, pi, fallback.provider, fallback.model);
+          if (!loaded.loaded) continue;
 
-            stateManager.recordPhaseEvent({
-              runId: state.runId, cycle: state.cycle, phase: state.phase,
-              phaseAttemptId: currentAttempt?.phaseAttemptId ?? "",
-              attempt: currentAttempt?.attempt ?? 1,
-              kind: "model_fallback", timestamp: new Date().toISOString(),
-              details: {
-                from: `${state.config.primaryModel.provider}/${state.config.primaryModel.model}`,
-                to: `${fallback.provider}/${fallback.model}`, reason: "model_incompatible",
-              },
-            });
-
-            return {
-              content: [{ type: "text" as const,
-                text: `Switched to fallback: ${fallback.provider}/${fallback.model}. Retry the phase.` }],
-              details: {},
-            };
+          if (currentAttempt) {
+            currentAttempt.fallbackChain.push({ ...from, reason: "model_incompatible" });
+            currentAttempt.modelProvider = loaded.route.provider;
+            currentAttempt.modelModel = loaded.route.model;
           }
+
+          stateManager.recordPhaseEvent({
+            runId: state.runId, cycle: state.cycle, phase: state.phase,
+            phaseAttemptId: currentAttempt?.phaseAttemptId ?? "",
+            attempt: currentAttempt?.attempt ?? 1,
+            kind: "model_fallback", timestamp: new Date().toISOString(),
+            details: {
+              from: `${from.provider}/${from.model}`,
+              to: loaded.route.piSelection,
+              profileId: loaded.route.profileId,
+              reason: "model_incompatible",
+            },
+          });
+          stateManager.persistAll();
+
+          return {
+            content: [{ type: "text" as const,
+              text: `Switched to exact fallback: ${loaded.route.piSelection}. Retry the phase.` }],
+            details: { profileId: loaded.route.profileId },
+          };
         }
+
+        if (state.lock.activePhaseId) stateManager.releaseLock(state.runId, state.lock.activePhaseId);
+        state.lock.phaseStatus = "paused";
+        stateManager.recordError({
+          timestamp: new Date().toISOString(), phase: state.phase, cycle: state.cycle,
+          kind: "provider_tool_route_incompatible",
+          rawText: `No exact fallback model could be loaded for: ${params.what}`,
+          recoveryAction: "Repair provider configuration and run /goal-repair-capabilities.",
+          resolved: false,
+        });
+        stateManager.setStatus("provider_unavailable");
+        return {
+          content: [{ type: "text" as const,
+            text: "No configured exact fallback could be loaded. The run is suspended as provider_unavailable." }],
+          details: { rejected: true, status: "provider_unavailable" },
+        };
       }
 
       return {

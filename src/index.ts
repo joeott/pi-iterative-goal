@@ -58,6 +58,9 @@ import { logDebug } from "./logging.js";
 import { loadProjectInstructions } from "./project-instructions.js";
 import { registerHarnessUi } from "./harness-ui.js";
 import { registerZaiGlm52Provider, registerZaiGlm52ProviderWithPi } from "./zai.js";
+import { startManagedLogRetentionLoop } from "./log-retention.js";
+import { registerModelObservabilityCommands } from "./ui/model-commands.js";
+import { registerModelRuntimePolicy } from "./model-runtime-policy.js";
 
 export { extractTextFromParts, synthesizePhaseResultSafe } from "./kernel/output-synthesis.js";
 
@@ -125,6 +128,9 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   log("=== Extension initializing (v3 hardened) ===");
   registerZaiGlm52ProviderWithPi(pi);
   const stateManager = createStateManager(pi);
+  const stopRetentionLoop = startManagedLogRetentionLoop(process.cwd());
+  pi.on("session_shutdown", async () => stopRetentionLoop());
+  registerModelRuntimePolicy(pi, stateManager);
 
   // ── Register tools ───────────────────────────────────────────────
 
@@ -158,6 +164,8 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
   }, phaseIndicator);
 
   registerGovernanceCommands(pi, stateManager);
+
+  registerModelObservabilityCommands(pi, stateManager);
 
   registerDashboardCommands(pi, stateManager, phaseIndicator);
 
