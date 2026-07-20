@@ -7,6 +7,7 @@ import {
   EXPECTED_PROFILES,
   PROVIDERS,
   REPOSITORY_ROOT,
+  createModelProbeRequest,
   loadRoster,
 } from "./lib/model-runtime.mjs";
 
@@ -133,31 +134,7 @@ async function getCatalog(profile) {
 }
 
 async function runChatProbe(profile, kind) {
-  const requestBody = {
-    model: profile.model,
-    messages: [{ role: "user", content: promptFor(kind) }],
-    max_tokens: profile.capabilities.reasoning ? (kind === "tools" ? 256 : 1024) : (kind === "tools" ? 128 : 256),
-    temperature: 0,
-    stream: false,
-  };
-  applyReasoning(profile, requestBody);
-  if (kind === "structured") requestBody.response_format = { type: "json_object" };
-  if (kind === "tools") {
-    requestBody.tools = [{
-      type: "function",
-      function: {
-        name: "emit_probe",
-        description: "Return the fixed compatibility probe result",
-        parameters: {
-          type: "object",
-          properties: { ok: { type: "boolean", const: true } },
-          required: ["ok"],
-          additionalProperties: false,
-        },
-      },
-    }];
-    requestBody.tool_choice = "required";
-  }
+  const requestBody = createModelProbeRequest(profile, kind);
   const response = await requestJson(`${PROVIDERS[profile.provider].baseUrl}/chat/completions`, {
     method: "POST",
     headers: { ...authorizationHeaders(profile), "content-type": "application/json" },
@@ -189,6 +166,9 @@ async function runChatProbe(profile, kind) {
     responseModel,
     expectedResponseModel,
     exactModelMatch: modelMatches,
+    providerFallbackDisabled: profile.provider === "openrouter"
+      ? requestBody.provider?.allow_fallbacks === false
+      : null,
     behaviorMatch: behaviorMatches,
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
     usage: {
@@ -199,19 +179,6 @@ async function runChatProbe(profile, kind) {
     ...(!modelMatches ? { error: "provider response model did not exactly match requested model" } : {}),
     ...(modelMatches && !behaviorMatches ? { error: `${kind} behavior contract was not satisfied` } : {}),
   };
-}
-
-function promptFor(kind) {
-  if (kind === "completion") return "Reply with exactly OK and nothing else.";
-  if (kind === "structured") return "Return only a JSON object with one property: {\"ok\":true}.";
-  return "Call emit_probe exactly once with ok=true. Do not answer in text.";
-}
-
-function applyReasoning(profile, body) {
-  const effort = profile.reasoning.providerEffort;
-  if (!effort) return;
-  if (profile.provider === "openrouter") body.reasoning = { effort };
-  else body.reasoning_effort = effort;
 }
 
 function authorizationHeaders(profile) {

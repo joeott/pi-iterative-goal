@@ -8,12 +8,14 @@ import {
   ALLOWED_CREDENTIALS,
   EXPECTED_PROFILES,
   REPOSITORY_ROOT,
+  createModelProbeRequest,
   createOpenCodeConfig,
   createPiFiles,
   equalJson,
   loadRoster,
   materializeRuntime,
 } from "./lib/model-runtime.mjs";
+import { classifyMatrixOutcome } from "./lib/live-worker-matrix.mjs";
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-goal-runtime-test-"));
 try {
@@ -24,6 +26,33 @@ try {
   const expectedSelections = roster.profiles.map((profile) => `${profile.provider}/${profile.model}`);
   assert.equal(roster.profiles.length, 9);
   assert.deepEqual(roster.profiles.map((profile) => profile.id), Object.keys(EXPECTED_PROFILES));
+  const oneSampleComparisons = ["route-a", "route-b"].map((routeId) => ({
+    routeId,
+    sufficientData: false,
+    comparisonRouteCount: 2,
+  }));
+  assert.deepEqual(classifyMatrixOutcome({
+    interrupted: false,
+    allSuccessful: true,
+    fixtureIdentityValid: true,
+    comparisons: oneSampleComparisons,
+    expectedRouteCount: 2,
+  }), {
+    status: "execution_passed_comparison_insufficient",
+    executionStatus: "passed",
+    comparisonStatus: "insufficient_data",
+  });
+  assert.deepEqual(classifyMatrixOutcome({
+    interrupted: false,
+    allSuccessful: true,
+    fixtureIdentityValid: true,
+    comparisons: oneSampleComparisons.map((item) => ({ ...item, sufficientData: true })),
+    expectedRouteCount: 2,
+  }), {
+    status: "passed",
+    executionStatus: "passed",
+    comparisonStatus: "sufficient",
+  });
 
   const piFiles = createPiFiles(roster, piDir);
   assert.deepEqual(piFiles["settings.json"].enabledModels, expectedSelections);
@@ -52,10 +81,26 @@ try {
     expectedOpenCode.provider.fireworks.models["accounts/fireworks/models/glm-5p2"].options.reasoningEffort,
     "max",
   );
-  assert.equal(
-    expectedOpenCode.provider.openrouter.models["moonshotai/kimi-k3"].options.provider.allow_fallbacks,
-    false,
-  );
+  const openRouterProfiles = roster.profiles.filter((profile) => profile.provider === "openrouter");
+  assert.equal(openRouterProfiles.length, 3);
+  for (const profile of openRouterProfiles) {
+    assert.equal(
+      expectedOpenCode.provider.openrouter.models[profile.model].options.provider.allow_fallbacks,
+      false,
+      `${profile.id} disables OpenRouter provider fallback in OpenCode`,
+    );
+    for (const kind of ["completion", "structured", "tools"]) {
+      const request = createModelProbeRequest(profile, kind);
+      assert.deepEqual(
+        request.provider,
+        { allow_fallbacks: false },
+        `${profile.id} ${kind} raw probe disables OpenRouter provider fallback`,
+      );
+    }
+  }
+  for (const profile of roster.profiles.filter((profile) => profile.provider !== "openrouter")) {
+    assert.equal(createModelProbeRequest(profile, "completion").provider, undefined);
+  }
   const openCodeCredentialRefs = Object.values(expectedOpenCode.provider).map((provider) => provider.options.apiKey);
   assert.deepEqual(
     openCodeCredentialRefs.sort(),

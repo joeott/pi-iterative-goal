@@ -1497,7 +1497,7 @@ await check("shard-merge-back-gate", "C4 merge-back: 2-shard fan-out merges thro
     iterativeGoal: {
       mergeBack: { enabled: true, testCommand: "npm test", testTimeoutMs: 120_000 },
       judge: {
-        model: "openrouter/anthropic/claude-sonnet-4.6",
+        model: "openrouter/anthropic/claude-sonnet-5",
         rubric: ["Goal criterion verifiably satisfied", "No shard outside its write scope", "Repository test suite green on the merged tree"],
       },
     },
@@ -1789,25 +1789,25 @@ await check("shard-merge-back-gate", "C4 merge-back: 2-shard fan-out merges thro
   const judgeConfig = loadJudgeConfig(repo);
   assert.deepEqual(judgeConfig.rubric, ["Goal criterion verifiably satisfied", "No shard outside its write scope", "Repository test suite green on the merged tree"], "rubric-based grading is configured");
   assert.equal(judgeConfig.customRubric, true);
-  assert.equal(judgeConfig.model.model, "anthropic/claude-sonnet-4.6");
+  assert.equal(judgeConfig.model.model, "anthropic/claude-sonnet-5");
   const independence = checkJudgeIndependence(stateManager.getState(), judgeConfig);
   assert.equal(independence.independent, true, "validate-phase judge model differs from the implement-phase actor model");
   assert.equal(independence.rubricConfigured, true);
   assert.equal(independence.violations.length, 0);
   // C4-ADV-007: the separate-fields form keeps slash-containing model ids
-  // verbatim — {provider:'openrouter', model:'z-ai/glm-5.2'} must parse as
-  // openrouter/z-ai/glm-5.2, not provider 'z-ai'.
+  // verbatim — the exact slash-containing Fireworks route must remain under
+  // provider "fireworks", not be re-parsed as provider "accounts".
   const separateDir = fs.realpathSync(makeTempRepo("pi-ig-c4-judge-"));
   fs.mkdirSync(path.join(separateDir, ".pi"), { recursive: true });
   fs.writeFileSync(path.join(separateDir, ".pi", "settings.json"), JSON.stringify({
-    iterativeGoal: { judge: { provider: "openrouter", model: "z-ai/glm-5.2" } },
+    iterativeGoal: { judge: { provider: "fireworks", model: "accounts/fireworks/models/glm-5p2" } },
   }, null, 2));
   const separateJudge = loadJudgeConfig(separateDir);
-  assert.deepEqual(separateJudge.model, { provider: "openrouter", model: "z-ai/glm-5.2" }, "explicit provider field wins; model id verbatim (C4-ADV-007)");
-  // C4-ADV-008: canonical identity — openrouter/z-ai/glm-5.2 and
-  // zai/glm-5.2 are the SAME weights; the aliased pair must FAIL the rule.
+  assert.deepEqual(separateJudge.model, { provider: "fireworks", model: "accounts/fireworks/models/glm-5p2" }, "explicit provider field wins; model id verbatim (C4-ADV-007)");
+  // C4-ADV-008: canonical identity — the exact Fireworks GLM 5.2 route and
+  // exact Z.ai GLM 5.2 route serve the SAME family; the pair must FAIL.
   const aliased = checkJudgeIndependence(stateManager.getState(), { model: separateJudge.model, rubric: ["x"], customRubric: true });
-  assert.equal(aliased.independent, false, "provider-prefix alias of the actor model is not independent (C4-ADV-008)");
+  assert.equal(aliased.independent, false, "cross-provider route for the actor model family is not independent (C4-ADV-008)");
   assert(aliased.violations.some((violation) => violation.includes("canonically identical")));
   // The pre-C4 default FAILS the rule honestly: judge falls back to the
   // primary model (judge == actor) and the violation is surfaced, not hidden.

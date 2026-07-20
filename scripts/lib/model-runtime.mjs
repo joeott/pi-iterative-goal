@@ -104,6 +104,52 @@ function maxOutputTokens(profile) {
   return Math.min(32768, Math.max(4096, Math.floor(profile.capabilities.contextWindow / 4)));
 }
 
+export function createModelProbeRequest(profile, kind) {
+  if (!["completion", "structured", "tools"].includes(kind)) {
+    throw new Error(`unsupported model probe kind: ${String(kind)}`);
+  }
+  const body = {
+    model: profile.model,
+    messages: [{ role: "user", content: probePrompt(kind) }],
+    max_tokens: profile.capabilities.reasoning ? (kind === "tools" ? 256 : 1024) : (kind === "tools" ? 128 : 256),
+    temperature: 0,
+    stream: false,
+    // OpenRouter's model slug alone does not disable provider substitution.
+    // Every raw probe carries the same explicit no-fallback contract as the
+    // Pi coordinator and worker request hooks.
+    ...(profile.provider === "openrouter" ? { provider: { allow_fallbacks: false } } : {}),
+  };
+  const effort = profile.reasoning.providerEffort;
+  if (effort) {
+    if (profile.provider === "openrouter") body.reasoning = { effort };
+    else body.reasoning_effort = effort;
+  }
+  if (kind === "structured") body.response_format = { type: "json_object" };
+  if (kind === "tools") {
+    body.tools = [{
+      type: "function",
+      function: {
+        name: "emit_probe",
+        description: "Return the fixed compatibility probe result",
+        parameters: {
+          type: "object",
+          properties: { ok: { type: "boolean", const: true } },
+          required: ["ok"],
+          additionalProperties: false,
+        },
+      },
+    }];
+    body.tool_choice = "required";
+  }
+  return body;
+}
+
+function probePrompt(kind) {
+  if (kind === "completion") return "Reply with exactly OK and nothing else.";
+  if (kind === "structured") return "Return only a JSON object with one property: {\"ok\":true}.";
+  return "Call emit_probe exactly once with ok=true. Do not answer in text.";
+}
+
 function piThinkingLevelMap(profile) {
   if (!profile.capabilities.reasoning) return undefined;
   const supported = profile.reasoning.piThinkingLevel;

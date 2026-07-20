@@ -384,6 +384,40 @@ export function hasVerifiedModelPricing(
       .every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
 }
 
+export type ExactModelResponseIdentityError =
+  | "response_runtime_identity_missing"
+  | "response_runtime_identity_mismatch"
+  | "response_model_identity_missing"
+  | "response_model_identity_mismatch";
+
+/** The sole allowed upstream identity mapping is the fixed Fireworks fast backing model. */
+export function responseModelMatchesRoute(
+  route: Pick<ResolvedModelRoute, "model" | "profileId">,
+  responseModel: unknown,
+): responseModel is string {
+  if (typeof responseModel !== "string" || responseModel.length === 0) return false;
+  if (responseModel === route.model) return true;
+  return route.profileId === "fireworks_glm_5_2_fast"
+    && responseModel === "accounts/fireworks/models/glm-5p2";
+}
+
+/** Validate both Pi's public route identity and the raw upstream response model. */
+export function exactModelResponseIdentityError(
+  route: Pick<ResolvedModelRoute, "provider" | "model" | "profileId">,
+  response: { provider?: unknown; model?: unknown; responseModel?: unknown },
+): ExactModelResponseIdentityError | null {
+  if (typeof response.provider !== "string" || typeof response.model !== "string") {
+    return "response_runtime_identity_missing";
+  }
+  if (response.provider !== route.provider || response.model !== route.model) {
+    return "response_runtime_identity_mismatch";
+  }
+  if (response.responseModel === undefined) return "response_model_identity_missing";
+  return responseModelMatchesRoute(route, response.responseModel)
+    ? null
+    : "response_model_identity_mismatch";
+}
+
 /** Return the immutable, fixed-order fallback chain for a supported route. */
 export function getRouteProfiles(routeName: ModelRouteName): readonly ResolvedModelRoute[] {
   if (!ROUTE_NAMES.includes(routeName)) throw new Error(`Unknown model route: ${String(routeName)}`);

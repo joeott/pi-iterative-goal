@@ -13,9 +13,11 @@ export {
   MODEL_PROFILE_ENDPOINTS,
   MODEL_ROSTER,
   computeModelRosterHash,
+  exactModelResponseIdentityError,
   getRouteProfiles,
   loadModelRoster,
   requireModelRoute,
+  responseModelMatchesRoute,
   resolveModelRoute,
   resolveProfileId,
 } from "./model-roster.js";
@@ -26,6 +28,7 @@ export type {
   ModelProfileId,
   ModelRosterFile,
   ModelRouteName,
+  ExactModelResponseIdentityError,
   PiThinkingLevel,
   ResolvedModelRoute,
 } from "./model-roster.js";

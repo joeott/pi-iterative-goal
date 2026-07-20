@@ -28,6 +28,7 @@ import {
 import {
   MODEL_ROSTER,
   requireModelRoute,
+  responseModelMatchesRoute,
   resolveModelRoute,
   type ModelProfileId,
   type ResolvedModelRoute,
@@ -470,10 +471,7 @@ export function exactWorkerRequestPayload(payload: unknown, route: ResolvedModel
 }
 
 export function workerResponseMatchesRoute(route: ResolvedModelRoute, responseModel: unknown): boolean {
-  if (typeof responseModel !== "string" || responseModel.length === 0) return false;
-  if (responseModel === route.model) return true;
-  return route.profileId === "fireworks_glm_5_2_fast"
-    && responseModel === "accounts/fireworks/models/glm-5p2";
+  return responseModelMatchesRoute(route, responseModel);
 }
 
 export function workerMessageIdentityError(

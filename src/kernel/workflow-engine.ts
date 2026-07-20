@@ -13,7 +13,11 @@ import type {
   PhaseAttempt,
 } from "../types.js";
 import { logDebug } from "../logging.js";
-import { resolveModelRoute, type ResolvedModelRoute } from "../domain/models.js";
+import {
+  exactModelResponseIdentityError,
+  resolveModelRoute,
+  type ResolvedModelRoute,
+} from "../domain/models.js";
 
 const MODEL_COOLDOWN_MS = 300_000;
 
@@ -63,10 +67,12 @@ export async function checkModelHealth(
     if (!auth.ok || !auth.apiKey) {
       return unavailableHealth(exactRoute.provider, exactRoute.model, "Auth failed or no API key");
     }
-    await complete(model, {
+    const response = await complete(model, {
       messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "Say OK." }], timestamp: Date.now() }],
       systemPrompt: "",
     }, { apiKey: auth.apiKey, headers: auth.headers, maxTokens: 1, signal: AbortSignal.timeout(15_000) });
+    const identityError = exactModelResponseIdentityError(exactRoute, response);
+    if (identityError) throw new Error(`Model health response identity failed closed: ${identityError}`);
     return {
       model: exactRoute.model,
       provider: exactRoute.provider,

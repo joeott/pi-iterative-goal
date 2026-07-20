@@ -15,6 +15,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyMatrixOutcome } from "./lib/live-worker-matrix.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DEFAULT_PROFILES = Object.freeze([
@@ -269,6 +270,8 @@ if (options?.help) {
       results: [],
       comparisonReport: null,
       comparisons: [],
+      executionStatus: options.live ? "running" : "not_run",
+      comparisonStatus: "not_established",
     };
 
     if (options.live) {
@@ -277,6 +280,7 @@ if (options?.help) {
         .map((route) => route.credential.primaryEnv);
       if (missingCredentials.length > 0) {
         receipt.status = "preflight_failed";
+        receipt.executionStatus = "failed";
         receipt.errorCode = "selected_provider_credential_missing";
         receipt.missingCredentialVariables = missingCredentials;
         process.exitCode = 2;
@@ -340,11 +344,16 @@ if (options?.help) {
 
         const allSuccessful = receipt.results.length === routes.length * options.samples
           && receipt.results.every((result) => result.ok && result.toolCallCount === 0);
-        receipt.status = interrupted
-          ? "interrupted"
-          : allSuccessful && fixtureIdentityValid
-            ? "passed"
-            : "completed_with_failures";
+        const outcomeStatus = classifyMatrixOutcome({
+          interrupted,
+          allSuccessful,
+          fixtureIdentityValid,
+          comparisons: receipt.comparisons,
+          expectedRouteCount: routes.length,
+        });
+        receipt.status = outcomeStatus.status;
+        receipt.executionStatus = outcomeStatus.executionStatus;
+        receipt.comparisonStatus = outcomeStatus.comparisonStatus;
         if (!allSuccessful || !fixtureIdentityValid) process.exitCode = interrupted ? 130 : 1;
       }
     }
@@ -362,6 +371,8 @@ if (options?.help) {
       results: [],
     };
     receipt.status = "driver_failed";
+    receipt.executionStatus = "failed";
+    receipt.comparisonStatus = "not_established";
     receipt.errorCode = errorCode;
     process.exitCode = 1;
   } finally {
@@ -370,6 +381,8 @@ if (options?.help) {
     } catch {
       if (receipt) {
         receipt.status = "shutdown_failed";
+        receipt.executionStatus = "failed";
+        receipt.comparisonStatus = "not_established";
         receipt.errorCode = "worker_pool_shutdown_failed";
       }
       process.exitCode = 1;
@@ -390,6 +403,8 @@ if (options?.help) {
       runId,
       mode: options.live ? "live" : "dry_run",
       status: receipt?.status ?? "driver_failed",
+      executionStatus: receipt?.executionStatus ?? "failed",
+      comparisonStatus: receipt?.comparisonStatus ?? "not_established",
       executedCalls: receipt?.executedCalls ?? 0,
       pricingStatus: receipt?.pricingStatus ?? "pricing_unknown",
       usdCost: null,

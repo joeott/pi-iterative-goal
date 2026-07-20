@@ -13,6 +13,7 @@ import {
   MODEL_ROSTER,
   canonicalModelKey,
   computeModelRosterHash,
+  exactModelResponseIdentityError,
   filterAllowedModels,
   getRouteProfiles,
   isAllowedModel,
@@ -21,6 +22,7 @@ import {
   requireModelRoute,
   resolveModelRoute,
   resolveProfileId,
+  responseModelMatchesRoute,
 } from "../dist/domain/models.js";
 
 eq(MODEL_PROFILE_IDS.length, 9);
@@ -43,6 +45,26 @@ for (const profile of MODEL_ROSTER.profiles) {
   eq(route.catalogDate, MODEL_ROSTER.catalogDate);
   eq(route.catalogHash, MODEL_ROSTER.catalogHash);
   ok(Object.isFrozen(route));
+  eq(responseModelMatchesRoute(route, route.model), true);
+  eq(exactModelResponseIdentityError(route, {
+    provider: route.provider,
+    model: route.model,
+    responseModel: route.model,
+  }), null);
+  eq(exactModelResponseIdentityError(route, {
+    provider: route.provider,
+    model: route.model,
+  }), "response_model_identity_missing");
+  eq(exactModelResponseIdentityError(route, {
+    provider: route.provider,
+    model: route.model,
+    responseModel: "unlisted/substitute",
+  }), "response_model_identity_mismatch");
+  eq(exactModelResponseIdentityError(route, {
+    provider: "unlisted",
+    model: route.model,
+    responseModel: route.model,
+  }), "response_runtime_identity_mismatch");
 
   eq(profile.pricing.asOf, MODEL_ROSTER.catalogDate);
   eq(profile.pricing.unit, "usd_per_million_tokens");
@@ -78,6 +100,9 @@ eq(fireworksMax.reasoning.piThinkingLevel, "xhigh");
 eq(fireworksMax.reasoning.providerEffort, "max");
 eq(fireworksFast.serving.variant, "fast_router");
 eq(fireworksFast.piSelection, "fireworks/accounts/fireworks/routers/glm-5p2-fast");
+eq(responseModelMatchesRoute(fireworksFast, "accounts/fireworks/models/glm-5p2"), true);
+eq(responseModelMatchesRoute(fireworksMax, "accounts/fireworks/models/glm-5p2"), true);
+eq(responseModelMatchesRoute(zai, "accounts/fireworks/models/glm-5p2"), false);
 eq(requireModelRoute("openrouter_kimi_k3").piSelection, "openrouter/moonshotai/kimi-k3");
 eq(requireModelRoute("openrouter_claude_sonnet_5").piSelection, "openrouter/anthropic/claude-sonnet-5");
 eq(requireModelRoute("openrouter_claude_fable_5").piSelection, "openrouter/anthropic/claude-fable-5");

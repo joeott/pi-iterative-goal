@@ -17,7 +17,13 @@ import type {
 } from "./types.js";
 import { EvaluatorPromptSchema } from "./types.js";
 import { parseWithSchema } from "./domain/validate.js";
-import { canonicalModelKey, modelKey, normalizeConfiguredModel } from "./domain/models.js";
+import {
+  canonicalModelKey,
+  exactModelResponseIdentityError,
+  modelKey,
+  normalizeConfiguredModel,
+  resolveModelRoute,
+} from "./domain/models.js";
 import { readIterativeGoalSettings } from "./domain/project-settings.js";
 import { type StateManagerAPI } from "./state.js";
 import * as fs from "node:fs";
@@ -135,8 +141,9 @@ export function loadJudgeConfig(cwd: string): JudgeConfig {
   const rawProvider = typeof config.provider === "string" ? config.provider.trim() : "";
   // C4-ADV-007: an explicit provider field WINS and the model id is kept
   // verbatim even when it contains '/' ({provider:'openrouter',
-  // model:'z-ai/glm-5.2'} is openrouter/z-ai/glm-5.2 — splitting here would
-  // silently re-parse it as provider 'z-ai'). The "provider/model" shorthand
+  // model:'anthropic/claude-fable-5'} is the exact roster route — splitting
+  // here would silently re-parse it as provider 'anthropic'). The
+  // "provider/model" shorthand
   // splits only when no provider field is set.
   if (rawProvider && rawModel) {
     model = { provider: rawProvider, model: rawModel };
@@ -439,6 +446,12 @@ export async function runExternalEvaluator(
   // Find the validate-phase judge model (§7.3 independence: overridable via
   // iterativeGoal.judge so the judge is not the implement-phase actor).
   const judgeModel = resolveJudgeModel(state, judgeConfig);
+  const judgeRoute = resolveModelRoute(judgeModel);
+  if (!judgeRoute) {
+    log("Evaluator route is not in the exact roster, using fallback");
+    updateEvaluatorHeartbeat(stateManager, state, "error", `Unlisted evaluator route: ${judgeModel.provider}/${judgeModel.model}`);
+    return fallbackVerdict(`Unlisted evaluator route: ${judgeModel.provider}/${judgeModel.model}`);
+  }
   const model = ctx.modelRegistry.find(
     judgeModel.provider,
     judgeModel.model,
@@ -689,6 +702,11 @@ export async function runExternalEvaluator(
         signal: ctx.signal,
       },
     );
+
+    const identityError = exactModelResponseIdentityError(judgeRoute, response);
+    if (identityError) {
+      throw new Error(`Evaluator response identity failed closed: ${identityError}`);
+    }
 
     const text = response.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
