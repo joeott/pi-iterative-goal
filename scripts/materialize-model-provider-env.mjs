@@ -49,6 +49,7 @@ const expectedProjectAwsAccount = argValue("--expected-project-aws-account")
 const externalSourcesEnabled = process.env.PI_PROVIDER_ENV_DISABLE_DEFAULT_SOURCES !== "1";
 const sources = {
   harnessEnv: path.join(ROOT, ".env"),
+  openCodeAuth: path.join(os.homedir(), ".local", "share", "opencode", "auth.json"),
   piModels: "/Users/joe/.pi/agent/models.json",
   piAuth: "/Users/joe/.pi/agent/auth.json",
   projectsEnv: "/Users/joe/Projects/.env",
@@ -58,7 +59,14 @@ const sources = {
 
 const values = {};
 const sourceHits = [];
+const sourceRejections = [];
 
+if (externalSourcesEnabled) {
+  // The machine-wide OpenCode policy has a live-authenticated, exact Kimi K3
+  // OpenRouter credential. Prefer that authority over stale project/Pi copies;
+  // all later sources remain fallback-only through setValue().
+  loadOpenCodeAuth();
+}
 loadEnvFile(sources.harnessEnv, PROVIDER_KEYS);
 if (externalSourcesEnabled) {
   loadPiModels();
@@ -93,6 +101,8 @@ console.log(`  dry_run: ${String(dryRun)}`);
 console.log("  secrets_printed: false");
 console.log(`  sources_with_mapped_keys: ${sourceHits.length}`);
 for (const source of sourceHits) console.log(`    - ${source}`);
+console.log(`  rejected_sources: ${sourceRejections.length}`);
+for (const rejection of sourceRejections) console.log(`    - ${rejection.source}: ${rejection.reason}`);
 console.log(`  keys: ${orderedKeys.join(", ") || "none"}`);
 console.log("  aws_accounts:");
 console.log(`    control: profile=${controlAwsProfile} expected_account=${expectedControlAwsAccount} role=payments/provider-billing`);
@@ -178,6 +188,37 @@ function loadPiAuth() {
   if (!fs.existsSync(sources.piAuth)) return;
   const auth = JSON.parse(fs.readFileSync(sources.piAuth, "utf8"));
   if (auth.openrouter?.key) setValue("OPENROUTER_API_KEY", auth.openrouter.key, sources.piAuth);
+}
+
+function loadOpenCodeAuth() {
+  if (!fs.existsSync(sources.openCodeAuth)) return;
+  let stat;
+  try {
+    stat = fs.lstatSync(sources.openCodeAuth);
+  } catch {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "could not inspect auth store" });
+    return;
+  }
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store is not a regular non-symlink file" });
+    return;
+  }
+  if (currentUid !== null && stat.uid !== currentUid) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store owner does not match current uid" });
+    return;
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store permissions expose group/other access" });
+    return;
+  }
+  try {
+    const auth = JSON.parse(fs.readFileSync(sources.openCodeAuth, "utf8"));
+    const key = auth?.["openrouter-kimi"]?.key;
+    if (typeof key === "string") setValue("OPENROUTER_API_KEY", key, sources.openCodeAuth);
+  } catch {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store is not valid JSON" });
+  }
 }
 
 function loadEnvFile(filePath, allowedKeys) {
