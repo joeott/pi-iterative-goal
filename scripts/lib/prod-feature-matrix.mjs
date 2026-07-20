@@ -80,6 +80,36 @@ export function featureProfileBudget(profile) {
 }
 
 /**
+ * Keep the live feature-boundary prompt surface derived from the same cumulative
+ * depth contract as the kernel settings. In particular, OFF must not invite
+ * feature stimulus and C1 must not ask for the C2 shard-plan tool.
+ */
+export function buildFeatureBoundaryPromptContract(profile) {
+  const depth = featureProfileDepth(profile);
+  return Object.freeze({
+    toolAllowlist: Object.freeze([
+      "goal_repo_context",
+      "goal_report_phase_result",
+      "goal_update_task_plan",
+      ...(depth >= 1 ? ["goal_subagent"] : []),
+      ...(depth >= 2 ? ["goal_post_shards"] : []),
+    ]),
+    planActionIds: Object.freeze([
+      ...(depth >= 1 ? ["parallel_review"] : []),
+      ...(depth >= 3 ? ["parallel_calibration"] : []),
+      "update_task_plan",
+      ...(depth >= 2 ? ["post_shards"] : []),
+      "report_phase_result",
+    ]),
+    criterion: depth === 0
+      ? "The runtime reaches the implement boundary with README.md unchanged at the seed commit and zero C1-C4 task, worker invocation, shard plan, claim, patch artifact, merge, feature event, or tracked-file effect."
+      : depth >= 4
+        ? "feature-a.txt contains exactly the line 'alpha', feature-b.txt contains exactly the line 'beta', and both grep -qx checks exit 0."
+        : "hello.txt exists containing exactly the line 'ok' and the command grep -qx ok hello.txt exits 0.",
+  });
+}
+
+/**
  * C1-C4 form a strict dependency chain. These are the only valid production
  * combinations: each profile enables one more campaign while retaining all
  * prerequisites, and every later feature remains explicitly disabled.

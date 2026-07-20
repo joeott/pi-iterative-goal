@@ -13,6 +13,7 @@ import {
   FEATURE_MATRIX_REVIEW_TASK_IDS,
   FEATURE_MATRIX_SCHEDULER_TASK_IDS,
   PRODUCTION_FEATURE_PROFILES,
+  buildFeatureBoundaryPromptContract,
   buildFeatureProfileSettings,
   evaluateFeatureProfileEvidence,
   featureProfileBudget,
@@ -314,6 +315,7 @@ function validEvidenceInput(depth) {
 }
 
 for (const [depth, profile] of PRODUCTION_FEATURE_PROFILES.entries()) {
+  const promptContract = buildFeatureBoundaryPromptContract(profile);
   const settings = buildFeatureProfileSettings(profile);
   assert.deepEqual([
     settings.swarm.enabled,
@@ -322,6 +324,14 @@ for (const [depth, profile] of PRODUCTION_FEATURE_PROFILES.entries()) {
     settings.mergeBack.enabled,
   ], [1, 2, 3, 4].map((campaign) => depth >= campaign));
   assert.equal(settings.scheduler.workerModelProfile, "zai_glm_5_2");
+  assert.equal(promptContract.toolAllowlist.includes("goal_subagent"), depth >= 1,
+    `${profile} subagent prompt/tool availability must match C1`);
+  assert.equal(promptContract.toolAllowlist.includes("goal_post_shards"), depth >= 2,
+    `${profile} shard prompt/tool availability must match C2`);
+  assert.equal(promptContract.planActionIds.includes("parallel_review"), depth >= 1,
+    `${profile} review stimulus must match C1`);
+  assert.equal(promptContract.planActionIds.includes("post_shards"), depth >= 2,
+    `${profile} shard stimulus must match C2`);
   const budget = featureProfileBudget(profile);
   assert.deepEqual(budget, depth === 4
     ? { maxMinutes: 20, maxModelResponses: 60, maxTokens: 500_000 }
@@ -330,6 +340,20 @@ for (const [depth, profile] of PRODUCTION_FEATURE_PROFILES.entries()) {
   const evidence = evaluateFeatureProfileEvidence(profile, validEvidenceInput(depth));
   assert.equal(evidence.status, "PASS", `${profile}: ${evidence.failedCheckIds.join(", ")}`);
 }
+
+const offPromptContract = buildFeatureBoundaryPromptContract("off");
+assert.deepEqual(offPromptContract.planActionIds, ["update_task_plan", "report_phase_result"],
+  "OFF prompt contract must not stimulate any C1-C4 feature action");
+assert.doesNotMatch(offPromptContract.criterion, /parallel review|sequential worker|typed plan proposal/i,
+  "OFF criterion must not request the feature evidence that zero-effect mode forbids");
+assert.match(offPromptContract.criterion, /zero C1-C4 task, worker invocation, shard plan, claim, patch artifact, merge, feature event, or tracked-file effect/i);
+
+const c1PromptContract = buildFeatureBoundaryPromptContract("c1");
+assert.deepEqual(c1PromptContract.planActionIds,
+  ["parallel_review", "update_task_plan", "report_phase_result"],
+  "C1 prompt contract must stop before C2 shard-plan stimulus");
+assert.ok(!c1PromptContract.toolAllowlist.includes("goal_post_shards"),
+  "C1 tool surface must not expose the C2 shard-plan tool");
 
 const coordinatorCountMismatch = validEvidenceInput(1);
 coordinatorCountMismatch.coordinatorInvocations.pop();

@@ -63,6 +63,7 @@ import {
   FEATURE_MATRIX_PLAN_ID,
   FEATURE_MATRIX_REVIEW_TASK_IDS,
   FEATURE_MATRIX_SCHEDULER_TASK_IDS,
+  buildFeatureBoundaryPromptContract,
   buildFeatureProfileSettings,
   evaluateFeatureProfileEvidence,
   featureProfileBudget,
@@ -119,6 +120,7 @@ if (!Number.isSafeInteger(opts.maxModelCalls) || opts.maxModelCalls < 1 || opts.
 requireFeatureProfile(opts.featureProfile);
 const featureDepth = featureProfileDepth(opts.featureProfile);
 const featureSettings = buildFeatureProfileSettings(opts.featureProfile);
+const featurePromptContract = buildFeatureBoundaryPromptContract(opts.featureProfile);
 const featureMatrixId = typeof process.env.PI_PROD_FEATURE_MATRIX_ID === "string"
   && /^[A-Za-z0-9._-]{1,128}$/.test(process.env.PI_PROD_FEATURE_MATRIX_ID)
   ? process.env.PI_PROD_FEATURE_MATRIX_ID
@@ -127,13 +129,7 @@ const featureMatrixMode = featureMatrixId !== null;
 const offMatrixMode = featureMatrixMode && featureDepth === 0;
 const featureEvidenceRequired = featureDepth > 0 || offMatrixMode;
 const featureBudget = featureEvidenceRequired ? featureProfileBudget(opts.featureProfile) : null;
-const featureToolAllowlist = featureEvidenceRequired ? [
-  "goal_repo_context",
-  "goal_report_phase_result",
-  "goal_update_task_plan",
-  ...(featureDepth >= 1 ? ["goal_subagent"] : []),
-  ...(featureDepth >= 2 ? ["goal_post_shards"] : []),
-] : null;
+const featureToolAllowlist = featureEvidenceRequired ? featurePromptContract.toolAllowlist : null;
 if (featureBudget && opts.maxMinutes > featureBudget.maxMinutes) {
   throw new Error(`${opts.featureProfile} exceeds its ${featureBudget.maxMinutes}-minute production profile ceiling`);
 }
@@ -857,6 +853,41 @@ const featurePlanPrompt = JSON.stringify({
   ],
 });
 
+function buildBasePlanInstructions() {
+  // The standalone, non-matrix runtime confirmation retains its legacy typed
+  // plan scenario. Matrix profiles use the cumulative prompt contract instead.
+  const actionIds = featureEvidenceRequired
+    ? featurePromptContract.planActionIds
+    : ["update_task_plan", "post_shards", "report_phase_result"];
+  const instructions = [];
+  let step = 1;
+  for (const actionId of actionIds) {
+    if (actionId === "parallel_review") {
+      instructions.push(
+        `plan: (${step++}) call goal_subagent ONCE with mode="parallel", concurrency=2, and tasks=${JSON.stringify(featureReviewTasksPrompt)};`,
+        "Do not continue until both parallel tasks return.",
+      );
+    } else if (actionId === "parallel_calibration") {
+      instructions.push(
+        `(${step++}) call goal_subagent ONCE with mode="parallel", concurrency=2, and tasks=${JSON.stringify(featureCalibrationTasksPrompt)};`,
+        "Do not continue until both real Implementer calibration tasks return; their completed usage calibrates HEFT.",
+      );
+    } else if (actionId === "update_task_plan") {
+      instructions.push(
+        `${instructions.length === 0 ? "plan: " : ""}(${step++}) call goal_update_task_plan once with items`,
+        "[{\"id\":\"task-1\",\"title\":\"Create hello.txt with ok\",\"status\":\"in_progress\"},{\"id\":\"task-2\",\"title\":\"Run real check on hello.txt\",\"status\":\"pending\"}];",
+      );
+    } else if (actionId === "post_shards") {
+      instructions.push(`(${step++}) call goal_post_shards ONCE with plan=${featurePlanPrompt};`);
+    } else if (actionId === "report_phase_result") {
+      instructions.push(`(${step++}) report.`);
+    } else {
+      throw new Error(`unknown feature prompt action: ${actionId}`);
+    }
+  }
+  return instructions;
+}
+
 const OFF_MATRIX_GOAL = [
   "Verify the existing seed README without making any tracked repository change while proving that disabled C1-C4 features remain inert.",
   "Work FAST, do exactly the listed actions, and end every phase with goal_report_phase_result whose summary is under 60 words.",
@@ -876,18 +907,7 @@ const BASE_GOAL = [
   "end each phase with goal_report_phase_result whose summary is UNDER 60 WORDS",
   "(the external judge reads these summaries; keep them tiny and factual).",
   "research: at most one goal_repo_context call (mode list_files on .), then report.",
-  ...(featureDepth > 0 ? [
-    `plan: (1) call goal_subagent ONCE with mode="parallel", concurrency=2, and tasks=${JSON.stringify(featureReviewTasksPrompt)};`,
-    "Do not continue until both parallel tasks return.",
-    ...(featureDepth >= 3 ? [
-      `(2) call goal_subagent ONCE with mode="parallel", concurrency=2, and tasks=${JSON.stringify(featureCalibrationTasksPrompt)};`,
-      "Do not continue until both real Implementer calibration tasks return; their completed usage calibrates HEFT.",
-    ] : []),
-  ] : ["plan:"]),
-  `${featureDepth >= 3 ? "(3)" : featureDepth > 0 ? "(2)" : "(1)"} call goal_update_task_plan once with items`,
-  "[{\"id\":\"task-1\",\"title\":\"Create hello.txt with ok\",\"status\":\"in_progress\"},{\"id\":\"task-2\",\"title\":\"Run real check on hello.txt\",\"status\":\"pending\"}];",
-  `(${featureDepth >= 3 ? "4" : featureDepth > 0 ? "3" : "2"}) call goal_post_shards ONCE with plan=${featurePlanPrompt};`,
-  `(${featureDepth >= 3 ? "5" : featureDepth > 0 ? "4" : "3"}) report.`,
+  ...buildBasePlanInstructions(),
   "implement: (1) goal_shell command: bash -c \"printf 'ok\\n' > hello.txt\" ;",
   "(2) goal_update_task_plan marking task-1 completed and task-2 in_progress; (3) report.",
   "validate: (1) goal_shell command: bash -c \"test -f hello.txt && grep -qx ok hello.txt && echo REAL-CHECK-PASS\" ;",
@@ -924,11 +944,9 @@ const ALL_ON_GOAL = [
 ].join(" ");
 
 const GOAL = offMatrixMode ? OFF_MATRIX_GOAL : featureDepth >= 4 ? ALL_ON_GOAL : BASE_GOAL;
-const CRITERION = offMatrixMode
-  ? "The runtime reaches the implement boundary with README.md unchanged at the seed commit after the requested parallel review is demoted to sequential workers and exactly one typed plan proposal produces no shard, claim, patch, merge, or tracked-file effect."
-  : featureDepth >= 4
-    ? "feature-a.txt contains exactly the line 'alpha', feature-b.txt contains exactly the line 'beta', and both grep -qx checks exit 0."
-    : "hello.txt exists containing exactly the line 'ok' and the command grep -qx ok hello.txt exits 0.";
+const CRITERION = featureEvidenceRequired
+  ? featurePromptContract.criterion
+  : "hello.txt exists containing exactly the line 'ok' and the command grep -qx ok hello.txt exits 0.";
 
 // ── Run-state helpers ─────────────────────────────────────────────────
 const igRoot = path.join(repoDir, ".pi", "iterative-goal");
