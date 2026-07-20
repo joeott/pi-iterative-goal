@@ -5,7 +5,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { attestAction, verifyActionAttestation } from "./cyber-runtime.js";
-import { readIterativeGoalSettings } from "./domain/project-settings.js";
 import type { CommandSpec, VerificationResult, VerificationSpec } from "./domain/verification.js";
 import type { StateManagerAPI } from "./state.js";
 import {
@@ -16,6 +15,9 @@ import {
 import type { IterativeGoalState } from "./types.js";
 
 export const TRUSTED_VERIFICATION_SCHEMA = "pi-iterative-goal.trusted-verification.v5" as const;
+export const TRUSTED_VERIFICATION_CONFIG_SCHEMA = "pi-iterative-goal.trusted-verification-config.v1" as const;
+export const TRUSTED_VERIFICATION_CONFIG_PATH = "config/trusted-verification.json" as const;
+const MAX_TRUSTED_VERIFICATION_CONFIG_BYTES = 128 * 1024;
 
 export type TrustedVerificationSandboxBackend = "macos-sandbox-exec" | "linux-bwrap";
 
@@ -116,8 +118,41 @@ function isCommandSpec(value: unknown): value is CommandSpec {
 }
 
 export function loadTrustedVerificationConfig(cwd: string): TrustedVerificationConfig {
-  const raw = readIterativeGoalSettings(resolveRepositoryRoot(cwd)).trustedVerification;
-  const config = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const repositoryRoot = resolveRepositoryRoot(cwd);
+  let rawBytes: string;
+  try {
+    execFileSync("git", ["cat-file", "-e", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`], {
+      cwd: repositoryRoot,
+      stdio: "ignore",
+      timeout: 30_000,
+    });
+  } catch {
+    // Trusted checks are optional when the committed policy file is absent.
+    // An ignored or untracked .pi/settings.json is deliberately never a
+    // verification authority.
+    return { enabled: false, checks: [] };
+  }
+  try {
+    rawBytes = execFileSync("git", ["show", `HEAD:${TRUSTED_VERIFICATION_CONFIG_PATH}`], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: MAX_TRUSTED_VERIFICATION_CONFIG_BYTES,
+    });
+  } catch (error) {
+    throw new Error(`Unable to read committed trusted-verification policy at ${TRUSTED_VERIFICATION_CONFIG_PATH}`, { cause: error });
+  }
+  let config: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(rawBytes) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("policy must be an object");
+    config = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`Committed trusted-verification policy is invalid JSON: ${TRUSTED_VERIFICATION_CONFIG_PATH}`, { cause: error });
+  }
+  if (config.schema !== TRUSTED_VERIFICATION_CONFIG_SCHEMA) {
+    throw new Error(`Committed trusted-verification policy schema is invalid: ${TRUSTED_VERIFICATION_CONFIG_PATH}`);
+  }
   if (config.enabled !== true) return { enabled: false, checks: [] };
   const configured = Array.isArray(config.checks) ? config.checks : [];
   if (configured.length > 64) throw new Error("trustedVerification supports at most 64 checks");
@@ -147,7 +182,7 @@ function sha256(value: string | Buffer): string {
 }
 
 export function trustedVerificationConfigHash(config: TrustedVerificationConfig): string {
-  return sha256(JSON.stringify(config.checks));
+  return sha256(JSON.stringify({ enabled: config.enabled, checks: config.checks }));
 }
 
 export function trustedVerificationPolicyMatches(
@@ -297,17 +332,12 @@ function existingPaths(paths: string[]): string[] {
 function executableCandidates(name: string): string[] {
   const candidates = [
     path.join(path.dirname(process.execPath), name),
-    "/usr/local/bin/" + name,
-    "/opt/homebrew/bin/" + name,
     "/Library/Developer/CommandLineTools/usr/bin/" + name,
     "/usr/bin/" + name,
     "/bin/" + name,
     "/usr/sbin/" + name,
     "/sbin/" + name,
   ];
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (directory) candidates.push(path.join(directory, name));
-  }
   return [...new Set(candidates)];
 }
 
@@ -484,8 +514,6 @@ function sanitizedPath(executable: string, validationRoot: string): string {
     path.dirname(process.execPath),
     path.dirname(executable),
     path.join(validationRoot, "node_modules", ".bin"),
-    "/usr/local/bin",
-    "/opt/homebrew/bin",
     "/usr/bin",
     "/bin",
     "/usr/sbin",
@@ -1020,10 +1048,14 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       try { process.kill(-pid, "SIGKILL"); } catch { /* detached escape cleanup */ }
     }
     const unrelatedSurvived = Number.isSafeInteger(unrelatedPid) && processExists(unrelatedPid!);
+    const backendIdentityProof = selection.backend === "macos-sandbox-exec"
+      ? outcome.processContainment.identityMatchesObserved >= 12
+      : outcome.processContainment.identityCensus === "linux-pid-namespace-v1"
+        && outcome.processContainment.identityMatchesObserved === 0;
     const ok = outcome.status === 0
       && outcome.processContainment.descendantsTerminated
       && spawnedPids.length >= 13
-      && outcome.processContainment.identityMatchesObserved >= 12
+      && backendIdentityProof
       && escapedPids.length === 0
       && unrelatedSurvived
       && !fs.existsSync(deniedWrite);

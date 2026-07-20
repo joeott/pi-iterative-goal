@@ -13,6 +13,8 @@ import { runLocalReleaseGate } from "../dist/review/gates/release-gate.js";
 import { registerGoalShellTool } from "../dist/shell.js";
 import {
   detectTrustedVerificationSandboxBackend,
+  diagnoseTrustedVerificationSandboxBackend,
+  loadTrustedVerificationConfig,
   readTrustedVerificationReceipt,
   runTrustedVerification,
 } from "../dist/trusted-verification.js";
@@ -33,6 +35,17 @@ function writeSettings(root, config) {
   fs.writeFileSync(path.join(settingsDir, "settings.json"), JSON.stringify({
     iterativeGoal: { trustedVerification: config },
   }, null, 2));
+}
+
+function commitTrustedPolicy(root, config, message) {
+  const configDir = path.join(root, "config");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "trusted-verification.json"), JSON.stringify({
+    schema: "pi-iterative-goal.trusted-verification-config.v1",
+    ...config,
+  }, null, 2));
+  git(root, "add", "config/trusted-verification.json");
+  git(root, "commit", "-qm", message);
 }
 
 function expectThrow(fn, pattern) {
@@ -138,7 +151,15 @@ try {
 
   const sandboxBackend = detectTrustedVerificationSandboxBackend();
   if (!sandboxBackend && requireBackend) {
-    throw new Error("required trusted verification sandbox backend is unavailable");
+    const diagnostic = diagnoseTrustedVerificationSandboxBackend();
+    throw new Error(`required trusted verification sandbox backend is unavailable: ${diagnostic.backend ?? "none"}: ${diagnostic.reason}`);
+  }
+  if (sandboxBackend && requireBackend) {
+    assert.equal(
+      sandboxBackend.backend,
+      process.platform === "darwin" ? "macos-sandbox-exec" : "linux-bwrap",
+      "CI must exercise the platform's exact trusted sandbox backend",
+    );
   }
   if (!sandboxBackend) {
     expectThrow(
@@ -219,6 +240,7 @@ try {
       timeoutMs: 1_000,
     },
   });
+  commitTrustedPolicy(repo, config, "add committed trusted verification policy");
   writeSettings(repo, config);
   const receipt = runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config });
   assert.equal(receipt.ok, true);
@@ -337,9 +359,15 @@ try {
   assert.ok(readTrustedVerificationReceipt(repo, state, manager));
 
   const changedConfig = structuredClone(config);
-  changedConfig.checks[0].name = "changed config";
+  changedConfig.checks[0] = {
+    id: "forged-pass",
+    name: "ignored local settings must not replace committed checks",
+    required: true,
+    command: { executable: process.execPath, argv: ["-e", "process.exit(0)"], timeoutMs: 10_000 },
+  };
   writeSettings(repo, changedConfig);
-  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "config hash change must invalidate receipt");
+  assert.deepEqual(loadTrustedVerificationConfig(repo), config, "ignored local settings never become a trusted verification authority");
+  assert.ok(readTrustedVerificationReceipt(repo, state, manager), "ignored local settings cannot invalidate or replace a HEAD-bound receipt");
   writeSettings(repo, config);
   assert.ok(readTrustedVerificationReceipt(repo, state, manager));
 
@@ -387,6 +415,7 @@ try {
     required: false,
     command: { executable: process.execPath, argv: ["-e", "process.exit(9)"], timeoutMs: 10_000 },
   };
+  commitTrustedPolicy(repo, failedOptionalConfig, "change committed trusted verification policy");
   writeSettings(repo, failedOptionalConfig);
   const optionalReceipt = runTrustedVerification({ cwd: repo, state, stateManager: manager, config: failedOptionalConfig });
   assert.equal(optionalReceipt.results[0].status, "FAIL");
@@ -406,6 +435,7 @@ try {
   };
   const releaseGate = await runLocalReleaseGate(state, manager, repo);
   assert.deepEqual(releaseGate, { ok: true, reasons: [] }, "release gate must use its explicit repository cwd");
+  commitTrustedPolicy(repo, { enabled: false, checks: [] }, "disable committed trusted verification policy");
   writeSettings(repo, { enabled: false, checks: [] });
   const downgradedRelease = await runLocalReleaseGate(state, manager, repo);
   assert.ok(downgradedRelease.reasons.some((reason) => /pinned trusted-verification policy/.test(reason)));

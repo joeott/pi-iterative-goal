@@ -1,0 +1,36 @@
+{
+  "schema": "pi-iterative-goal.trusted-verification-config.v1",
+  "enabled": true,
+  "checks": [
+    {
+      "id": "typecheck",
+      "name": "TypeScript typecheck",
+      "required": true,
+      "command": {
+        "executable": "npm",
+        "argv": ["run", "typecheck"],
+        "timeoutMs": 180000
+      }
+    },
+    {
+      "id": "build",
+      "name": "Clean detached build",
+      "required": true,
+      "command": {
+        "executable": "npm",
+        "argv": ["run", "build"],
+        "timeoutMs": 180000
+      }
+    },
+    {
+      "id": "smoke",
+      "name": "Deterministic smoke suite",
+      "required": true,
+      "command": {
+        "executable": "npm",
+        "argv": ["run", "smoke"],
+        "timeoutMs": 600000
+      }
+    }
+  ]
+}
