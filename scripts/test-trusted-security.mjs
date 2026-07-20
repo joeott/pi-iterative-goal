@@ -201,17 +201,35 @@ try {
 
   const config = {
     enabled: true,
-    checks: [{
-      id: "cwd-check",
-      name: "check detached subdirectory cwd",
-      required: true,
-      command: {
-        executable: process.execPath,
-        argv: ["-e", "const fs=require('fs'); if(!fs.existsSync('sentinel.txt')) process.exit(7); console.log('cwd-ok')"],
-        cwd: "sub",
-        timeoutMs: 10_000,
+    checks: [
+      {
+        id: "cwd-check",
+        name: "check detached subdirectory cwd",
+        required: true,
+        command: {
+          executable: process.execPath,
+          argv: ["-e", "const fs=require('fs'); if(!fs.existsSync('sentinel.txt')) process.exit(7); console.log('cwd-ok')"],
+          cwd: "sub",
+          timeoutMs: 10_000,
+        },
       },
-    }],
+      {
+        id: "nested-git-init",
+        name: "resolve nested git without an ambient developer-tool shim",
+        required: true,
+        command: {
+          executable: process.execPath,
+          argv: ["-e", [
+            "const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');",
+            "const repo=fs.mkdtempSync(path.join(os.tmpdir(),'nested-git-'));",
+            "const result=spawnSync('git',['init','-q'],{cwd:repo,encoding:'utf8'});",
+            "if(result.status!==0){console.error(result.stderr||result.error?.message||'git init failed');process.exit(result.status??1)}",
+            "console.log('nested-git-ok');",
+          ].join("")],
+          timeoutMs: 10_000,
+        },
+      },
+    ],
   };
   writeSettings(repo, config);
 

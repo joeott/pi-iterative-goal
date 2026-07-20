@@ -673,6 +673,14 @@ function sanitizedPath(executable: string, validationRoot: string): string {
     path.dirname(process.execPath),
     path.dirname(executable),
     path.join(validationRoot, "node_modules", ".bin"),
+    // `/usr/bin/git` is an xcrun shim on macOS. Inside the deny-default
+    // Seatbelt profile it cannot resolve `/var/select/developer_dir`, while
+    // the already allowlisted CommandLineTools binary is self-contained.
+    // Prefer that binary for nested validation commands as well as for the
+    // verifier's own executable resolution.
+    ...(process.platform === "darwin" && fs.existsSync("/Library/Developer/CommandLineTools/usr/bin")
+      ? ["/Library/Developer/CommandLineTools/usr/bin"]
+      : []),
     "/usr/bin",
     "/bin",
     "/usr/sbin",
