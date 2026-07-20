@@ -106,6 +106,7 @@ const summary = {
     "CI/deploy scanner and agent trace redaction",
   ],
   iterations: [],
+  baseline: null,
   findingSummary: null,
   findingChanges: null,
   drift: null,
@@ -236,8 +237,9 @@ function renderMarkdown(report) {
     `- Secret values read: \`${report.secretValuesRead}\``,
     `- Production mutations attempted: \`${report.productionMutationsAttempted}\``,
     `- Model-visible handoff context: \`${report.modelVisibleContext.path}\``,
-    `- Findings: \`${report.findingSummary?.open ?? 0}\` open, \`${report.findingSummary?.new ?? 0}\` new, \`${report.findingSummary?.repeated ?? 0}\` repeated`,
-    `- Drift detected: \`${report.drift?.changed ?? false}\``,
+    `- Baseline: \`${report.baseline?.status ?? "unknown"}\``,
+    `- Findings: \`${report.findingSummary?.open ?? 0}\` open, \`${report.findingSummary?.new ?? 0}\` new, \`${report.findingSummary?.repeated ?? 0}\` repeated, \`${report.findingSummary?.unclassified ?? 0}\` unclassified`,
+    `- Drift detected: \`${report.drift?.changed === null || report.drift?.changed === undefined ? "unknown" : report.drift.changed}\``,
     `- Iterations: \`${report.iterations.length}\``,
     "",
     "| Iteration | PASS | FAIL | BLOCKED |",
@@ -277,32 +279,46 @@ function latestIteration() {
 function finalizeReviewState() {
   const latest = latestIteration();
   const findings = latest?.findings ?? [];
-  const previousFindings = previousSummary?.iterations?.at(-1)?.findings ?? [];
+  const previousIteration = previousSummary?.iterations?.at(-1) ?? null;
+  const hasBaseline = Array.isArray(previousIteration?.findings);
+  const previousFindings = hasBaseline ? previousIteration.findings : [];
   const previousById = new Map(previousFindings.map((finding) => [finding.id, finding]));
   for (const finding of findings) {
-    finding.lifecycle = previousById.has(finding.id) ? "repeated" : "new";
+    finding.lifecycle = hasBaseline
+      ? (previousById.has(finding.id) ? "repeated" : "new")
+      : "unclassified";
   }
   const currentIds = new Set(findings.map((finding) => finding.id));
-  const resolved = previousFindings
+  const resolved = hasBaseline ? previousFindings
     .filter((finding) => !currentIds.has(finding.id))
-    .map((finding) => ({ ...finding, lifecycle: "resolved" }));
+    .map((finding) => ({ ...finding, lifecycle: "resolved" })) : [];
+  summary.baseline = {
+    status: hasBaseline ? "available" : "absent",
+    previousRunId: hasBaseline ? (previousSummary.runId ?? null) : null,
+    previousFinishedAt: hasBaseline ? (previousSummary.finishedAt ?? null) : null,
+  };
   summary.findingSummary = {
     open: findings.length,
     new: findings.filter((finding) => finding.lifecycle === "new").length,
     repeated: findings.filter((finding) => finding.lifecycle === "repeated").length,
+    unclassified: findings.filter((finding) => finding.lifecycle === "unclassified").length,
     resolved: resolved.length,
     bySeverity: countFindings(findings),
   };
   summary.findingChanges = {
     new: findings.filter((finding) => finding.lifecycle === "new"),
     repeated: findings.filter((finding) => finding.lifecycle === "repeated"),
+    unclassified: findings.filter((finding) => finding.lifecycle === "unclassified"),
     resolved,
   };
-  const previousFingerprint = previousSummary?.iterations?.at(-1)?.awsStateFingerprint ?? null;
+  const previousFingerprint = previousIteration?.awsStateFingerprint ?? null;
+  const currentFingerprint = latest?.awsStateFingerprint ?? null;
+  const driftBaselineAvailable = Boolean(previousFingerprint && currentFingerprint);
   summary.drift = {
+    baselineStatus: driftBaselineAvailable ? "available" : "absent",
     previousFingerprint,
-    currentFingerprint: latest?.awsStateFingerprint ?? null,
-    changed: Boolean(previousFingerprint && latest?.awsStateFingerprint && previousFingerprint !== latest.awsStateFingerprint),
+    currentFingerprint,
+    changed: driftBaselineAvailable ? previousFingerprint !== currentFingerprint : null,
   };
   const artifacts = latest ? loadCommandArtifacts(latest) : [];
   summary.accountScope = dryRun ? expectedAccountScope() : buildAccountScope(artifacts);

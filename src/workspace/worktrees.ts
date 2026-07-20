@@ -1399,10 +1399,9 @@ export interface MergeBackHookDeps {
   stateManager: StateManagerAPI;
   cwd: string;
   /**
-   * The scheduler report from the same plan→implement transition. Absent
-   * (warm restart — the scheduler's idempotency skip produces no report),
-   * the hook rebuilds its inputs from ledgered claims + patch artifacts
-   * (C4-OUS-001) instead of starving.
+   * The scheduler report from the same plan→implement transition. A restored
+   * partial report is supplemented, and an absent terminal/idempotent report
+   * is rebuilt, from ledgered claims + patch artifacts (C4-OUS-001).
    */
   schedulerReport?: MergeBackHookSchedulerReport | null;
   /** Gate part 3 evidence snapshot (lifecycle wires src/evaluator.ts → findUnfinishedWork). */
@@ -1433,36 +1432,34 @@ export async function runMergeBackHook(deps: MergeBackHookDeps): Promise<MergeBa
   );
   if (!plan) return null;
 
-  // Same-transition hand-off: match outcomes to shards via the scheduler's
-  // OWN task-id helper (C4-OUS-008 — no duplicated string convention).
+  // Same-transition hand-off: the latest claim task id is authoritative.
+  // First-attempt claims use the scheduler's shared task-id helper; restored
+  // process_restart episodes carry a unique retry suffix so the subagent
+  // ledger never aliases the failed task. Completed shards from before the
+  // crash have no in-memory outcome and are filled from their persisted patch
+  // artifacts below.
   const outcomes = deps.schedulerReport?.outcomes ?? [];
   const inputs: ShardMergeInput[] = [];
-  let matched = 0;
   for (const shard of plan.shards) {
-    const outcome = outcomes.find((candidate) => candidate.task.id === shardDispatchTaskId(plan.cycle, shard.id));
-    if (!outcome) continue;
-    matched += 1;
-    // result.patch undefined/null = capture failure → null → capture-gate
-    // rejection downstream (C4-ADV-011), never a silent merge.
-    inputs.push({ shardId: shard.id, patch: outcome.result?.patch ?? null });
+    const claim = state.shards.claims.find(
+      (item) => item.planId === plan.id && item.cycle === plan.cycle && item.shardId === shard.id,
+    );
+    const taskId = claim?.taskId ?? shardDispatchTaskId(plan.cycle, shard.id);
+    const outcome = outcomes.find((candidate) => candidate.task.id === taskId);
+    if (outcome) {
+      // result.patch undefined/null = capture failure → null → capture-gate
+      // rejection downstream (C4-ADV-011), never a silent merge.
+      inputs.push({ shardId: shard.id, patch: outcome.result?.patch ?? null });
+      continue;
+    }
+    if (claim?.status !== "completed") continue;
+    inputs.push({
+      shardId: shard.id,
+      patch: claim.patchArtifactPath ? readShardPatchArtifact(deps.cwd, claim.patchArtifactPath) : null,
+    });
   }
-  if (matched === 0) {
-    if (deps.schedulerReport) {
-      deps.log?.("merge-back hook: scheduler report carried no shard outcomes for this plan — falling back to ledgered claims + patch artifacts");
-    }
-    // Warm-restart rebuild (C4-OUS-001): the scheduler's idempotency skip
-    // starves the in-memory hand-off, so inputs come from the ledger —
-    // completed claims plus their persisted patch artifacts.
-    for (const shard of plan.shards) {
-      const claim = state.shards.claims.find(
-        (item) => item.planId === plan.id && item.cycle === plan.cycle && item.shardId === shard.id,
-      );
-      if (claim?.status !== "completed") continue;
-      inputs.push({
-        shardId: shard.id,
-        patch: claim.patchArtifactPath ? readShardPatchArtifact(deps.cwd, claim.patchArtifactPath) : null,
-      });
-    }
+  if (deps.schedulerReport && inputs.length > outcomes.length) {
+    deps.log?.("merge-back hook: supplemented the resumed scheduler report with completed ledger claims + persisted patch artifacts");
   }
   if (inputs.length === 0) {
     deps.log?.("merge-back hook: no completed shard patches to merge (enabled hook found zero matching outcomes, C4-OUS-008)");

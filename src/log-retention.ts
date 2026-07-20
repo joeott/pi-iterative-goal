@@ -10,11 +10,25 @@ export const RUN_RAW_CAP_BYTES = 250 * 1024 * 1024;
 export const TOTAL_RAW_CAP_BYTES = 1024 * 1024 * 1024;
 export const TOTAL_MANAGED_CAP_BYTES = 1024 * 1024 * 1024;
 export const FREE_DISK_FLOOR_BYTES = 5 * 1024 * 1024 * 1024;
+export const PRODUCTION_EVIDENCE_SUCCESS_TTL_MS = 30 * 24 * 60 * 60_000;
+export const PRODUCTION_EVIDENCE_FAILURE_TTL_MS = 90 * 24 * 60 * 60_000;
+export const PRODUCTION_EVIDENCE_INCOMPLETE_TTL_MS = 14 * 24 * 60 * 60_000;
+export const PRODUCTION_EVIDENCE_RUN_CAP_BYTES = 128 * 1024 * 1024;
+export const TOTAL_PRODUCTION_EVIDENCE_CAP_BYTES = 512 * 1024 * 1024;
+export const RECENT_PRODUCTION_SUCCESSES_TO_KEEP = 5;
+export const RECENT_PRODUCTION_FAILURES_TO_KEEP = 10;
+
+const PRODUCTION_EVIDENCE_NAMESPACES = [
+  "prod-runtime-confirmation",
+  "prod-feature-matrix",
+] as const;
+const EVIDENCE_CURRENT_GRACE_MS = RETENTION_INTERVAL_MS * 2;
+const MAX_EVIDENCE_RESULT_BYTES = 1024 * 1024;
 
 export interface RetentionDeletion {
   path: string;
   bytes: number;
-  reason: "ttl" | "run_cap" | "total_cap";
+  reason: "ttl" | "run_cap" | "total_cap" | "evidence_ttl" | "evidence_run_cap" | "evidence_total_cap";
 }
 
 export interface RetentionReport {
@@ -35,6 +49,26 @@ interface Candidate {
   mtimeMs: number;
   runId: string | null;
   ttlMs: number | null;
+}
+
+type EvidenceStatus = "success" | "failure" | "incomplete";
+
+interface EvidenceCandidate {
+  absolute: string;
+  relative: string;
+  namespace: typeof PRODUCTION_EVIDENCE_NAMESPACES[number];
+  runId: string;
+  bytes: number;
+  mtimeMs: number;
+  status: EvidenceStatus;
+  protectedReasons: Set<string>;
+  keepRecent: boolean;
+}
+
+interface EvidenceInventory {
+  candidates: EvidenceCandidate[];
+  fixedBytes: number;
+  issues: string[];
 }
 
 let lastReport: RetentionReport | null = null;
@@ -104,6 +138,38 @@ function liveRunIds(root: string, nowMs: number): Set<string> {
   return live;
 }
 
+function liveEvidenceRunIds(root: string, nowMs: number): Set<string> {
+  const live = liveRunIds(root, nowMs);
+  const runsRoot = path.join(root, "runs");
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(runsRoot, { withFileTypes: true }); }
+  catch (error) {
+    if (isMissing(error)) return live;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || live.has(entry.name)) continue;
+    const marker = path.join(runsRoot, entry.name, "ACTIVE");
+    try {
+      const stat = fs.lstatSync(marker);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 64) continue;
+      const value = fs.readFileSync(marker, "utf8").trim();
+      if (!/^[1-9][0-9]{0,9}$/.test(value)) continue;
+      const pid = Number(value);
+      if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+      try {
+        process.kill(pid, 0);
+        live.add(entry.name);
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EPERM") live.add(entry.name);
+      }
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  }
+  return live;
+}
+
 function managedBytes(root: string): number {
   let total = 0;
   const walk = (directory: string): void => {
@@ -128,6 +194,272 @@ function freeDiskBytes(root: string): number | null {
   }
 }
 
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isProtectedEvidenceName(name: string): boolean {
+  return name === "owner.json"
+    || name.endsWith(".head.json")
+    || name === "PINNED"
+    || name === "CURRENT"
+    || name === "ACTIVE"
+    || name === "heads"
+    || name === "aggregates";
+}
+
+function evidenceResultStatus(runDirectory: string, namespace: EvidenceCandidate["namespace"]): EvidenceStatus {
+  const resultPath = path.join(runDirectory, "results.json");
+  try {
+    const stat = fs.lstatSync(resultPath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_EVIDENCE_RESULT_BYTES) return "failure";
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as Record<string, unknown>;
+    const status = namespace === "prod-feature-matrix" ? result.executionStatus : result.overall;
+    return status === "PASS" ? "success" : "failure";
+  } catch (error) {
+    if (isMissing(error)) return "incomplete";
+    return "failure";
+  }
+}
+
+function inspectEvidenceDirectory(
+  managedRoot: string,
+  namespace: EvidenceCandidate["namespace"],
+  absolute: string,
+  activeRuns: Set<string>,
+  nowMs: number,
+): EvidenceCandidate {
+  const runId = path.basename(absolute);
+  const protectedReasons = new Set<string>();
+  if (isProtectedEvidenceName(runId)) protectedReasons.add(`protected:${runId}`);
+  let bytes = 0;
+  let mtimeMs = 0;
+  const walk = (directory: string, topLevel = false): void => {
+    const directoryStat = fs.lstatSync(directory);
+    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+      throw new Error(`production evidence path is not a real directory: ${path.relative(managedRoot, directory)}`);
+    }
+    mtimeMs = Math.max(mtimeMs, directoryStat.mtimeMs);
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const child = path.join(directory, entry.name);
+      const stat = fs.lstatSync(child);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`production evidence contains a symlink: ${path.relative(managedRoot, child)}`);
+      }
+      mtimeMs = Math.max(mtimeMs, stat.mtimeMs);
+      if (isProtectedEvidenceName(entry.name)) protectedReasons.add(`protected:${entry.name}`);
+      if (stat.isDirectory()) walk(child);
+      else if (stat.isFile()) bytes += stat.size;
+      else throw new Error(`production evidence contains a non-regular entry: ${path.relative(managedRoot, child)}`);
+    }
+    if (topLevel && activeRuns.has(runId)) protectedReasons.add("active-run");
+  };
+  walk(absolute, true);
+  if (nowMs - mtimeMs < EVIDENCE_CURRENT_GRACE_MS) protectedReasons.add("fresh");
+  return {
+    absolute,
+    relative: path.relative(managedRoot, absolute),
+    namespace,
+    runId,
+    bytes,
+    mtimeMs,
+    status: evidenceResultStatus(absolute, namespace),
+    protectedReasons,
+    keepRecent: false,
+  };
+}
+
+function inventoryProductionEvidence(
+  managedRoot: string,
+  activeRuns: Set<string>,
+  nowMs: number,
+): EvidenceInventory {
+  const candidates: EvidenceCandidate[] = [];
+  const issues: string[] = [];
+  let fixedBytes = 0;
+  const evidenceRoot = path.join(managedRoot, "evidence");
+  try {
+    const evidenceStat = fs.lstatSync(evidenceRoot);
+    if (evidenceStat.isSymbolicLink() || !evidenceStat.isDirectory()
+      || fs.realpathSync(evidenceRoot) !== path.resolve(evidenceRoot)) {
+      return {
+        candidates,
+        fixedBytes: evidenceStat.isFile() ? evidenceStat.size : 0,
+        issues: [`production evidence root is not the exact owned directory: ${path.relative(managedRoot, evidenceRoot)}`],
+      };
+    }
+  } catch (error) {
+    if (isMissing(error)) return { candidates, fixedBytes, issues };
+    throw error;
+  }
+  for (const namespace of PRODUCTION_EVIDENCE_NAMESPACES) {
+    const namespaceRoot = path.join(evidenceRoot, namespace);
+    let namespaceStat: fs.Stats;
+    try { namespaceStat = fs.lstatSync(namespaceRoot); }
+    catch (error) {
+      if (isMissing(error)) continue;
+      throw error;
+    }
+    if (namespaceStat.isSymbolicLink() || !namespaceStat.isDirectory()) {
+      issues.push(`production evidence namespace is not a real directory: ${path.relative(managedRoot, namespaceRoot)}`);
+      if (namespaceStat.isFile()) fixedBytes += namespaceStat.size;
+      continue;
+    }
+    const resolvedNamespace = fs.realpathSync(namespaceRoot);
+    if (!isWithin(managedRoot, resolvedNamespace) || resolvedNamespace !== path.resolve(namespaceRoot)) {
+      issues.push(`production evidence namespace is not the exact owned directory: ${path.relative(managedRoot, namespaceRoot)}`);
+      continue;
+    }
+    for (const entry of fs.readdirSync(namespaceRoot, { withFileTypes: true })) {
+      const absolute = path.join(namespaceRoot, entry.name);
+      let stat: fs.Stats;
+      try { stat = fs.lstatSync(absolute); }
+      catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        issues.push(`unexpected production evidence entry retained: ${path.relative(managedRoot, absolute)}`);
+        if (stat.isFile()) fixedBytes += stat.size;
+        continue;
+      }
+      try { candidates.push(inspectEvidenceDirectory(managedRoot, namespace, absolute, activeRuns, nowMs)); }
+      catch (error) {
+        issues.push(error instanceof Error ? error.message : String(error));
+        // Account for whatever can be measured without traversing symlinks.
+        const measure = (directory: string): void => {
+          for (const childEntry of fs.readdirSync(directory, { withFileTypes: true })) {
+            const child = path.join(directory, childEntry.name);
+            const childStat = fs.lstatSync(child);
+            if (childStat.isSymbolicLink()) continue;
+            if (childStat.isDirectory()) measure(child);
+            else if (childStat.isFile()) fixedBytes += childStat.size;
+          }
+        };
+        try { measure(absolute); } catch (measureError) {
+          issues.push(`could not measure production evidence safely: ${measureError instanceof Error ? measureError.message : String(measureError)}`);
+        }
+      }
+    }
+  }
+
+  for (const namespace of PRODUCTION_EVIDENCE_NAMESPACES) {
+    const scoped = candidates.filter((candidate) => candidate.namespace === namespace)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.relative.localeCompare(a.relative));
+    if (scoped[0]) scoped[0].protectedReasons.add("current");
+    const successes = scoped.filter((candidate) => candidate.status === "success");
+    const failures = scoped.filter((candidate) => candidate.status === "failure");
+    for (const candidate of successes.slice(0, RECENT_PRODUCTION_SUCCESSES_TO_KEEP)) candidate.keepRecent = true;
+    for (const candidate of failures.slice(0, RECENT_PRODUCTION_FAILURES_TO_KEEP)) candidate.keepRecent = true;
+  }
+  return { candidates, fixedBytes, issues };
+}
+
+function evidenceTtl(candidate: EvidenceCandidate): number {
+  if (candidate.status === "success") return PRODUCTION_EVIDENCE_SUCCESS_TTL_MS;
+  if (candidate.status === "failure") return PRODUCTION_EVIDENCE_FAILURE_TTL_MS;
+  return PRODUCTION_EVIDENCE_INCOMPLETE_TTL_MS;
+}
+
+function removeEvidenceDirectory(managedRoot: string, candidate: EvidenceCandidate): void {
+  if (!isWithin(managedRoot, candidate.absolute)) throw new Error(`production evidence path escapes managed root: ${candidate.relative}`);
+  const resolvedParent = fs.realpathSync(path.dirname(candidate.absolute));
+  if (!isWithin(managedRoot, resolvedParent) || resolvedParent !== path.resolve(path.dirname(candidate.absolute))) {
+    throw new Error(`production evidence parent is not the exact owned directory: ${candidate.relative}`);
+  }
+  const preflight = (target: string): void => {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) throw new Error(`refusing to purge evidence symlink: ${path.relative(managedRoot, target)}`);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(target)) {
+        if (isProtectedEvidenceName(entry)) {
+          throw new Error(`refusing to purge protected evidence: ${path.relative(managedRoot, path.join(target, entry))}`);
+        }
+        preflight(path.join(target, entry));
+      }
+      return;
+    }
+    if (!stat.isFile()) throw new Error(`refusing to purge non-regular evidence: ${path.relative(managedRoot, target)}`);
+    if (isProtectedEvidenceName(path.basename(target))) {
+      throw new Error(`refusing to purge protected evidence: ${path.relative(managedRoot, target)}`);
+    }
+  };
+  const remove = (target: string): void => {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) throw new Error(`refusing to purge evidence symlink: ${path.relative(managedRoot, target)}`);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(target)) remove(path.join(target, entry));
+      fs.rmdirSync(target);
+      return;
+    }
+    if (!stat.isFile() || isProtectedEvidenceName(path.basename(target))) {
+      throw new Error(`refusing to purge protected or non-regular evidence: ${path.relative(managedRoot, target)}`);
+    }
+    fs.unlinkSync(target);
+  };
+  preflight(candidate.absolute);
+  remove(candidate.absolute);
+}
+
+function retainProductionEvidence(
+  managedRoot: string,
+  activeRuns: Set<string>,
+  nowMs: number,
+  deleted: RetentionDeletion[],
+): string[] {
+  const inventory = inventoryProductionEvidence(managedRoot, activeRuns, nowMs);
+  const removed = new Set<string>();
+  const reasons = inventory.issues.map((issue) => `unsafe production evidence retained: ${issue}`);
+  const purge = (candidate: EvidenceCandidate, reason: RetentionDeletion["reason"]): void => {
+    if (removed.has(candidate.absolute) || candidate.protectedReasons.size > 0) return;
+    try {
+      removeEvidenceDirectory(managedRoot, candidate);
+      removed.add(candidate.absolute);
+      deleted.push({ path: candidate.relative, bytes: candidate.bytes, reason });
+    } catch (error) {
+      candidate.protectedReasons.add("purge-race-or-error");
+      reasons.push(`production evidence purge failed for ${candidate.relative}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const oldestFirst = [...inventory.candidates]
+    .sort((a, b) => a.mtimeMs - b.mtimeMs || a.relative.localeCompare(b.relative));
+  for (const candidate of oldestFirst) {
+    if (candidate.protectedReasons.size > 0 || candidate.keepRecent) continue;
+    if (nowMs - candidate.mtimeMs >= evidenceTtl(candidate)) purge(candidate, "evidence_ttl");
+  }
+  for (const candidate of oldestFirst) {
+    if (removed.has(candidate.absolute) || candidate.protectedReasons.size > 0) continue;
+    if (candidate.bytes > PRODUCTION_EVIDENCE_RUN_CAP_BYTES) purge(candidate, "evidence_run_cap");
+  }
+
+  let total = inventory.fixedBytes + inventory.candidates
+    .filter((candidate) => !removed.has(candidate.absolute))
+    .reduce((sum, candidate) => sum + candidate.bytes, 0);
+  const capacityOrder = oldestFirst
+    .filter((candidate) => !removed.has(candidate.absolute) && candidate.protectedReasons.size === 0)
+    .sort((a, b) => {
+      if (a.keepRecent !== b.keepRecent) return a.keepRecent ? 1 : -1;
+      const priority: Record<EvidenceStatus, number> = { success: 0, incomplete: 1, failure: 2 };
+      return priority[a.status] - priority[b.status] || a.mtimeMs - b.mtimeMs || a.relative.localeCompare(b.relative);
+    });
+  for (const candidate of capacityOrder) {
+    if (total <= TOTAL_PRODUCTION_EVIDENCE_CAP_BYTES) break;
+    purge(candidate, "evidence_total_cap");
+    if (removed.has(candidate.absolute)) total -= candidate.bytes;
+  }
+
+  for (const candidate of inventory.candidates) {
+    if (!removed.has(candidate.absolute) && candidate.bytes > PRODUCTION_EVIDENCE_RUN_CAP_BYTES) {
+      reasons.push(`production evidence ${candidate.relative} bytes ${candidate.bytes} exceed run cap ${PRODUCTION_EVIDENCE_RUN_CAP_BYTES} (${[...candidate.protectedReasons].join(", ") || "not purgeable"})`);
+    }
+  }
+  if (total > TOTAL_PRODUCTION_EVIDENCE_CAP_BYTES) {
+    reasons.push(`production evidence bytes ${total} exceed cap ${TOTAL_PRODUCTION_EVIDENCE_CAP_BYTES}; active, current, pinned, or protected evidence was retained`);
+  }
+  return reasons;
+}
+
 export function runManagedLogRetention(cwd = process.cwd(), nowMs = Date.now()): RetentionReport {
   const root = ensureManagedRoot(cwd);
   const resolvedRoot = fs.realpathSync(root);
@@ -141,6 +473,7 @@ export function runManagedLogRetention(cwd = process.cwd(), nowMs = Date.now()):
   const deleted: RetentionDeletion[] = [];
   const removed = new Set<string>();
   const activeRuns = liveRunIds(resolvedRoot, nowMs);
+  const activeEvidenceRuns = liveEvidenceRunIds(resolvedRoot, nowMs);
   const unlink = (candidate: Candidate, reason: RetentionDeletion["reason"]): void => {
     if (removed.has(candidate.absolute)) return;
     const resolvedParent = fs.realpathSync(path.dirname(candidate.absolute));
@@ -199,8 +532,10 @@ export function runManagedLogRetention(cwd = process.cwd(), nowMs = Date.now()):
     totalRaw -= candidate.bytes;
   }
 
+  const evidenceReasons = retainProductionEvidence(resolvedRoot, activeEvidenceRuns, nowMs, deleted);
+
   const freeBytes = freeDiskBytes(resolvedRoot);
-  const reasons: string[] = [];
+  const reasons: string[] = [...evidenceReasons];
   const remainingRunBytes = new Map<string, number>();
   for (const candidate of candidates) {
     if (removed.has(candidate.absolute) || !candidate.runId) continue;

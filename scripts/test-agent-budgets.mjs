@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const { PiSubprocessAgentPool, createAgentTask } = await import("../dist/agents/pool.js");
+const { PiSubprocessAgentPool, createAgentTask, readOsProcessIdentity } = await import("../dist/agents/pool.js");
 const { dispatchAgentTask } = await import("../dist/agents/run-pool.js");
 const { requireModelRoute } = await import("../dist/domain/model-roster.js");
 const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
@@ -26,10 +26,11 @@ function makeGitRepo() {
   return repo;
 }
 
-function makeManualSpawn() {
+function makeManualSpawn({ pid = null } = {}) {
   const pending = [];
   const spawnImpl = (command, args, options) => {
     const proc = new EventEmitter();
+    if (pid !== null) proc.pid = pid;
     proc.stdout = new EventEmitter();
     proc.stderr = new EventEmitter();
     proc.signals = [];
@@ -301,6 +302,82 @@ try {
   assert.equal(timeoutResult.ok, false);
   assert.equal(timeoutResult.budgetExhausted?.limit, "timeoutMs");
   assert.ok((timeoutResult.budgetExhausted?.observed ?? 0) >= 5);
+
+  // Detached process groups are authorized with a kernel birth token at spawn
+  // and re-authenticated before both TERM and delayed KILL. A reused numeric
+  // PID/PGID must never receive an escalation intended for the old worker.
+  const ownedPid = 47_001;
+  const originalIdentity = {
+    pid: ownedPid,
+    parentPid: process.pid,
+    processGroupId: ownedPid,
+    startToken: "test-boot:100",
+  };
+  let observedIdentity = originalIdentity;
+  const ownedSignals = [];
+  const ownedSpawn = makeManualSpawn({ pid: ownedPid });
+  const ownedPool = new PiSubprocessAgentPool(repo, {
+    spawnImpl: ownedSpawn,
+    killGraceMs: 5,
+    readProcessIdentity: () => observedIdentity,
+    signalProcessGroup: (processGroupId, signal) => ownedSignals.push({ processGroupId, signal }),
+  });
+  const ownedTask = task("budget-owned-group", { maxTurns: 4, maxTokens: 100, timeoutMs: 10_000 });
+  const ownedPromise = ownedPool.submit(ownedTask);
+  assert.equal(await ownedPool.cancel(ownedTask.id), "running");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(ownedSignals, [
+    { processGroupId: ownedPid, signal: "SIGTERM" },
+    { processGroupId: ownedPid, signal: "SIGKILL" },
+  ], "unchanged birth identity authorizes the bounded group TERM→KILL sequence");
+  assert.deepEqual(ownedSpawn.pending[0].proc.signals, [], "real-PID path never falls back to raw ChildProcess.kill");
+  ownedSpawn.pending[0].proc.finish(143);
+  await ownedPromise;
+
+  const stalePid = 47_002;
+  let staleIdentity = {
+    pid: stalePid,
+    parentPid: process.pid,
+    processGroupId: stalePid,
+    startToken: "test-boot:200",
+  };
+  const staleSignals = [];
+  const staleSpawn = makeManualSpawn({ pid: stalePid });
+  const stalePool = new PiSubprocessAgentPool(repo, {
+    spawnImpl: staleSpawn,
+    killGraceMs: 5,
+    readProcessIdentity: () => staleIdentity,
+    signalProcessGroup: (processGroupId, signal) => staleSignals.push({ processGroupId, signal }),
+  });
+  const staleTask = task("budget-stale-group", { maxTurns: 4, maxTokens: 100, timeoutMs: 10_000 });
+  const stalePromise = stalePool.submit(staleTask);
+  staleIdentity = { ...staleIdentity, startToken: "test-boot:201" };
+  assert.equal(await stalePool.cancel(staleTask.id), "running");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(staleSignals, [], "reused PID/PGID with a different birth token is never signalled");
+  assert.deepEqual(staleSpawn.pending[0].proc.signals, [], "stale real PID never falls back to a raw PID signal");
+  staleSpawn.pending[0].proc.finish(143);
+  await stalePromise;
+
+  if (process.platform === "linux") {
+    const selfIdentity = readOsProcessIdentity(process.pid);
+    assert.equal(selfIdentity?.pid, process.pid, "Linux identity reader resolves the current process");
+    assert.ok(selfIdentity?.startToken, "Linux identity reader returns a non-empty birth token");
+  } else if (process.platform === "darwin") {
+    let psAllowed = true;
+    try {
+      execFileSync("/bin/ps", ["-p", String(process.pid), "-o", "pid="], { stdio: "ignore" });
+    } catch {
+      psAllowed = false;
+    }
+    const selfIdentity = readOsProcessIdentity(process.pid);
+    if (psAllowed) {
+      assert.equal(selfIdentity?.pid, process.pid, "Darwin identity reader resolves the current process when ps is allowed");
+      assert.ok(selfIdentity?.startToken, "Darwin identity reader returns a non-empty birth token");
+    } else {
+      assert.equal(selfIdentity, null, "Darwin identity reader fails closed when the OS denies ps inspection");
+    }
+  }
 
   const abortTask = task("budget-abort", { maxTurns: 4, maxTokens: 100, timeoutMs: 10_000 });
   const abortSpawn = makeManualSpawn();

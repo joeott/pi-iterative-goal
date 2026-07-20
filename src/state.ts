@@ -721,14 +721,16 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   // restores in-flight tasks as running; only at load time do we mark them
   // failed, since the pool that ran them died with the previous process.
   // Each reconciliation is itself a hash-chained subagent_finished event.
-  // C3 extension (C3-ADV-009): a shard claim stuck in claimed whose dispatch
-  // task was reconciled must fail with it — otherwise the shard ledger keeps
-  // a claim the swarm ledger already buried, and shards d/t diverges.
+  // C3 extension (C3-ADV-009): every dispatched shard claim still stuck in
+  // claimed belongs to the process that just died and must fail closed. This
+  // includes the two narrow crash windows where the process stopped after
+  // shard_claimed but before subagent_started, or after subagent_finished but
+  // before shard_completed. Restricting reconciliation to a currently-running
+  // task strands both windows forever. A taskId:null claim is deliberately
+  // excluded: C4 uses that shape for its ledgered repair loop.
   function reconcileRunningSubagents(): void {
     if (!state) return;
     const orphaned = state.swarm.tasks.filter((task) => task.status === "running");
-    if (orphaned.length === 0) return;
-    const reconciledTaskIds = new Set(orphaned.map((task) => task.taskId));
     for (const task of orphaned) {
       const finishedAt = new Date().toISOString();
       task.status = "failed";
@@ -743,9 +745,11 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         timestamp: finishedAt,
       });
     }
-    logDebug("state", `reconciled ${orphaned.length} orphaned running subagent task(s) as failed: process_restart`);
+    if (orphaned.length > 0) {
+      logDebug("state", `reconciled ${orphaned.length} orphaned running subagent task(s) as failed: process_restart`);
+    }
     const orphanedClaims = state.shards.claims.filter(
-      (claim) => claim.status === "claimed" && claim.taskId !== null && reconciledTaskIds.has(claim.taskId),
+      (claim) => claim.status === "claimed" && claim.taskId !== null,
     );
     for (const claim of orphanedClaims) {
       const finishedAt = new Date().toISOString();

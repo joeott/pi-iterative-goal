@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -154,10 +154,34 @@ export interface PiSubprocessAgentPoolOptions {
   maxCapturedBytes?: number;
   /** Grace between exact process-group TERM and KILL; injectable for tests. */
   killGraceMs?: number;
+  /** Injectable OS birth-identity reader for deterministic PID-reuse tests. */
+  readProcessIdentity?: ProcessIdentityReader;
+  /** Injectable group-signalling primitive; receives a positive PGID. */
+  signalProcessGroup?: ProcessGroupSignaller;
+}
+
+/** Kernel-observed identity captured for a newly spawned process-group leader. */
+export interface ProcessBirthIdentity {
+  pid: number;
+  parentPid: number;
+  processGroupId: number;
+  /** Linux boot-id + start ticks, or Darwin's full process start timestamp. */
+  startToken: string;
+}
+
+export type ProcessIdentityReader = (pid: number) => ProcessBirthIdentity | null;
+export type ProcessGroupSignaller = (processGroupId: number, signal: NodeJS.Signals) => void;
+
+interface OwnedWorkerProcess {
+  child: ReturnType<typeof spawn>;
+  pid: number | null;
+  identity: ProcessBirthIdentity | null;
+  /** Sticky: once identity fails, this record can never authorize a later PID reuse. */
+  ownershipRevoked: boolean;
 }
 
 export class PiSubprocessAgentPool implements AgentPool {
-  private readonly running = new Map<string, ReturnType<typeof spawn>>();
+  private readonly running = new Map<string, OwnedWorkerProcess>();
   // Cross-call write-scope registry: lives as long as the pool, so a writer
   // admitted by an earlier goal_subagent call still blocks colliding scopes.
   private readonly activeWriteScopes = new Map<string, string[]>();
@@ -167,6 +191,8 @@ export class PiSubprocessAgentPool implements AgentPool {
   private readonly piExecutable: string;
   private readonly maxCapturedBytes: number;
   private readonly killGraceMs: number;
+  private readonly readProcessIdentity: ProcessIdentityReader;
+  private readonly signalProcessGroup: ProcessGroupSignaller;
   private readonly closeWaiters = new Map<string, Promise<void>>();
   private readonly closeResolvers = new Map<string, () => void>();
   private readonly killEscalations = new Map<string, ReturnType<typeof setTimeout>>();
@@ -176,6 +202,10 @@ export class PiSubprocessAgentPool implements AgentPool {
     this.piExecutable = options.piExecutable ?? resolvePiExecutable(cwd);
     this.maxCapturedBytes = Math.max(64 * 1024, options.maxCapturedBytes ?? 5 * 1024 * 1024);
     this.killGraceMs = Math.max(1, options.killGraceMs ?? 5_000);
+    this.readProcessIdentity = options.readProcessIdentity ?? readOsProcessIdentity;
+    this.signalProcessGroup = options.signalProcessGroup ?? ((processGroupId, signal) => {
+      process.kill(-processGroupId, signal);
+    });
   }
 
   async submit<T>(task: AgentTask<T>, signal?: AbortSignal): Promise<AgentResult<T>> {
@@ -253,7 +283,8 @@ export class PiSubprocessAgentPool implements AgentPool {
         detached: true,
         env: workerEnvironment,
       });
-      this.running.set(task.id, proc);
+      const ownedProcess = captureOwnedWorkerProcess(proc, this.readProcessIdentity);
+      this.running.set(task.id, ownedProcess);
       const closeWaiter = new Promise<void>((resolveClose) => this.closeResolvers.set(task.id, resolveClose));
       this.closeWaiters.set(task.id, closeWaiter);
       let stdout = "";
@@ -284,8 +315,8 @@ export class PiSubprocessAgentPool implements AgentPool {
         // scope is intentionally retained until `close`, including throughout
         // the bounded TERM -> KILL grace period.
         if (signalChild) {
-          signalOwnedProcess(proc, "SIGTERM");
-          this.scheduleKillEscalation(task.id, proc);
+          this.signalOwnedProcess(ownedProcess, "SIGTERM");
+          this.scheduleKillEscalation(task.id, ownedProcess);
         }
       };
       const enforceBudget = (observation: UsageObservation, signalChild = true): void => {
@@ -317,15 +348,18 @@ export class PiSubprocessAgentPool implements AgentPool {
         }
       };
       const timeout = setTimeout(() => {
-        exhaustBudget("timeoutMs", task.budget.timeoutMs, Date.now() - startedMs);
+        // The timer firing is itself proof that the configured wall budget was
+        // reached. Clamp coarse/adjusted wall-clock samples to that deadline so
+        // receipts cannot report a timeout below their own maximum.
+        exhaustBudget("timeoutMs", task.budget.timeoutMs, Math.max(task.budget.timeoutMs, Date.now() - startedMs));
       }, task.budget.timeoutMs);
       timeout.unref();
 
       const abort = () => {
         aborted = true;
         this.cancelledTasks.add(task.id);
-        signalOwnedProcess(proc, "SIGTERM");
-        this.scheduleKillEscalation(task.id, proc);
+        this.signalOwnedProcess(ownedProcess, "SIGTERM");
+        this.scheduleKillEscalation(task.id, ownedProcess);
       };
       signal?.addEventListener("abort", abort, { once: true });
 
@@ -486,14 +520,14 @@ export class PiSubprocessAgentPool implements AgentPool {
   }
 
   async cancel(taskId: string): Promise<PoolCancelStatus> {
-    const proc = this.running.get(taskId);
-    if (proc) {
+    const ownedProcess = this.running.get(taskId);
+    if (ownedProcess) {
       this.cancelledTasks.add(taskId);
       // The lease/write scope remains held until the owned process group
       // actually emits close. Releasing at signal time permits overlapping
       // writers while a slow child is still mutating the worktree.
-      signalOwnedProcess(proc, "SIGTERM");
-      this.scheduleKillEscalation(taskId, proc);
+      this.signalOwnedProcess(ownedProcess, "SIGTERM");
+      this.scheduleKillEscalation(taskId, ownedProcess);
       return "running";
     }
     if (this.queuedTasks.delete(taskId)) {
@@ -506,13 +540,13 @@ export class PiSubprocessAgentPool implements AgentPool {
   }
 
   async shutdown(): Promise<void> {
-    for (const [taskId, proc] of this.running.entries()) {
+    for (const [taskId, ownedProcess] of this.running.entries()) {
       this.cancelledTasks.add(taskId);
-      signalOwnedProcess(proc, "SIGTERM");
+      this.signalOwnedProcess(ownedProcess, "SIGTERM");
     }
     this.queuedTasks.clear();
     await waitForSettled([...this.closeWaiters.values()], 5_000);
-    for (const proc of this.running.values()) signalOwnedProcess(proc, "SIGKILL");
+    for (const ownedProcess of this.running.values()) this.signalOwnedProcess(ownedProcess, "SIGKILL");
     await waitForSettled([...this.closeWaiters.values()], 1_000);
     // If a broken spawn implementation never emits close, retain no reusable
     // pool state after shutdown; production children received SIGKILL above.
@@ -562,16 +596,45 @@ export class PiSubprocessAgentPool implements AgentPool {
     this.closeWaiters.delete(taskId);
   }
 
-  private scheduleKillEscalation(taskId: string, proc: ReturnType<typeof spawn>): void {
+  private scheduleKillEscalation(taskId: string, ownedProcess: OwnedWorkerProcess): void {
     if (this.killEscalations.has(taskId)) return;
     const timer = setTimeout(() => {
       this.killEscalations.delete(taskId);
       // The identity check prevents a delayed timer from signalling a later
       // task that happens to reuse the same task id.
-      if (this.running.get(taskId) === proc) signalOwnedProcess(proc, "SIGKILL");
+      if (this.running.get(taskId) === ownedProcess) this.signalOwnedProcess(ownedProcess, "SIGKILL");
     }, this.killGraceMs);
     timer.unref();
     this.killEscalations.set(taskId, timer);
+  }
+
+  private signalOwnedProcess(ownedProcess: OwnedWorkerProcess, signal: NodeJS.Signals): boolean {
+    const { child, identity, pid } = ownedProcess;
+
+    // Test doubles historically omit a PID. They cannot trigger a negative-PID
+    // OS signal, so retaining the exact ChildProcess-handle fallback keeps the
+    // injection seam useful without weakening the production path.
+    if (pid === null) {
+      try { return child.kill(signal); } catch { return false; }
+    }
+
+    // A real PID is never signalled through ChildProcess.kill: both it and a
+    // negative-PGID kill ultimately trust a reusable integer. Authorize every
+    // signal by re-reading the kernel start identity captured at spawn.
+    if (ownedProcess.ownershipRevoked || identity === null) return false;
+    const current = safeReadProcessIdentity(this.readProcessIdentity, pid);
+    if (!sameProcessBirthIdentity(identity, current) || current.processGroupId !== pid) {
+      ownedProcess.ownershipRevoked = true;
+      return false;
+    }
+
+    try {
+      this.signalProcessGroup(current.processGroupId, signal);
+      return true;
+    } catch (error) {
+      if (hasProcessErrorCode(error, "ESRCH")) ownedProcess.ownershipRevoked = true;
+      return false;
+    }
   }
 
   private clearKillEscalation(taskId: string): void {
@@ -802,18 +865,124 @@ function cleanupWorkerRuntimeDir(runtimeDir: string): void {
   fs.rmSync(resolved, { recursive: true, force: true });
 }
 
-function signalOwnedProcess(proc: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
-  const pid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null;
-  if (pid !== null) {
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch {
-      // Fake spawns and platforms without group signalling fall back to the
-      // exact ChildProcess handle; never use a name-wide pkill.
+function captureOwnedWorkerProcess(
+  child: ReturnType<typeof spawn>,
+  readIdentity: ProcessIdentityReader,
+): OwnedWorkerProcess {
+  const pid = typeof child.pid === "number" && Number.isSafeInteger(child.pid) && child.pid > 0
+    ? child.pid
+    : null;
+  if (pid === null) return { child, pid: null, identity: null, ownershipRevoked: false };
+
+  const observed = safeReadProcessIdentity(readIdentity, pid);
+  const identity = observed !== null
+    && observed.pid === pid
+    && observed.parentPid === process.pid
+    && observed.processGroupId === pid
+    && observed.startToken.length > 0
+    ? observed
+    : null;
+  return { child, pid, identity, ownershipRevoked: identity === null };
+}
+
+function safeReadProcessIdentity(
+  readIdentity: ProcessIdentityReader,
+  pid: number,
+): ProcessBirthIdentity | null {
+  try {
+    const identity = readIdentity(pid);
+    if (identity === null
+      || identity.pid !== pid
+      || !Number.isSafeInteger(identity.parentPid)
+      || identity.parentPid <= 0
+      || !Number.isSafeInteger(identity.processGroupId)
+      || identity.processGroupId <= 0
+      || typeof identity.startToken !== "string"
+      || identity.startToken.length === 0) {
+      return null;
     }
+    return identity;
+  } catch {
+    return null;
   }
-  try { proc.kill(signal); } catch { /* already closed */ }
+}
+
+function sameProcessBirthIdentity(
+  expected: ProcessBirthIdentity,
+  current: ProcessBirthIdentity | null,
+): current is ProcessBirthIdentity {
+  return current !== null
+    && current.pid === expected.pid
+    && current.parentPid === expected.parentPid
+    && current.processGroupId === expected.processGroupId
+    && current.startToken === expected.startToken;
+}
+
+function hasProcessErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+/**
+ * Read the kernel process birth identity used to authenticate detached-group
+ * cleanup. Linux exposes an exact boot-scoped start tick in /proc. Darwin's
+ * `ps lstart` is its portable process-birth token; PID, PPID, and PGID are
+ * captured from the same row and must all continue to match.
+ */
+export function readOsProcessIdentity(pid: number): ProcessBirthIdentity | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  if (process.platform === "linux") return readLinuxProcessIdentity(pid);
+  if (process.platform === "darwin") return readDarwinProcessIdentity(pid);
+  return null;
+}
+
+function readLinuxProcessIdentity(pid: number): ProcessBirthIdentity | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8").trim();
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd < 0) return null;
+    const fields = stat.slice(commandEnd + 1).trim().split(/\s+/);
+    // After `(comm)`: state=field 3 (index 0), ppid=4 (1), pgrp=5 (2),
+    // and starttime=22 (19). The start tick is unique for this boot.
+    if (fields.length <= 19 || !/^\d+$/.test(fields[19])) return null;
+    const parentPid = Number(fields[1]);
+    const processGroupId = Number(fields[2]);
+    if (!Number.isSafeInteger(parentPid) || parentPid <= 0
+      || !Number.isSafeInteger(processGroupId) || processGroupId <= 0) return null;
+    const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    if (!/^[0-9a-f-]{16,}$/i.test(bootId)) return null;
+    return { pid, parentPid, processGroupId, startToken: `linux:${bootId}:${fields[19]}` };
+  } catch {
+    return null;
+  }
+}
+
+function readDarwinProcessIdentity(pid: number): ProcessBirthIdentity | null {
+  try {
+    const output = execFileSync(
+      "/bin/ps",
+      ["-p", String(pid), "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart="],
+      {
+        encoding: "utf8",
+        env: { LC_ALL: "C", PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        maxBuffer: 4_096,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1_000,
+      },
+    ).trim();
+    const match = /^(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(output);
+    if (!match) return null;
+    const observedPid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const processGroupId = Number(match[3]);
+    const startedAt = match[4].trim().replace(/\s+/g, " ");
+    if (observedPid !== pid
+      || !Number.isSafeInteger(parentPid) || parentPid <= 0
+      || !Number.isSafeInteger(processGroupId) || processGroupId <= 0
+      || startedAt.length === 0) return null;
+    return { pid, parentPid, processGroupId, startToken: `darwin:${startedAt}` };
+  } catch {
+    return null;
+  }
 }
 
 async function waitForSettled(waiters: Promise<void>[], timeoutMs: number): Promise<void> {

@@ -541,6 +541,187 @@ try {
   retention.runManagedLogRetention(root, future + retention.RETENTION_INTERVAL_MS * 2 + 1);
   assert.equal(fs.existsSync(liveRaw), false, "completed/stale runs re-enter raw TTL and cap accounting");
 
+  // Production-harness evidence has a separate, ownership-scoped policy. It
+  // keeps a useful recent success/failure window, protects active/current and
+  // pinned evidence, but expires older runs and enforces hard run/aggregate
+  // caps without broadening deletion to arbitrary evidence.
+  const productionEvidenceRoot = path.join(managed, "evidence");
+  const evidenceNow = future + retention.RETENTION_INTERVAL_MS * 4;
+  const touchTree = (target, timestamp) => {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) return;
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(target)) touchTree(path.join(target, name), timestamp);
+    }
+    fs.utimesSync(target, new Date(timestamp), new Date(timestamp));
+  };
+  const makeProductionEvidence = ({ namespace = "prod-runtime-confirmation", id, status, timestamp, bytes = 1, pinned = false }) => {
+    const directory = path.join(productionEvidenceRoot, namespace, id);
+    fs.mkdirSync(directory, { recursive: true });
+    if (status !== "incomplete") {
+      const result = namespace === "prod-feature-matrix"
+        ? { executionStatus: status === "success" ? "PASS" : "FAIL" }
+        : { overall: status === "success" ? "PASS" : "FAIL" };
+      fs.writeFileSync(path.join(directory, "results.json"), JSON.stringify(result));
+    }
+    const payload = path.join(directory, "payload.bin");
+    fs.writeFileSync(payload, "");
+    fs.truncateSync(payload, bytes);
+    if (pinned) fs.writeFileSync(path.join(directory, "PINNED"), "retain\n");
+    touchTree(directory, timestamp);
+    return { directory, payload };
+  };
+
+  const oldSuccesses = Array.from({ length: retention.RECENT_PRODUCTION_SUCCESSES_TO_KEEP + 2 }, (_, index) => (
+    makeProductionEvidence({
+      id: `expired-success-${index}`,
+      status: "success",
+      timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_SUCCESS_TTL_MS - (index + 1) * 1_000,
+    })
+  ));
+  const oldFailures = Array.from({ length: retention.RECENT_PRODUCTION_FAILURES_TO_KEEP + 2 }, (_, index) => (
+    makeProductionEvidence({
+      id: `expired-failure-${index}`,
+      status: "failure",
+      timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_FAILURE_TTL_MS - (index + 1) * 1_000,
+    })
+  ));
+  const pinnedEvidence = makeProductionEvidence({
+    id: "expired-pinned-success",
+    status: "success",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_SUCCESS_TTL_MS - 60_000,
+    pinned: true,
+  });
+  const activeEvidence = makeProductionEvidence({
+    id: "expired-active-failure",
+    status: "failure",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_FAILURE_TTL_MS - 60_000,
+  });
+  const activeEvidenceMarker = path.join(managed, "runs", "expired-active-failure", "ACTIVE");
+  fs.mkdirSync(path.dirname(activeEvidenceMarker), { recursive: true });
+  fs.writeFileSync(activeEvidenceMarker, "owned\n");
+  fs.utimesSync(activeEvidenceMarker, new Date(evidenceNow), new Date(evidenceNow));
+  const livePidEvidence = makeProductionEvidence({
+    id: "expired-live-pid-failure",
+    status: "failure",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_FAILURE_TTL_MS - 90_000,
+  });
+  const livePidMarker = path.join(managed, "runs", "expired-live-pid-failure", "ACTIVE");
+  fs.mkdirSync(path.dirname(livePidMarker), { recursive: true });
+  fs.writeFileSync(livePidMarker, `${process.pid}\n`);
+  fs.utimesSync(
+    livePidMarker,
+    new Date(evidenceNow - retention.RETENTION_INTERVAL_MS * 3),
+    new Date(evidenceNow - retention.RETENTION_INTERVAL_MS * 3),
+  );
+  makeProductionEvidence({
+    namespace: "prod-feature-matrix",
+    id: "current-matrix-success",
+    status: "success",
+    timestamp: evidenceNow,
+  });
+  const structurallyProtectedEvidence = makeProductionEvidence({
+    namespace: "prod-feature-matrix",
+    id: "protected-structure",
+    status: "incomplete",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_INCOMPLETE_TTL_MS - 120_000,
+  });
+  fs.writeFileSync(path.join(structurallyProtectedEvidence.directory, "owner.json"), "{}\n");
+  fs.writeFileSync(path.join(structurallyProtectedEvidence.directory, "artifact.head.json"), "{}\n");
+  fs.mkdirSync(path.join(structurallyProtectedEvidence.directory, "heads"));
+  fs.mkdirSync(path.join(structurallyProtectedEvidence.directory, "aggregates"));
+  fs.writeFileSync(path.join(structurallyProtectedEvidence.directory, "aggregates", "summary.json"), "{}\n");
+  touchTree(structurallyProtectedEvidence.directory, evidenceNow - retention.PRODUCTION_EVIDENCE_INCOMPLETE_TTL_MS - 120_000);
+  const incompleteEvidence = makeProductionEvidence({
+    namespace: "prod-feature-matrix",
+    id: "expired-incomplete-matrix",
+    status: "incomplete",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_INCOMPLETE_TTL_MS - 60_000,
+  });
+  const evidenceTtlReport = retention.runManagedLogRetention(root, evidenceNow);
+  assert.equal(oldSuccesses.filter(({ directory }) => fs.existsSync(directory)).length, retention.RECENT_PRODUCTION_SUCCESSES_TO_KEEP);
+  assert.equal(oldFailures.filter(({ directory }) => fs.existsSync(directory)).length, retention.RECENT_PRODUCTION_FAILURES_TO_KEEP);
+  assert.equal(fs.existsSync(pinnedEvidence.directory), true, "PINNED production evidence survives TTL");
+  assert.equal(fs.existsSync(activeEvidence.directory), true, "a matching fresh run marker protects active production evidence");
+  assert.equal(fs.existsSync(livePidEvidence.directory), true, "a still-live harness PID protects evidence after its heartbeat ages out");
+  assert.equal(fs.existsSync(structurallyProtectedEvidence.directory), true, "owner, head, and aggregate evidence is never purged");
+  assert.equal(fs.existsSync(incompleteEvidence.directory), false, "abandoned feature-matrix evidence expires");
+  assert(evidenceTtlReport.deleted.some(({ reason }) => reason === "evidence_ttl"), "evidence TTL deletions are classified");
+
+  fs.unlinkSync(activeEvidenceMarker);
+  fs.unlinkSync(livePidMarker);
+  retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 2 + 1);
+  assert.equal(fs.existsSync(activeEvidence.directory), false, "stale evidence is eligible after its matching ACTIVE marker disappears");
+  assert.equal(fs.existsSync(livePidEvidence.directory), false, "live-PID evidence is eligible after its marker disappears");
+
+  const currentEvidence = makeProductionEvidence({
+    id: "current-success",
+    status: "success",
+    timestamp: evidenceNow + retention.RETENTION_INTERVAL_MS * 3,
+  });
+  const oversizedEvidence = makeProductionEvidence({
+    id: "oversized-old-success",
+    status: "success",
+    timestamp: evidenceNow - 10 * 24 * 60 * 60_000,
+    bytes: retention.PRODUCTION_EVIDENCE_RUN_CAP_BYTES + 1,
+  });
+  const runCapReport = retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 3);
+  assert.equal(fs.existsSync(oversizedEvidence.directory), false, "an old oversized production receipt is purged as one bounded run");
+  assert(runCapReport.deleted.some(({ reason }) => reason === "evidence_run_cap"), "per-run evidence cap deletion is classified");
+  assert.equal(fs.existsSync(currentEvidence.directory), true, "the newest production receipt is protected as current");
+
+  const aggregateRuns = Array.from({ length: 5 }, (_, index) => makeProductionEvidence({
+    namespace: "prod-feature-matrix",
+    id: `aggregate-pressure-${index}`,
+    status: "success",
+    timestamp: evidenceNow - (5 + index) * 24 * 60 * 60_000,
+    bytes: 110 * 1024 * 1024,
+  }));
+  const aggregateReport = retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 3 + 1);
+  assert(aggregateReport.deleted.some(({ reason }) => reason === "evidence_total_cap"), "aggregate production-evidence cap deletion is classified");
+  assert(aggregateRuns.some(({ directory }) => !fs.existsSync(directory)), "aggregate cap purges the oldest eligible matrix evidence");
+  const journalEvents = fs.readFileSync(path.join(managed, "logs", "retention.journal.jsonl"), "utf8")
+    .trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert(journalEvents.some((event) => event.metadata?.deleted?.some?.(({ reason }) => reason === "evidence_total_cap")), "evidence deletion reasons are journaled");
+
+  fs.truncateSync(currentEvidence.payload, retention.PRODUCTION_EVIDENCE_RUN_CAP_BYTES + 1);
+  touchTree(currentEvidence.directory, evidenceNow + retention.RETENTION_INTERVAL_MS * 4);
+  const protectedEvidencePressure = retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 4);
+  assert.equal(fs.existsSync(currentEvidence.directory), true, "current oversized evidence is never deleted to hide pressure");
+  assert.equal(protectedEvidencePressure.blocked, true, "current evidence above its run cap fails health closed");
+  assert(protectedEvidencePressure.reasons.some((reason) => reason.includes("exceed run cap")));
+  fs.truncateSync(currentEvidence.payload, 1);
+
+  const symlinkEvidence = makeProductionEvidence({
+    namespace: "prod-feature-matrix",
+    id: "unsafe-symlink-run",
+    status: "failure",
+    timestamp: evidenceNow - retention.PRODUCTION_EVIDENCE_FAILURE_TTL_MS - 120_000,
+  });
+  const symlinkOutside = path.join(root, "evidence-symlink-target.txt");
+  fs.writeFileSync(symlinkOutside, "outside must survive\n");
+  fs.symlinkSync(symlinkOutside, path.join(symlinkEvidence.directory, "outside-link"));
+  const unsafeEvidenceReport = retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 4 + 1);
+  assert.equal(fs.existsSync(symlinkOutside), true, "evidence retention never follows a symlink outside its owned root");
+  assert.equal(unsafeEvidenceReport.blocked, true, "unsafe production evidence fails health closed");
+  assert(unsafeEvidenceReport.reasons.some((reason) => reason.includes("contains a symlink")));
+  fs.unlinkSync(path.join(symlinkEvidence.directory, "outside-link"));
+  fs.rmSync(symlinkEvidence.directory, { recursive: true });
+  retention.runManagedLogRetention(root, evidenceNow + retention.RETENTION_INTERVAL_MS * 4 + 2);
+
+  const linkedEvidenceRepo = path.join(root, "linked-evidence-repository");
+  const linkedManaged = logging.ensureManagedRoot(linkedEvidenceRepo);
+  const linkedEvidenceTarget = path.join(root, "linked-evidence-target");
+  const linkedTargetRun = path.join(linkedEvidenceTarget, "prod-runtime-confirmation", "old-run");
+  fs.mkdirSync(linkedTargetRun, { recursive: true });
+  fs.writeFileSync(path.join(linkedTargetRun, "results.json"), JSON.stringify({ overall: "PASS" }));
+  touchTree(linkedTargetRun, evidenceNow - retention.PRODUCTION_EVIDENCE_SUCCESS_TTL_MS - 60_000);
+  fs.symlinkSync(linkedEvidenceTarget, path.join(linkedManaged, "evidence"), "dir");
+  const linkedEvidenceReport = retention.runManagedLogRetention(linkedEvidenceRepo, evidenceNow);
+  assert.equal(fs.existsSync(linkedTargetRun), true, "an ancestor evidence symlink cannot redirect retention into another tree");
+  assert.equal(linkedEvidenceReport.blocked, true, "an in-root ancestor symlink fails retention closed");
+  assert(linkedEvidenceReport.reasons.some((reason) => reason.includes("exact owned directory")));
+
   const protectedPressure = path.join(managed, "evidence", "protected-pressure.bin");
   fs.writeFileSync(protectedPressure, "");
   fs.truncateSync(protectedPressure, retention.TOTAL_MANAGED_CAP_BYTES + 1);

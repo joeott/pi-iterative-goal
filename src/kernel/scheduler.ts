@@ -54,9 +54,11 @@
  *   Because that orientation can invert true producer/consumer flow,
  *   contract-ONLY edges inform rank hand-off costs but never gate execution
  *   readiness (C3-ADV-005).
- * - A failed shard's dependents are marked blocked and left unclaimed; the
- *   repair re-dispatch loop is NOT automatic in v1 (§6.6 assigns repair to
- *   the merge layer, C4).
+ * - A genuine failed shard's dependents are marked blocked and left
+ *   unclaimed; the semantic repair loop is NOT automatic in v1 (§6.6 assigns
+ *   repair to the merge layer, C4). Infrastructure-interrupted claims marked
+ *   process_restart are different: a restored transition safely re-dispatches
+ *   only those episodes and never repeats already-completed work.
  * - EFT placement uses no gap insertion (classic HEFT list scheduling only).
  * - The cascade monitor reads "intervening verification" strictly
  *   (C3-ADV-012): only the failed shard's own re-completion (a successful
@@ -76,13 +78,14 @@ import { CapabilityBroker } from "../capabilities/broker.js";
 import { PolicyEngine } from "../policy/engine.js";
 import type { AgentPool } from "../agents/pool.js";
 import { serializePathScope } from "../domain/path-scope.js";
+import { requireModelRoute } from "../domain/model-roster.js";
 import { readIterativeGoalSettings } from "../domain/project-settings.js";
 import type { ShardPlan } from "../domain/shard.js";
 import { shardDispatchTaskId } from "../domain/shard.js";
 import { logDebug } from "../logging.js";
 import type { StateManagerAPI } from "../state.js";
 import { buildAgentTaskFromProfile } from "../subagents.js";
-import type { SubagentTaskRecord, SubagentUsageCounters } from "../types.js";
+import type { IterativeGoalState, SubagentTaskRecord, SubagentUsageCounters } from "../types.js";
 import { persistShardPatchArtifact } from "../workspace/worktrees.js";
 
 function log(msg: string) {
@@ -108,6 +111,14 @@ export interface SchedulerConfig {
   alpha: number;
   /** Policy dial β — weight of telemetry-estimated cost in bid utility (high β prices thrift, §6.5). */
   beta: number;
+  /**
+   * Optional exact-roster profile for production shard implementers. When
+   * absent, the Implementer role's canonical default remains authoritative.
+   * An invalid explicit value is carried into the dispatch gate and rejected
+   * by requireModelRoute before any worker process is spawned; it is never
+   * silently replaced with another model.
+   */
+  workerModelProfile: string | null;
 }
 
 export const DEFAULT_DRIFT_THRESHOLD = 0.5;
@@ -137,6 +148,10 @@ export function loadSchedulerConfig(cwd: string): SchedulerConfig {
     replanIntervalMs: Math.floor(clampNumber(config.replanIntervalMs, DEFAULT_REPLAN_INTERVAL_MS, 0, 3_600_000)),
     alpha: clampNumber(config.alpha, 1, 0, 100),
     beta: clampNumber(config.beta, 1, 0, 100),
+    // Preserve an explicitly configured selector byte-for-byte. Empty or
+    // whitespace-padded values are inexact inputs and must reach the exact
+    // roster gate as errors rather than becoming a default/substitute route.
+    workerModelProfile: typeof config.workerModelProfile === "string" ? config.workerModelProfile : null,
   };
 }
 
@@ -946,6 +961,34 @@ export interface ShardExecutionReport {
   outcomes: DispatchOutcome[];
 }
 
+const PROCESS_RESTART_ERROR = "process_restart";
+
+/**
+ * A shard dispatch id is stable for its first episode and unique for every
+ * crash-recovery episode. Reusing the first id would append a second
+ * subagent_started record that recordSubagentFinished could not distinguish
+ * from the already-failed task. Both task and claim ledgers count as used:
+ * shard_claimed can survive the narrow pre-subagent_started crash window.
+ */
+function nextShardDispatchTaskId(
+  state: IterativeGoalState,
+  cycle: number,
+  shardId: string,
+): string {
+  const base = shardDispatchTaskId(cycle, shardId);
+  const used = new Set([
+    ...state.swarm.tasks.map((task) => task.taskId),
+    ...state.shards.claims
+      .map((claim) => claim.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string"),
+  ]);
+  if (!used.has(base)) return base;
+  for (let episode = 2; ; episode += 1) {
+    const candidate = `${base}-retry-${episode}`;
+    if (!used.has(candidate)) return candidate;
+  }
+}
+
 /**
  * Executes a shard plan: builds the schedule (HEFT when the flag is on and
  * telemetry exists; conservative fallback when not; plain posted order when
@@ -965,6 +1008,12 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
   const state = deps.stateManager.getState();
   if (!state) throw new Error("executeShardPlan requires an active run");
   const runId = state.runId;
+  if (config.workerModelProfile !== null) {
+    // Validate before recording a defensive plan, claim, or worker event.
+    // The pool repeats this gate while materializing the selected provider,
+    // but that later check cannot prevent ledger pollution on bad config.
+    requireModelRoute(config.workerModelProfile);
+  }
   // Ledger coherence: every claim references this planId, so the plan must be
   // on the ledger for replay to rebuild shard state and the shards d/t field.
   // In production the C2 hook posts it at the plan→implement transition;
@@ -998,7 +1047,34 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
   let activeCostModel = buildCostModel(telemetry());
   let lastReplanAt = now();
 
-  const pending = new Set(schedule.order);
+  // Resume from the latest replayed claim episode for this exact plan cycle.
+  // Completed work satisfies dependencies and is never repeated. Genuine
+  // failures stay terminal. Only unclaimed work and process_restart failures
+  // enter this execution's pending set.
+  const priorClaims = new Map(
+    state.shards.claims
+      .filter((claim) => claim.planId === plan.id && claim.cycle === plan.cycle)
+      .map((claim) => [claim.shardId, claim]),
+  );
+  for (const [shardId, claim] of priorClaims) {
+    if (!stepById.has(shardId)) continue;
+    if (claim.status === "completed") {
+      completedShardIds.add(shardId);
+      startedShardIds.add(shardId);
+    } else if (claim.status === "failed" && claim.error !== PROCESS_RESTART_ERROR) {
+      failedShardIds.add(shardId);
+      startedShardIds.add(shardId);
+    } else if (claim.status === "claimed") {
+      // A live or C4 repair-loop claim is not ours to duplicate. Production
+      // restore converts dispatched taskId-bearing claims to process_restart;
+      // taskId:null remains held for the merge repair path.
+      startedShardIds.add(shardId);
+    }
+  }
+  const pending = new Set(schedule.order.filter((shardId) => {
+    const claim = priorClaims.get(shardId);
+    return !claim || (claim.status === "failed" && claim.error === PROCESS_RESTART_ERROR);
+  }));
   const inFlight = new Map<string, Promise<void>>();
   let order = [...schedule.order];
 
@@ -1010,7 +1086,7 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
     const slot = scheduled?.slot ?? null;
     try {
       const built = buildAgentTaskFromProfile({
-        id: shardDispatchTaskId(plan.cycle, shardId),
+        id: nextShardDispatchTaskId(deps.stateManager.getState()!, plan.cycle, shardId),
         role,
         // checks[].command is ledger-scrubbed UNTRUSTED_DATA and INERT — never
         // rendered into the prompt, never executed (C3 contract note).
@@ -1025,6 +1101,7 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
             : "No cross-shard contracts.",
         ].join("\n"),
         allowedPaths: shard.allowedPaths.map(serializePathScope),
+        model: config.workerModelProfile ?? undefined,
         inputArtifactIds: [],
       });
       if (!built.ok) throw new Error(built.error);
@@ -1071,9 +1148,12 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
         // crash between dispatch and merge-back never strands the work — the
         // claim carries the run-dir artifact path and a warm restart rebuilds
         // merge inputs from the ledger.
-        const patchText = outcome.result?.patch ?? "";
-        const patchArtifactPath = patchText
-          ? persistShardPatchArtifact(deps.stateManager, plan.cycle, shardId, patchText, deps.cwd)
+        const capturedPatch = outcome.result?.patch;
+        // Persist even an exact empty patch. "" is a successful no-op while
+        // null/undefined means capture failed; collapsing both to a null
+        // artifact pointer makes a warm restart reject valid no-op work.
+        const patchArtifactPath = typeof capturedPatch === "string"
+          ? persistShardPatchArtifact(deps.stateManager, plan.cycle, shardId, capturedPatch, deps.cwd)
           : null;
         deps.stateManager.recordShardFinished(shardId, { runId, planId: plan.id, cycle: plan.cycle, status: "completed", taskId: agentTask.id, patchArtifactPath });
         completedShardIds.add(shardId);
@@ -1244,12 +1324,26 @@ export async function runSchedulerHook(deps: SchedulerHookDeps): Promise<ShardEx
     log(`Scheduler enabled but no fan_out shard plan for cycle ${state.cycle}; implement continues single-slice`);
     return null;
   }
-  // Idempotency: the transition fires once per cycle, but a re-driven
-  // transition (warm restart, restored run) must not re-dispatch work that
-  // already has claim records for this plan+cycle.
-  if (state.shards.claims.some((claim) => claim.planId === plan.id && claim.cycle === plan.cycle)) {
-    log(`Shard plan ${plan.id} cycle ${plan.cycle} already has claim records; scheduler hook skips re-execution`);
+  const planClaims = state.shards.claims.filter(
+    (claim) => claim.planId === plan.id && claim.cycle === plan.cycle,
+  );
+  // A claim that is still live (or taskId:null in C4's repair loop) is not
+  // safe to duplicate. On a real restore, every dispatched taskId-bearing
+  // claim is first reconciled to failed/process_restart by StateManager.
+  if (planClaims.some((claim) => claim.status === "claimed")) {
+    log(`Shard plan ${plan.id} cycle ${plan.cycle} still has an active/repair claim; scheduler hook skips concurrent re-dispatch`);
     return null;
+  }
+  const resumable = plan.shards.filter((shard) => {
+    const claim = planClaims.find((candidate) => candidate.shardId === shard.id);
+    return !claim || (claim.status === "failed" && claim.error === PROCESS_RESTART_ERROR);
+  });
+  if (resumable.length === 0) {
+    log(`Shard plan ${plan.id} cycle ${plan.cycle} is terminal; scheduler hook skips re-execution`);
+    return null;
+  }
+  if (planClaims.length > 0) {
+    log(`Shard plan ${plan.id} cycle ${plan.cycle} resumes ${resumable.length} unclaimed or process-restart shard(s); completed and genuinely failed claims stay settled`);
   }
 
   const poolEntry = deps.pool ? null : getRunAgentPool(state.runId, deps.cwd, {});

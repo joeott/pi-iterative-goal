@@ -1850,12 +1850,26 @@ import path from "node:path";
       eq(body.model, "glm-5.2");
       eq(body.enable_thinking, false);
       return new Response(JSON.stringify({
+        model: "glm-5.2",
         choices: [{ message: { content: "OK" }, finish_reason: "stop", index: 0 }],
       }), { status: 200, headers: { "content-type": "application/json" } });
     },
   });
   eq(probe.ok, true);
   eq(probe.text, "OK");
+  eq(probe.responseModel, "glm-5.2");
+
+  const substitutedProbe = await probeZaiGlm52({
+    cwd: tmp,
+    explicitEnvFiles: [envPath],
+    fetchImpl: async () => new Response(JSON.stringify({
+      model: "glm-5.2-latest",
+      choices: [{ message: { content: "OK" }, finish_reason: "stop", index: 0 }],
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  eq(substitutedProbe.ok, false);
+  eq(substitutedProbe.responseModel, "glm-5.2-latest");
+  ok(substitutedProbe.error.includes("response_model_identity_mismatch"));
 
   process.env.ZAI_API_KEY = "fake-zai-key";
   delete process.env.ZAI_API_BASE_URL;
@@ -1990,6 +2004,9 @@ process.exit(2);
   eq(latest.readOnlyEnforced, true);
   eq(latest.secretValuesRead, false);
   eq(latest.productionMutationsAttempted, false);
+  eq(latest.baseline.status, "absent");
+  eq(latest.drift.baselineStatus, "absent");
+  eq(latest.drift.changed, null);
   ok(latest.modelVisibleContext.path.endsWith("handoff-model-context.md"));
   ok(fs.existsSync(latest.modelVisibleContext.path));
   ok(fs.readFileSync(latest.modelVisibleContext.path, "utf8").includes("<UNTRUSTED_DATA"));
@@ -2026,7 +2043,72 @@ process.exit(2);
   eq(continuousLatest.evidenceSigning.signed, true);
   eq(continuousLatest.evidenceSigning.verified, true);
 
-  console.log("✓ Test 27: Production security review runner parses the handoff, signs evidence, and supports bounded continuous read-only mode");
+  const baselineTmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-prod-review-baseline-"));
+  const baselineHandoff = path.join(baselineTmp, "handoff.md");
+  const baselineFakeBin = path.join(baselineTmp, "bin");
+  const baselineFakeAws = path.join(baselineFakeBin, "aws");
+  fs.mkdirSync(baselineFakeBin, { recursive: true });
+  fs.writeFileSync(baselineHandoff, [
+    "## Safe Read-Only Validation Commands",
+    "",
+    "```bash",
+    "aws rds describe-db-clusters --db-cluster-identifier fixture-cluster --profile fixture --region us-east-1",
+    "```",
+  ].join("\n"));
+  fs.writeFileSync(baselineFakeAws, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "rds" && args[1] === "describe-db-clusters") {
+  process.stdout.write(JSON.stringify({ DBClusters: [{
+    DBClusterIdentifier: "fixture-cluster",
+    DBClusterArn: "arn:aws:rds:us-east-1:111111111111:cluster:fixture-cluster",
+    StorageEncrypted: false,
+    DeletionProtection: false,
+  }] }));
+  process.exit(0);
+}
+process.exit(2);
+`);
+  fs.chmodSync(baselineFakeAws, 0o755);
+  const baselineOutput = path.join(baselineTmp, "output");
+  const runBaselineReview = () => spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "prod-security-review-readonly.mjs"),
+    "--handoff", baselineHandoff,
+    "--output-dir", baselineOutput,
+    "--max-iterations", "1",
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${baselineFakeBin}${path.delimiter}${process.env.PATH}`,
+    },
+  });
+
+  const firstBaselineResult = runBaselineReview();
+  eq(firstBaselineResult.status, 0, firstBaselineResult.stderr || firstBaselineResult.stdout);
+  const firstBaseline = JSON.parse(fs.readFileSync(path.join(baselineOutput, "latest-readonly-review.json"), "utf8"));
+  eq(firstBaseline.baseline.status, "absent");
+  eq(firstBaseline.findingSummary.open, 1);
+  eq(firstBaseline.findingSummary.new, 0);
+  eq(firstBaseline.findingSummary.repeated, 0);
+  eq(firstBaseline.findingSummary.unclassified, 1);
+  eq(firstBaseline.iterations[0].findings[0].lifecycle, "unclassified");
+  eq(firstBaseline.drift.baselineStatus, "absent");
+  eq(firstBaseline.drift.changed, null);
+
+  const secondBaselineResult = runBaselineReview();
+  eq(secondBaselineResult.status, 0, secondBaselineResult.stderr || secondBaselineResult.stdout);
+  const secondBaseline = JSON.parse(fs.readFileSync(path.join(baselineOutput, "latest-readonly-review.json"), "utf8"));
+  eq(secondBaseline.baseline.status, "available");
+  eq(secondBaseline.baseline.previousRunId, firstBaseline.runId);
+  eq(secondBaseline.findingSummary.new, 0);
+  eq(secondBaseline.findingSummary.repeated, 1);
+  eq(secondBaseline.findingSummary.unclassified, 0);
+  eq(secondBaseline.iterations[0].findings[0].lifecycle, "repeated");
+  eq(secondBaseline.drift.baselineStatus, "available");
+  eq(secondBaseline.drift.changed, false);
+
+  console.log("✓ Test 27: Production security review runner parses the handoff, signs evidence, supports bounded continuous read-only mode, and classifies findings only against an available baseline");
 }
 
 // ── Test 28: GLM 5.2 is the first-class harness default ─────────────
@@ -5314,7 +5396,9 @@ const c3 = await (async () => {
     status: "claimed", workerSlot: 0, rank: 420, taskId: "sched-c1-shard-2",
     claimedAt, finishedAt: null, error: null,
   });
-  // A claim whose taskId has no running record is NOT reconciled (narrow rule).
+  // Pre-start crash window: the claim was ledgered but subagent_started never
+  // landed. Restore still knows the dispatch episode belonged to the dead
+  // process and must fail it closed rather than strand the plan.
   managerA.recordShardClaimed({
     shardId: "shard-1", planId: plan.id, runId: run.runId, cycle: plan.cycle,
     status: "claimed", workerSlot: 1, rank: 380, taskId: "sched-c1-shard-1",
@@ -5330,17 +5414,141 @@ const c3 = await (async () => {
   eq(claim2.error, "process_restart");
   ok(claim2.finishedAt);
   const claim1 = restored.shards.claims.find((claim) => claim.shardId === "shard-1");
-  eq(claim1.status, "claimed", "claim with an un-reconciled taskId is untouched");
+  eq(claim1.status, "failed", "pre-start claim fails closed on restore");
+  eq(claim1.error, "process_restart");
 
   const events = fs.readFileSync(managerB.getEventsPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  const reconciled = events.filter((event) => event.type === "shard_failed" && event.shardId === "shard-2");
-  eq(reconciled.length, 1, "claim reconciliation appends a hash-chained shard_failed");
-  eq(reconciled[0].error, "process_restart");
-  eq(reconciled[0].cycle, plan.cycle);
-  eq(reconciled[0].taskId, "sched-c1-shard-2");
+  const reconciled = events.filter((event) => event.type === "shard_failed");
+  eq(reconciled.length, 2, "both dispatched crash windows append hash-chained shard_failed events");
+  ok(reconciled.every((event) => event.error === "process_restart"));
+  ok(reconciled.every((event) => event.cycle === plan.cycle));
+  deepStrictEqual(reconciled.map((event) => event.taskId).sort(), ["sched-c1-shard-1", "sched-c1-shard-2"]);
   ok(managerB.replayActiveState(), "hash chain still verifies after claim reconciliation");
 
-  console.log("✓ Test 78: C3 restore reconciliation fails orphaned claimed shards with process_restart");
+  console.log("✓ Test 78: C3 restore reconciliation fails every dispatched claimed shard with process_restart");
+}
+
+// ── Test 78b: C3 restored plans retry only crash episodes and finish the DAG ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { PiSubprocessAgentPool } = await import("../dist/agents/pool.js");
+  const { CapabilityBroker } = await import("../dist/capabilities/broker.js");
+  const { PolicyEngine } = await import("../dist/policy/engine.js");
+  const { runSchedulerHook } = await import("../dist/kernel/scheduler.js");
+  const { runMergeBackHook } = await import("../dist/workspace/worktrees.js");
+
+  const repo = c1.makeGitRepo("pi-ig-c3-crash-resume-");
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"),
+    JSON.stringify({ iterativeGoal: {
+      scheduler: { enabled: true },
+      mergeBack: { enabled: true, testCommand: "true" },
+    } }));
+
+  const managerA = createStateManager({ appendEntry() {} });
+  eq(managerA.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = managerA.createRun("Crash resume", "A partial C3 plan resumes without replaying completed work");
+  const plan = c3.criticalPathPlan(run.runId);
+  managerA.recordShardPlan(plan);
+
+  const startedAt = new Date().toISOString();
+  const runningTask = (taskId, file) => ({
+    taskId, batchId: `sched-${plan.id}-c${plan.cycle}`, runId: run.runId,
+    role: "Implementer", mode: "parallel", backend: "pi-subprocess", detectedBackend: "none",
+    workspace: "isolated_worktree", allowedPaths: [file], status: "running",
+    startedAt, finishedAt: null, usage: null, error: null,
+  });
+  const claim = (shardId, taskId, rank) => ({
+    shardId, planId: plan.id, runId: run.runId, cycle: plan.cycle,
+    status: "claimed", workerSlot: 0, rank, taskId, claimedAt: startedAt,
+    finishedAt: null, error: null, patchArtifactPath: null,
+  });
+
+  // shard-1 completed before the process died; it must satisfy shard-3's
+  // dependency after restore and must never execute a second time.
+  managerA.recordSubagentStarted(runningTask("sched-c1-shard-1", "a/a.ts"));
+  managerA.recordSubagentFinished("sched-c1-shard-1", {
+    runId: run.runId, status: "completed",
+    usage: { input: 120, output: 40, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+  });
+  managerA.recordShardClaimed(claim("shard-1", "sched-c1-shard-1", 380));
+  const emptyPatchPath = managerA.getArtifactPath(plan.cycle, "implement", "shard-shard-1.patch");
+  fs.writeFileSync(emptyPatchPath, "");
+  managerA.recordShardFinished("shard-1", {
+    runId: run.runId, planId: plan.id, cycle: plan.cycle, status: "completed",
+    taskId: "sched-c1-shard-1", patchArtifactPath: path.relative(repo, emptyPatchPath),
+  });
+
+  // shard-2 crashes twice. Each restore settles the current episode, and the
+  // eventual scheduler retry must allocate retry-3 rather than aliasing an
+  // earlier subagent ledger record.
+  managerA.recordSubagentStarted(runningTask("sched-c1-shard-2", "b/b.ts"));
+  managerA.recordShardClaimed(claim("shard-2", "sched-c1-shard-2", 420));
+  const managerB = createStateManager({ appendEntry() {} });
+  ok(managerB.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }));
+  eq(managerB.getState().shards.claims.find((item) => item.shardId === "shard-2").error, "process_restart");
+
+  managerB.recordSubagentStarted(runningTask("sched-c1-shard-2-retry-2", "b/b.ts"));
+  managerB.recordShardClaimed(claim("shard-2", "sched-c1-shard-2-retry-2", 420));
+  const managerC = createStateManager({ appendEntry() {} });
+  ok(managerC.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }));
+  eq(managerC.getState().shards.claims.find((item) => item.shardId === "shard-2").error, "process_restart");
+
+  const spawnImpl = c1.makeFakeSpawn({ latencyMs: 5 });
+  const pool = new PiSubprocessAgentPool(repo, { spawnImpl });
+  const report = await runSchedulerHook({
+    stateManager: managerC,
+    pool,
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repo })),
+    cwd: repo,
+    backend: "pi-subprocess",
+    detectedBackend: "none",
+    schedulerEnabled: true,
+  });
+  ok(report, "restored partial plan is re-driven");
+  deepStrictEqual(report.claimOrder, ["shard-2", "shard-3", "shard-4"],
+    "only the crash-interrupted shard and never-started descendants dispatch");
+  deepStrictEqual(report.completed, ["shard-1", "shard-2", "shard-3", "shard-4"]);
+  deepStrictEqual(report.failed, []);
+  deepStrictEqual(report.blocked, []);
+  eq(spawnImpl.spawns.length, 3, "completed shard-1 was not replayed");
+
+  const state = managerC.getState();
+  ok(state.shards.claims.every((item) => item.status === "completed"), "latest claim episode for every shard completed");
+  const shard2Tasks = state.swarm.tasks.filter((task) => task.taskId.startsWith("sched-c1-shard-2"));
+  deepStrictEqual(shard2Tasks.map((task) => task.taskId), [
+    "sched-c1-shard-2",
+    "sched-c1-shard-2-retry-2",
+    "sched-c1-shard-2-retry-3",
+  ]);
+  deepStrictEqual(shard2Tasks.map((task) => task.status), ["failed", "failed", "completed"]);
+  eq(new Set(state.swarm.tasks.map((task) => task.taskId)).size, state.swarm.tasks.length,
+    "every subagent ledger episode has a unique task id");
+  const mergeReport = await runMergeBackHook({
+    stateManager: managerC,
+    cwd: repo,
+    schedulerReport: report,
+    mergeBackEnabled: true,
+    snapshotUnfinishedWork: () => ({ pendingTaskItems: 0, unverifiedShards: 0 }),
+  });
+  ok(mergeReport, "merge-back accepts the resumed scheduler report");
+  deepStrictEqual([...mergeReport.verified].sort(), ["shard-1", "shard-2", "shard-3", "shard-4"],
+    "pre-crash completion is supplemented from its patch artifact; resumed outcomes merge in the same transition");
+  ok(managerC.replayActiveState(), "resumed claim/task events retain a valid hash chain");
+
+  const before = spawnImpl.spawns.length;
+  eq(await runSchedulerHook({
+    stateManager: managerC,
+    pool,
+    broker: new CapabilityBroker(new PolicyEngine({ repoRoot: repo })),
+    cwd: repo,
+    schedulerEnabled: true,
+  }), null, "terminal plan remains idempotent");
+  eq(spawnImpl.spawns.length, before, "terminal re-drive spawns nothing");
+  await pool.shutdown();
+
+  console.log("✓ Test 78b: C3 crash restore re-dispatches only interrupted/unclaimed shards with unique task episodes");
 }
 
 // ── Test 79: C3 shard failure triggers a cadence-guarded global re-plan (C3-ADV-002) ──

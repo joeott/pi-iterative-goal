@@ -154,6 +154,13 @@ export interface PatchChangedFiles {
 }
 
 export function listPatchChangedFiles(patch: string, options: { cwd?: string } = {}): PatchChangedFiles {
+  // An exact empty capture is a successful no-op, not a malformed patch.
+  // Isolated workers can legitimately complete without changing their scoped
+  // files, and merge-back documents `""` separately from `null` (capture
+  // failure). `git apply --numstat` rejects empty stdin, so handle only the
+  // exact empty value before invoking Git; non-empty malformed input still
+  // follows the fail-closed parser path below.
+  if (patch === "") return { files: [], parseErrors: [] };
   const files = new Set<string>();
   const parseErrors: string[] = [];
   const sectionCount = patch.split(/\r?\n/).filter((line) => line.startsWith("diff --git ")).length;
