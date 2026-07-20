@@ -1,6 +1,5 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { detectSubagentBackend } from "../capabilities.js";
-import { updateStatusBar, updateWidget } from "../dashboard.js";
 import { createErrorRecord } from "../errors.js";
 import { runExternalEvaluator } from "../evaluator.js";
 import {
@@ -111,8 +110,6 @@ export function registerGoalLifecycle(
       ));
       state.lock.phaseStatus = "paused";
       stateManager.persistAll();
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
       ctx.ui.notify(`Iterative goal paused in ${state.phase}: synthetic output capture failure persisted after retry.`, "warning");
       services.log(`Pausing ${state.phase} after repeated synthetic capture failure`);
       return;
@@ -156,9 +153,6 @@ export function registerGoalLifecycle(
     const restored = stateManager.restore(ctx);
     if (restored) {
       services.log(`Restored: runId=${restored.runId}, cycle=${restored.cycle}, status=${restored.status}`);
-
-      updateStatusBar(ctx, restored);
-      updateWidget(ctx, restored);
 
       if (restored.status === "running") {
         ctx.ui.notify(`Resuming iterative goal: cycle ${restored.cycle}, phase ${restored.phase}`, "info");
@@ -219,14 +213,9 @@ async function handleValidateTransition(
     details: { goal_met: verdict.goal_met, confidence: verdict.confidence },
   });
 
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
-
   if (verdict.goal_met === true) {
     stateManager.markSucceeded();
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
     pi.sendMessage({
       customType: "iterative-goal-complete",
       content: [
@@ -246,8 +235,6 @@ async function handleValidateTransition(
   if (verdict.next_cycle_directive.focus === "external_blocked_complete") {
     stateManager.markCompletedBlocked();
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
 
     const patchPath = stateManager.getArtifactPath(state.cycle, "validate", "final.patch");
     try {
@@ -277,8 +264,6 @@ async function handleValidateTransition(
     stateManager.setStatus("pending_approval");
     state.lock.phaseStatus = "paused";
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
     ctx.ui.notify("Iterative goal suspended pending operator approval.", "warning");
     services.log(`PENDING_APPROVAL after cycle ${state.cycle}`);
     return;
@@ -295,9 +280,6 @@ async function handleValidateTransition(
     kind: "transition_decided", timestamp: new Date().toISOString(),
     details: { from: "validate", reason: "goal_met=false" },
   });
-
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
 
   const nextPhase: Phase =
     verdict.next_cycle_directive.focus === "capability_repair" ? "research"
@@ -334,9 +316,6 @@ async function advanceToNextPhase(
     kind: "next_phase_started", timestamp: new Date().toISOString(),
     details: { from: state.phase },
   });
-
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
 
   const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
   stateManager.setCapabilities(snapshot);

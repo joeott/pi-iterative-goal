@@ -16,6 +16,10 @@
  * 12. Resume prompt exposes AWS tool guidance when enabled
  * 13. Git finalization config and prompt guidance behave as expected
  * 14. Repo-context tool reads/searches files with DLP/IPI processing
+ * 15. C0 phase indicator: change feed + 1 Hz ticker push phase/eval/task changes to chrome
+ * 16. C0 sole-writer grep: phase-indicator.ts owns the iterative-goal surface ID
+ * 17. C0 warm session restart repaints restored runs; live interval tears down on shutdown
+ * 18. C0 modal dashboard re-reads state in invalidate() and renders live progress
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -2063,7 +2067,14 @@ process.exit(2);
     getState() { return null; },
     restore() { return null; },
   };
-  registerHarnessUi(pi, stateManager);
+  const phaseIndicator = {
+    tickOnce() {},
+    stop() {},
+    clearSurfaces() {},
+    setHeaderFactory() {},
+    trackDashboard() {},
+  };
+  registerHarnessUi(pi, stateManager, phaseIndicator);
   const names = commands.map((command) => command.name).sort();
   for (const expected of ["harness-dashboard", "harness-doctor", "harness-mode", "security-review-start", "security-review-status"]) {
     ok(names.includes(expected), `${expected} command registered`);
@@ -2072,6 +2083,431 @@ process.exit(2);
   ok(events.some((event) => event.event === "model_select"));
 
   console.log("✓ Test 29: Harness startup dashboard, doctor, mode, and security-review commands register");
+}
+
+// ── Test 30: C0 change feed — phase_changed reaches chrome within one tick ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { createPhaseIndicatorTicker, headerGoalLine } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-indicator-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  eq(stateManager.getVersion(), 0);
+
+  const run = stateManager.createRun("Render phases live", "Phase changes reach chrome within 1s");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/research/a1`);
+  ok(stateManager.getVersion() >= 2, "run_created + lock_acquired each bump the version counter");
+
+  const renders = { statuses: [], widgets: [], headers: [] };
+  const uiCtx = {
+    hasUI: true,
+    ui: {
+      setStatus(id, text) { renders.statuses.push({ id, text }); },
+      setWidget(id, lines, options) { renders.widgets.push({ id, lines, options }); },
+      setHeader(factory) { renders.headers.push(factory); },
+    },
+  };
+  // Recording header component mimics harness-ui's accessor-driven factory;
+  // `now` stands in for the framework render time.
+  let now = Date.now();
+  const headerFactory = () => ({ render: () => [headerGoalLine(stateManager, now) ?? "goal: none"], invalidate() {} });
+  const ticker = createPhaseIndicatorTicker({
+    stateManager,
+    getContext: () => uiCtx,
+    getHeaderFactory: () => headerFactory,
+    getDashboard: () => null,
+  });
+
+  ticker.tickOnce();
+  eq(renders.statuses.at(-1).id, "iterative-goal");
+  ok(renders.statuses.at(-1).text.includes("research"), "initial tick renders the research phase");
+
+  // Synthetic phase_changed: nothing repaints imperatively until the tick.
+  const versionBeforePhase = stateManager.getVersion();
+  stateManager.setPhase("plan");
+  eq(stateManager.getVersion(), versionBeforePhase + 1);
+  ok(renders.statuses.at(-1).text.includes("research"), "no imperative repaint outside the ticker");
+
+  const headersBefore = renders.headers.length;
+  ticker.tickOnce(); // 1 Hz ticker ⇒ at most one tick (≤ 1 s) to reach chrome
+  ok(renders.statuses.at(-1).text.includes("📋 plan"), "status bar shows the new phase after one tick");
+  ok(renders.headers.length > headersBefore, "header factory re-pushed on the invalidating tick");
+  const headerText = renders.headers.at(-1)().render(80).join("\n");
+  ok(headerText.includes("plan"), "header shows the new phase after one tick");
+  ok(renders.widgets.at(-1).lines.join("\n").includes("plan"), "widget repaints on version-changed ticks");
+
+  console.log("✓ Test 30: phase_changed reaches status bar, header, and widget within one 1 Hz tick");
+}
+
+// ── Test 31: C0 elapsed clock advances each second without new events ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { createPhaseIndicatorTicker, formatElapsed, headerGoalLine } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-elapsed-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  const run = stateManager.createRun("Track elapsed time", "Elapsed advances every second");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/research/a1`);
+
+  const renders = { statuses: [], headers: [] };
+  const uiCtx = {
+    hasUI: true,
+    ui: {
+      setStatus(id, text) { renders.statuses.push({ id, text }); },
+      setWidget() {},
+      setHeader(factory) { renders.headers.push(factory); },
+    },
+  };
+  // `now` stands in for the framework render time on each header render.
+  let now = Date.now();
+  const headerFactory = () => ({ render: () => [headerGoalLine(stateManager, now) ?? "goal: none"], invalidate() {} });
+  const ticker = createPhaseIndicatorTicker({
+    stateManager,
+    getContext: () => uiCtx,
+    getHeaderFactory: () => headerFactory,
+    getDashboard: () => null,
+  });
+
+  const phaseStartedMs = Date.parse(stateManager.getState().lock.phaseStartedAt);
+  const version = stateManager.getVersion();
+  for (let second = 1; second <= 60; second += 1) {
+    now = phaseStartedMs + second * 1000;
+    const statusesBefore = renders.statuses.length;
+    const headersBefore = renders.headers.length;
+    ticker.tickOnce(now);
+    eq(renders.statuses.length, statusesBefore + 1, `status bar repaints on second ${second}`);
+    eq(renders.headers.length, headersBefore + 1, `header repaints on second ${second}`);
+    const expected = formatElapsed(second * 1000);
+    ok(renders.statuses.at(-1).text.includes(`research ${expected}`), `elapsed ${expected} on second ${second}`);
+    ok(renders.headers.at(-1)().render(80).join("\n").includes(expected), `header elapsed ${expected}`);
+  }
+  eq(stateManager.getVersion(), version, "no new ledger events during the silent 60 s phase");
+  ok(renders.statuses.at(-1).text.includes("01:00"), "elapsed reaches 01:00 at second 60");
+
+  console.log("✓ Test 31: {elapsed} advances every second through a 60 s event-silent phase");
+}
+
+// ── Test 32: C0 evaluator state + task plan reach chrome; progress is real ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { calculateProgress, createPhaseIndicatorTicker } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-eval-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  const run = stateManager.createRun("Surface evaluator and tasks", "Evaluator state and task plan reach chrome");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/validate/a1`);
+
+  const renders = { statuses: [], widgets: [], headers: [] };
+  const uiCtx = {
+    hasUI: true,
+    ui: {
+      setStatus(id, text) { renders.statuses.push({ id, text }); },
+      setWidget(id, lines) { renders.widgets.push({ id, lines }); },
+      setHeader(factory) { renders.headers.push(factory); },
+    },
+  };
+  const ticker = createPhaseIndicatorTicker({
+    stateManager,
+    getContext: () => uiCtx,
+    getHeaderFactory: () => null,
+    getDashboard: () => null,
+  });
+  ticker.tickOnce();
+  ok(renders.statuses.at(-1).text.includes("eval no eval"), "no evaluator state yet");
+
+  const nowIso = new Date().toISOString();
+  stateManager.setEvaluatorState({
+    runId: run.runId, cycle: 1, phase: "validate", status: "running",
+    startedAt: nowIso, lastHeartbeatAt: nowIso, verdictPath: "", error: null,
+  });
+  ticker.tickOnce(); // one 1 Hz tick ⇒ visible within 1 s
+  ok(renders.statuses.at(-1).text.includes("eval running"), "evaluator running reaches the status bar");
+
+  stateManager.setEvaluatorState({
+    runId: run.runId, cycle: 1, phase: "validate", status: "stale_heartbeat",
+    startedAt: nowIso, lastHeartbeatAt: nowIso, verdictPath: "", error: null,
+  });
+  ticker.tickOnce();
+  ok(renders.statuses.at(-1).text.includes("eval ⚠ stale_heartbeat"), "stale heartbeat renders with ⚠ prefix");
+
+  stateManager.updateTaskPlan({
+    updatedAt: nowIso,
+    updatedByPhaseAttemptId: `${run.runId}/c1/validate/a1`,
+    rationale: "track the work",
+    items: [
+      { id: "t1", title: "Ship the phase indicator", status: "in_progress", detail: null, evidence: [], updatedAt: nowIso },
+      { id: "t2", title: "Gate it", status: "pending", detail: null, evidence: [], updatedAt: nowIso },
+    ],
+  });
+  ticker.tickOnce();
+  const widgetText = renders.widgets.at(-1).lines.join("\n");
+  ok(widgetText.includes("▸ Ship the phase indicator"), "in-progress task reaches the widget within 1 s");
+  ok(renders.statuses.at(-1).text.includes("task 0/2"), "task counts reach the status bar");
+
+  // G5: percent is non-decreasing within a cycle, advances with the task
+  // plan, and renders 100% only on goal_met.
+  const state = stateManager.getState();
+  const pctResearch = calculateProgress({ ...state, phase: "research" });
+  const pctPlan = calculateProgress({ ...state, phase: "plan" });
+  const pctImplement = calculateProgress({ ...state, phase: "implement" });
+  const pctValidate = calculateProgress({ ...state, phase: "validate" });
+  ok(pctResearch <= pctPlan && pctPlan <= pctImplement && pctImplement <= pctValidate, "percent non-decreasing within a cycle");
+  const pctImplementDone = calculateProgress({
+    ...state,
+    phase: "implement",
+    taskPlan: { ...state.taskPlan, items: state.taskPlan.items.map((item) => ({ ...item, status: "completed" })) },
+  });
+  ok(pctImplementDone > pctImplement, "percent advances as taskPlan items complete");
+  ok(pctValidate < 100, "validate without goal_met stays below 100%");
+  stateManager.recordVerdict({
+    goal_met: true, confidence: 0.97,
+    completion_blockers: [], accepted_evidence: [], rejected_evidence: [],
+    remaining_work: [], next_cycle_directive: { focus: "validate", reason: "done" }, safety_notes: [],
+  });
+  eq(calculateProgress(stateManager.getState()), 100);
+
+  console.log("✓ Test 32: evaluator_state_updated + task_plan_updated reach chrome; progress is phase/task based");
+}
+
+// ── Test 33: C0 paused run — ten ticks produce zero render calls ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { createPhaseIndicatorTicker } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-paused-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  const run = stateManager.createRun("Pause cheaply", "Paused runs emit nothing");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/research/a1`);
+
+  let renderCalls = 0;
+  const uiCtx = {
+    hasUI: true,
+    ui: {
+      setStatus() { renderCalls += 1; },
+      setWidget() { renderCalls += 1; },
+      setHeader() { renderCalls += 1; },
+    },
+  };
+  const ticker = createPhaseIndicatorTicker({
+    stateManager,
+    getContext: () => uiCtx,
+    getHeaderFactory: () => null,
+    getDashboard: () => null,
+  });
+
+  ticker.tickOnce(); // initial render
+  ok(renderCalls > 0, "active run renders");
+  stateManager.setStatus("paused_by_user");
+  ticker.tickOnce(); // settle the status_changed event
+  const settled = renderCalls;
+
+  const start = Date.parse(stateManager.getState().lock.phaseStartedAt);
+  for (let tick = 1; tick <= 10; tick += 1) {
+    ticker.tickOnce(start + tick * 1000);
+  }
+  eq(renderCalls, settled, "paused run: ten consecutive ticks produce zero render calls");
+
+  console.log("✓ Test 33: paused run emits zero render calls across ten ticks");
+}
+
+// ── Test 34: C0 sole-writer grep — phase-indicator owns the surface ID ──
+
+{
+  const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+  const srcRoot = path.join(repoRoot, "src");
+  const tsFiles = [];
+  (function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts")) tsFiles.push(full);
+    }
+  })(srcRoot);
+  const rel = (file) => path.relative(repoRoot, file);
+
+  // Surface writes in any quote style (", ', or template literal).
+  const surfaceWriter = /set(?:Status|Widget)\(\s*["'`]iterative-goal["'`]/;
+  const writers = tsFiles
+    .filter((file) => surfaceWriter.test(fs.readFileSync(file, "utf8")))
+    .map(rel);
+  deepStrictEqual(writers, ["src/ui/phase-indicator.ts"]);
+
+  // The bare surface ID in any quoting/binding form (incl. identifier-bound
+  // constants) may appear only in the sole writer plus whitelisted
+  // non-surface usages: the .pi/iterative-goal state directory segments.
+  const bareId = /["'`]iterative-goal["'`]/;
+  const whitelist = new Set([
+    "src/ui/phase-indicator.ts",
+    "src/state.ts",
+    "src/logging.ts",
+    "src/ui/goal-commands.ts",
+  ]);
+  const bareUsers = tsFiles
+    .filter((file) => bareId.test(fs.readFileSync(file, "utf8")))
+    .map(rel);
+  ok(bareUsers.includes("src/ui/phase-indicator.ts"), "sole writer present in bare-ID users");
+  ok(bareUsers.every((file) => whitelist.has(file)), `bare "iterative-goal" ID confined to whitelist: ${bareUsers.join(", ")}`);
+
+  const harnessUi = fs.readFileSync(path.join(srcRoot, "harness-ui.ts"), "utf8");
+  ok(!/\bstate\.(phase|cycle)\b|goal: C\$|Goal: C\$/.test(harnessUi), "harness-ui.ts contains no goal/phase line");
+
+  const intervalUsers = tsFiles
+    .filter((file) => fs.readFileSync(file, "utf8").includes("setInterval"))
+    .map(rel);
+  deepStrictEqual(intervalUsers, ["src/ui/phase-indicator.ts"]);
+
+  console.log("✓ Test 34: phase-indicator.ts is the sole writer of the iterative-goal surface ID and the only setInterval user");
+}
+
+// ── Test 35: C0 ticker registration — session lifecycle + exported tickOnce ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { registerPhaseIndicator } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-register-"));
+  const pi = {
+    appendEntry() {},
+    handlers: new Map(),
+    on(event, handler) { this.handlers.set(event, handler); },
+  };
+  const stateManager = createStateManager(pi);
+  const handle = registerPhaseIndicator(pi, stateManager);
+  ok(pi.handlers.has("session_start"), "session_start handler registered");
+  ok(pi.handlers.has("session_shutdown"), "session_shutdown handler registered");
+  eq(typeof handle.tickOnce, "function");
+  eq(typeof handle.stop, "function");
+  eq(typeof handle.clearSurfaces, "function");
+  eq(typeof handle.setHeaderFactory, "function");
+  eq(typeof handle.trackDashboard, "function");
+
+  const renders = { statuses: [], widgets: [] };
+  const sessionCtx = {
+    cwd: tmp,
+    hasUI: true,
+    sessionManager: { getEntries: () => [] },
+    ui: {
+      setStatus(id, text) { renders.statuses.push({ id, text }); },
+      setWidget(id, lines) { renders.widgets.push({ id, lines }); },
+      setHeader() {},
+    },
+  };
+  await pi.handlers.get("session_start")({}, sessionCtx);
+  ok(renders.statuses.length > 0, "session_start triggers the initial render push");
+  eq(renders.statuses.at(-1).text, undefined, "no active run renders an empty status bar");
+
+  // Teardown while the interval is live: a pending invalidation after
+  // session_shutdown must produce zero interval-driven renders.
+  await pi.handlers.get("session_shutdown")();
+  const rendersAtShutdown = renders.statuses.length + renders.widgets.length;
+  stateManager.createRun("Post-shutdown invalidation", "A live interval would repaint this");
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  eq(
+    renders.statuses.length + renders.widgets.length,
+    rendersAtShutdown,
+    "no interval-driven renders after session_shutdown teardown",
+  );
+  handle.stop();
+
+  console.log("✓ Test 35: registerPhaseIndicator wires session lifecycle, exposes tickOnce(), and tears down the live interval");
+}
+
+// ── Test 36: C0 warm session restart repaints restored paused runs ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { registerPhaseIndicator } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-phase-restart-"));
+  const pi = {
+    appendEntry() {},
+    handlers: new Map(),
+    on(event, handler) { this.handlers.set(event, handler); },
+  };
+  const stateManager = createStateManager(pi);
+  const handle = registerPhaseIndicator(pi, stateManager);
+
+  const renders = { statuses: [], widgets: [] };
+  const sessionCtx = {
+    cwd: tmp,
+    hasUI: true,
+    sessionManager: { getEntries: () => [] },
+    ui: {
+      setStatus(id, text) { renders.statuses.push({ id, text }); },
+      setWidget(id, lines) { renders.widgets.push({ id, lines }); },
+      setHeader() {},
+    },
+  };
+
+  // First session: start a run, pause it, settle the paused render.
+  await pi.handlers.get("session_start")({ reason: "new" }, sessionCtx);
+  const run = stateManager.createRun("Restart visibility", "Paused runs repaint after warm restart");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/research/a1`);
+  stateManager.setStatus("paused_by_user");
+  handle.tickOnce();
+  const rendersAfterPause = renders.statuses.length + renders.widgets.length;
+  ok(renders.widgets.at(-1).lines.join("\n").includes("paused_by_user"), "paused run visible before restart");
+
+  // Warm in-process restart (resume): no new ledger events, version unchanged.
+  const versionAtRestart = stateManager.getVersion();
+  await pi.handlers.get("session_start")({ reason: "resume" }, sessionCtx);
+  eq(stateManager.getVersion(), versionAtRestart, "warm restart appends no ledger events");
+  ok(
+    renders.statuses.length + renders.widgets.length > rendersAfterPause,
+    "initial push repaints surfaces on warm restart without any new event",
+  );
+  ok(renders.statuses.at(-1).text.includes("research"), "restored run's phase visible after restart");
+  ok(renders.widgets.at(-1).lines.join("\n").includes("paused_by_user"), "restored paused status visible after restart");
+  handle.stop();
+
+  console.log("✓ Test 36: warm in-process session restart repaints a restored paused run with zero new events");
+}
+
+// ── Test 37: C0 modal dashboard re-reads state and renders live progress ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { DashboardComponent } = await import("../dist/dashboard.js");
+  const { calculateProgress } = await import("../dist/ui/phase-indicator.js");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-dashboard-live-"));
+  const pi = { appendEntry() {} };
+  const ctx = { cwd: tmp, sessionManager: { getEntries: () => [] } };
+  const stateManager = createStateManager(pi);
+  eq(stateManager.restore(ctx), null);
+  const run = stateManager.createRun("Live dashboard", "Modal dashboard renders live progress");
+  stateManager.acquireLock(run.runId, `${run.runId}/c1/research/a1`);
+
+  const component = new DashboardComponent(stateManager.getState(), stateManager, () => {});
+  const before = component.render(80).join("\n");
+  ok(before.includes("Progress: 0%"), "modal renders initial progress");
+
+  // The ticker's live path: version-changed tick → invalidate() re-reads state.
+  stateManager.setPhase("validate");
+  component.invalidate();
+  const after = component.render(80).join("\n");
+  const pct = calculateProgress(stateManager.getState());
+  eq(pct, 75);
+  ok(after.includes(`Progress: ${pct}%`), "modal renders the live progress percent after invalidate()");
+  ok(after.includes("Phase elapsed:"), "modal renders per-phase elapsed");
+
+  console.log("✓ Test 37: modal dashboard re-reads state in invalidate() and renders Progress: {pct}%");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

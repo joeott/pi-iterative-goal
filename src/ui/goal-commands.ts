@@ -2,7 +2,7 @@ import { type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadAwsCliConfig } from "../aws-cli.js";
-import { updateStatusBar, updateWidget, clearStatusBar } from "../dashboard.js";
+import { type PhaseIndicatorHandle } from "./phase-indicator.js";
 import { loadFinalizationPolicy } from "../git.js";
 import { renderPhasePrompt, renderResumePrompt } from "../phases.js";
 import { type StateManagerAPI } from "../state.js";
@@ -23,6 +23,7 @@ export function registerGoalRuntimeCommands(
   pi: ExtensionAPI,
   stateManager: StateManagerAPI,
   services: GoalCommandServices,
+  phaseIndicator: PhaseIndicatorHandle,
 ): void {
   pi.registerCommand("goal-start", {
     description: "Start an autonomous iterative goal loop",
@@ -59,9 +60,6 @@ export function registerGoalRuntimeCommands(
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
 
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
-
       const backends = detectSubagentBackend(pi, snapshot);
       await startPhaseAttempt(state, stateManager, "research", snapshot, pi, ctx);
 
@@ -80,8 +78,6 @@ export function registerGoalRuntimeCommands(
           ? JSON.stringify({ active: false }, null, 2) : "No active iterative goal. Start with /goal-start.", "info");
         return;
       }
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
 
       if (args.includes("--json")) {
         ctx.ui.notify(JSON.stringify(renderStatusJson(state, stateManager), null, 2), "info");
@@ -98,7 +94,6 @@ export function registerGoalRuntimeCommands(
       const state = stateManager.getState();
       if (!state || state.status !== "running") { ctx.ui.notify("No active goal to pause.", "warning"); return; }
       stateManager.setStatus("paused_by_user");
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Goal paused at cycle ${state.cycle}. Use /goal-resume.`, "info");
       services.log("Paused by user");
     },
@@ -110,7 +105,6 @@ export function registerGoalRuntimeCommands(
       const state = stateManager.getState();
       if (!state || state.status !== "paused_by_user") { ctx.ui.notify("No paused goal.", "warning"); return; }
       stateManager.setStatus("running");
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
 
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
@@ -138,7 +132,6 @@ export function registerGoalRuntimeCommands(
       await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
       const prompt = renderResumePrompt(state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Approval accepted for: ${resolved.requestedAction}`, "info");
       services.log(`Approval accepted: ${token}`);
     },
@@ -162,7 +155,6 @@ export function registerGoalRuntimeCommands(
         recoveryAction: "Record policy_denied and replan without the denied action.",
         resolved: false,
       });
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Approval denied for: ${resolved.requestedAction}`, "warning");
       services.log(`Approval denied: ${token}`);
     },
@@ -191,7 +183,6 @@ export function registerGoalRuntimeCommands(
           if (model) { await pi.setModel(model); ctx.ui.notify(`Switched to: ${fb.provider}/${fb.model}`, "info"); break; }
         }
       }
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
     },
   });
 
@@ -230,7 +221,7 @@ export function registerGoalRuntimeCommands(
 
       archiveActiveRun();
       stateManager.clear();
-      clearStatusBar(ctx);
+      phaseIndicator.clearSurfaces(ctx);
       ctx.ui.notify("Iterative goal reset.", "info");
       services.log("Reset by user");
     },

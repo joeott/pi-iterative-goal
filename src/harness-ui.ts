@@ -5,7 +5,12 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { detectSubagentBackend, takeCapabilitySnapshot } from "./capabilities.js";
 import type { StateManagerAPI } from "./state.js";
-import type { IterativeGoalState, SubagentBackend } from "./types.js";
+import type { SubagentBackend } from "./types.js";
+import {
+  type HeaderFactory,
+  type PhaseIndicatorHandle,
+  headerGoalLine,
+} from "./ui/phase-indicator.js";
 import {
   probeZaiGlm52,
   registerZaiGlm52Provider,
@@ -44,7 +49,11 @@ interface SecurityReviewSummary {
   finishedAt?: string | null;
 }
 
-export function registerHarnessUi(pi: ExtensionAPI, stateManager: StateManagerAPI): void {
+export function registerHarnessUi(
+  pi: ExtensionAPI,
+  stateManager: StateManagerAPI,
+  phaseIndicator: PhaseIndicatorHandle,
+): void {
   let uiState: HarnessUiState = {
     mode: initialMode(),
     model: { selected: false, ok: false, message: "pending" },
@@ -52,17 +61,21 @@ export function registerHarnessUi(pi: ExtensionAPI, stateManager: StateManagerAP
     lastUpdatedAt: new Date().toISOString(),
   };
 
+  // Goal/phase content is owned by phase-indicator.ts; the header only
+  // places the accessor's pre-formatted line (read lazily at render).
+  const goalLine = (): string | null => headerGoalLine(stateManager);
+
   pi.on("session_start", async (_event, ctx) => {
     uiState.envFiles = registerZaiGlm52Provider(ctx);
     uiState.model = await selectDefaultModel(pi, ctx);
     uiState.lastUpdatedAt = new Date().toISOString();
-    renderStartupUi(pi, ctx, stateManager, uiState);
+    renderStartupUi(pi, ctx, uiState, goalLine, phaseIndicator);
   });
 
   pi.on("model_select", async (_event, ctx) => {
     uiState.model = modelStatusFromContext(ctx);
     uiState.lastUpdatedAt = new Date().toISOString();
-    renderStartupUi(pi, ctx, stateManager, uiState);
+    renderStartupUi(pi, ctx, uiState, goalLine, phaseIndicator);
   });
 
   pi.registerCommand("harness-dashboard", {
@@ -72,12 +85,11 @@ export function registerHarnessUi(pi: ExtensionAPI, stateManager: StateManagerAP
         ctx.ui.notify("/harness-dashboard requires interactive mode", "error");
         return;
       }
-      const state = stateManager.getState() ?? stateManager.restore(ctx);
       const snapshot = takeCapabilitySnapshot(pi);
       const backend = detectSubagentBackend(pi, snapshot);
       const review = loadLatestReview();
       await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
-        return new HarnessDashboard(uiState, state, backend, review, theme, () => done());
+        return new HarnessDashboard(uiState, backend, review, theme, () => done());
       });
     },
   });
@@ -132,7 +144,7 @@ export function registerHarnessUi(pi: ExtensionAPI, stateManager: StateManagerAP
       }
       uiState.mode = requested;
       uiState.lastUpdatedAt = new Date().toISOString();
-      renderStartupUi(pi, ctx, stateManager, uiState);
+      renderStartupUi(pi, ctx, uiState, goalLine, phaseIndicator);
       ctx.ui.notify(`Harness mode: ${requested}`, "info");
     },
   });
@@ -212,26 +224,29 @@ function modelStatusFromContext(ctx: ExtensionContext): ModelStartupStatus {
 function renderStartupUi(
   pi: ExtensionAPI,
   ctx: ExtensionContext | ExtensionCommandContext,
-  stateManager: StateManagerAPI,
   uiState: HarnessUiState,
+  goalLine: () => string | null,
+  phaseIndicator: PhaseIndicatorHandle,
 ): void {
   if (!ctx.hasUI) return;
-  const state = stateManager.getState() ?? stateManager.restore(ctx);
   const snapshot = takeCapabilitySnapshot(pi);
   const backend = detectSubagentBackend(pi, snapshot);
   const review = loadLatestReview();
   ctx.ui.setTitle(`pi-iterative-goal ${uiState.model.message}`);
-  ctx.ui.setStatus(HARNESS_STATUS_KEY, statusLine(uiState, backend, state));
-  ctx.ui.setWidget(HARNESS_WIDGET_KEY, startupLines(uiState, backend, state, review), { placement: "aboveEditor" });
-  ctx.ui.setHeader((_tui, theme) => {
-    return new HarnessHeader(uiState, backend, state, review, theme);
-  });
+  ctx.ui.setStatus(HARNESS_STATUS_KEY, statusLine(uiState, backend));
+  ctx.ui.setWidget(HARNESS_WIDGET_KEY, startupLines(uiState, backend, review), { placement: "aboveEditor" });
+  const headerFactory: HeaderFactory = (_tui, theme) => {
+    return new HarnessHeader(uiState, backend, review, theme, goalLine);
+  };
+  // The 1 Hz ticker re-pushes this factory on invalidating ticks, so the
+  // header's goal line never depends on framework re-render semantics.
+  phaseIndicator.setHeaderFactory(headerFactory);
+  ctx.ui.setHeader(headerFactory);
 }
 
 function startupLines(
   uiState: HarnessUiState,
   backend: SubagentBackend,
-  state: IterativeGoalState | null,
   review: SecurityReviewSummary | null,
 ): string[] {
   const reviewSummary = review ? summarizeReview(review) : null;
@@ -239,7 +254,6 @@ function startupLines(
     `Harness: pi-iterative-goal loaded · mode=${uiState.mode}`,
     `Model: ${uiState.model.ok ? "ready" : "needs attention"} · ${uiState.model.message}`,
     `Subagents: ${backendLabel(backend)} · roles=scout/planner/worker/reviewer/oracle`,
-    state ? `Goal: C${state.cycle} ${state.phase} · ${state.status}` : "Goal: none active · /goal-start <goal>",
     reviewSummary
       ? `Security review: ${reviewSummary.runId} · open=${reviewSummary.openFindings} · readOnly=${reviewSummary.readOnlyEnforced}`
       : "Security review: no latest run · /security-review-start --continuous",
@@ -247,19 +261,18 @@ function startupLines(
   ];
 }
 
-function statusLine(uiState: HarnessUiState, backend: SubagentBackend, state: IterativeGoalState | null): string {
+function statusLine(uiState: HarnessUiState, backend: SubagentBackend): string {
   const model = uiState.model.ok ? uiState.model.message : "model attention";
-  const goal = state ? `goal C${state.cycle}/${state.phase}` : "no goal";
-  return `ig ${uiState.mode} · ${model} · subagents:${backend.kind} · ${goal}`;
+  return `ig ${uiState.mode} · ${model} · subagents:${backend.kind}`;
 }
 
 class HarnessHeader {
   constructor(
     private uiState: HarnessUiState,
     private backend: SubagentBackend,
-    private state: IterativeGoalState | null,
     private review: SecurityReviewSummary | null,
     private theme: Theme,
+    private goalLine: () => string | null,
   ) {}
 
   render(width: number): string[] {
@@ -270,24 +283,25 @@ class HarnessHeader {
     const top = `pi-iterative-goal ${this.uiState.mode}`;
     const model = `${this.uiState.model.ok ? "model" : "model!"}: ${this.uiState.model.message}`;
     const subagents = `subagents: ${backendLabel(this.backend)}`;
-    const goal = this.state ? `goal: C${this.state.cycle} ${this.state.phase} ${this.state.status}` : "goal: idle";
+    const goal = this.goalLine();
     const review = this.review ? `review: ${this.review.runId ?? "latest"}` : "review: ready";
     return [
       "",
       ` ${accent(truncate(top, w))}`,
       ` ${this.uiState.model.ok ? dim(model) : warn(model)}`,
-      ` ${dim(truncate(`${subagents} · ${goal} · ${review}`, w))}`,
+      ` ${dim(truncate(`${subagents}${goal ? ` · ${goal}` : ""} · ${review}`, w))}`,
       "",
     ];
   }
 
+  // render() re-reads the goal accessor on every call; there is no
+  // cached goal state to invalidate.
   invalidate(): void {}
 }
 
 class HarnessDashboard {
   constructor(
     private uiState: HarnessUiState,
-    private state: IterativeGoalState | null,
     private backend: SubagentBackend,
     private review: SecurityReviewSummary | null,
     private theme: Theme,
@@ -309,9 +323,6 @@ class HarnessDashboard {
       `  Env files: ${this.uiState.envFiles.length ? this.uiState.envFiles.map((file) => path.basename(file.path)).join(", ") : "none loaded"}`,
       `  Subagents: ${backendLabel(this.backend)}`,
       `  Roles: scout, planner, worker, reviewer, oracle, context-builder`,
-      this.state
-        ? `  Active goal: C${this.state.cycle} ${this.state.phase} ${this.state.status} · ${truncate(this.state.goal, w - 18)}`
-        : "  Active goal: none",
       "",
       ...renderReviewDashboardLines(this.review),
       "",

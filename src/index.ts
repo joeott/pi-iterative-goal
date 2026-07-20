@@ -51,6 +51,7 @@ import {
 import { registerGoalLifecycle } from "./kernel/lifecycle.js";
 import { registerGovernanceCommands } from "./ui/commands.js";
 import { registerGoalRuntimeCommands } from "./ui/goal-commands.js";
+import { registerPhaseIndicator } from "./ui/phase-indicator.js";
 import { registerGoalCoreTools } from "./ui/tools.js";
 import { registerToolInterception } from "./ui/tool-interception.js";
 import { logDebug } from "./logging.js";
@@ -144,16 +145,21 @@ export default function registerIterativeGoalExtension(pi: ExtensionAPI): void {
     log,
   });
 
+  // 1 Hz UI ticker + single phase renderer (deployment plan C0). Every
+  // mutation already flows through appendEvent, so the ticker picks up
+  // phase/evaluator/task-plan changes without per-call-site wiring.
+  const phaseIndicator = registerPhaseIndicator(pi, stateManager);
+
   registerToolInterception(pi, stateManager, { log });
 
   registerGoalRuntimeCommands(pi, stateManager, {
     buildRuntimeCapabilitySnapshot: (ctx, state) => buildRuntimeCapabilitySnapshot(pi, ctx, state),
     log,
-  });
+  }, phaseIndicator);
 
   registerGovernanceCommands(pi, stateManager);
 
-  registerDashboardCommands(pi, stateManager);
+  registerDashboardCommands(pi, stateManager, phaseIndicator);
 
-  registerHarnessUi(pi, stateManager);
+  registerHarnessUi(pi, stateManager, phaseIndicator);
 }

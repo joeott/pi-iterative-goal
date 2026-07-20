@@ -90,6 +90,7 @@ export interface StateManagerAPI {
   getState(): IterativeGoalState | null;
   isActive(): boolean;
   isPaused(): boolean;
+  getVersion(): number;
   createRun(goal: string, goalCriterion: string, config?: Partial<IterativeGoalState["config"]>): IterativeGoalState;
   setCapabilities(snapshot: CapabilitySnapshot): void;
   setProjectInstructions(projectInstructions: ProjectInstructionsState): void;
@@ -208,6 +209,10 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   let stateDir = "";
   let runDir = "";
   let currentPhaseAttemptId: string | null = null;
+  // Monotonic change-feed counter. Bumped inside appendEvent (before hash
+  // chaining) so every mutation is a complete invalidation signal — the
+  // 1 Hz UI ticker polls this instead of per-call-site notify wiring.
+  let version = 0;
 
   function phaseToArtifactKey(phase: Phase): keyof IterativeGoalState["artifacts"] {
     switch (phase) {
@@ -225,6 +230,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
   function appendEvent(event: Record<string, unknown>): void {
     const eventsPath = runEventsPath();
     if (!eventsPath) return;
+    version += 1;
     const previous = readLastEventMetadata(eventsPath);
     const auditable = {
       ...event,
@@ -701,6 +707,10 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     isPaused(): boolean {
       return state !== null && state.status === "paused_by_user";
+    },
+
+    getVersion(): number {
+      return version;
     },
 
     // ── Run-scoped paths ──────────────────────────────────────────
