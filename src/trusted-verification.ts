@@ -1,15 +1,21 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { attestAction, verifyActionAttestation } from "./cyber-runtime.js";
 import { readIterativeGoalSettings } from "./domain/project-settings.js";
 import type { CommandSpec, VerificationResult, VerificationSpec } from "./domain/verification.js";
 import type { StateManagerAPI } from "./state.js";
+import {
+  materializeTrustedNpmCache,
+  trustedNpmMaterializationMatchesLock,
+  type TrustedNpmMaterializationReceipt,
+} from "./trusted-dependencies.js";
 import type { IterativeGoalState } from "./types.js";
 
-export const TRUSTED_VERIFICATION_SCHEMA = "pi-iterative-goal.trusted-verification.v3" as const;
+export const TRUSTED_VERIFICATION_SCHEMA = "pi-iterative-goal.trusted-verification.v5" as const;
 
 export type TrustedVerificationSandboxBackend = "macos-sandbox-exec" | "linux-bwrap";
 
@@ -21,6 +27,16 @@ export interface TrustedVerificationSandboxReceipt {
   ambientCredentialsStripped: true;
   validationWorktreeWritable: true;
   sourceRepositoryReadDenied: true;
+  descendantProcessContainment: "isolated-process-lifetime-v1";
+}
+
+export interface TrustedVerificationProcessContainment {
+  /** False only when execution was deliberately skipped before a child existed. */
+  isolatedProcessGroup: boolean;
+  descendantsTerminated: boolean;
+  cleanupSignal: "SIGTERM" | "SIGKILL" | null;
+  identityCensus: "macos-sandbox-check-v1" | "linux-pid-namespace-v1";
+  identityMatchesObserved: number;
 }
 
 export interface TrustedVerificationConfig {
@@ -34,6 +50,7 @@ export interface TrustedVerificationResult extends VerificationResult {
   artifactSha256: string;
   timedOut: boolean;
   signal: string | null;
+  processContainment: TrustedVerificationProcessContainment;
 }
 
 export interface TrustedVerificationReceiptV1 {
@@ -55,8 +72,10 @@ export interface TrustedVerificationReceiptV1 {
   endedAt: string;
   checksHash: string;
   resultsHash: string;
-  /** OS-enforced boundary used for dependency bootstrap and every check. */
+  /** OS-enforced boundary used for the offline dependency install and every check. */
   sandbox: TrustedVerificationSandboxReceipt;
+  /** Metadata-only proof that every private-cache tarball matched the exact lock. */
+  dependencyMaterialization: TrustedNpmMaterializationReceipt | null;
   /** Lockfile-derived dependency install executed with lifecycle scripts disabled. */
   dependencyBootstrap: TrustedVerificationResult | null;
   results: TrustedVerificationResult[];
@@ -213,6 +232,32 @@ interface SandboxedProcessOptions {
   timeout: number;
 }
 
+interface SandboxedProcessOutcome {
+  pid?: number;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  error?: Error & { code?: string };
+  processContainment: TrustedVerificationProcessContainment;
+}
+
+interface SerializedSupervisorOutcome {
+  pid?: number;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  error: { code?: string; message: string } | null;
+  processContainment: TrustedVerificationProcessContainment;
+}
+
+interface MacSandboxIdentity {
+  censusExecutable: string;
+  allowedPath: string;
+  deniedPath: string;
+}
+
 const SANDBOX_RECEIPTS: Record<TrustedVerificationSandboxBackend, TrustedVerificationSandboxReceipt> = {
   "macos-sandbox-exec": {
     backend: "macos-sandbox-exec",
@@ -222,6 +267,7 @@ const SANDBOX_RECEIPTS: Record<TrustedVerificationSandboxBackend, TrustedVerific
     ambientCredentialsStripped: true,
     validationWorktreeWritable: true,
     sourceRepositoryReadDenied: true,
+    descendantProcessContainment: "isolated-process-lifetime-v1",
   },
   "linux-bwrap": {
     backend: "linux-bwrap",
@@ -231,6 +277,7 @@ const SANDBOX_RECEIPTS: Record<TrustedVerificationSandboxBackend, TrustedVerific
     ambientCredentialsStripped: true,
     validationWorktreeWritable: true,
     sourceRepositoryReadDenied: true,
+    descendantProcessContainment: "isolated-process-lifetime-v1",
   },
 };
 
@@ -353,6 +400,7 @@ function macSandboxProfile(params: {
   validationRoot: string;
   cacheRoot: string;
   executable: string;
+  identityPath: string;
 }): string {
   const readPaths = existingPaths([
     ...macSystemReadPaths(),
@@ -382,6 +430,12 @@ function macSandboxProfile(params: {
     "(version 1)",
     "(deny default)",
     "(deny network*)",
+    // The outer runner places sandbox-exec in a fresh process group, then
+    // terminates that entire group after the direct command exits. Prevent a
+    // sandboxed descendant from escaping that lifetime boundary by creating a
+    // new process group or session. `process-fork`/`process-exec` remain
+    // available because package scripts and compilers legitimately need them.
+    "(deny syscall-unix (syscall-number SYS_setpgid) (syscall-number SYS_setsid))",
     "(allow process*)",
     "(allow sysctl-read)",
     // V8 requires executable-memory/JIT permission even for a bounded `node
@@ -391,6 +445,10 @@ function macSandboxProfile(params: {
     `(allow file-read* ${readRules})`,
     `(allow file-read-metadata ${metadataRules})`,
     `(allow file-write* ${writeRules} (literal \"/dev/null\"))`,
+    // Unique pre-created marker used only to identify this profile's inherited
+    // descendants. Data writes are allowed, but create/unlink are not, so an
+    // untrusted process cannot remove the census identity.
+    `(allow file-write-data (literal ${sandboxQuote(params.identityPath)}))`,
   ].join("\n");
 }
 
@@ -435,23 +493,416 @@ function sanitizedPath(executable: string, validationRoot: string): string {
   ])].join(path.delimiter);
 }
 
-function runSandboxedProcess(options: SandboxedProcessOptions): ReturnType<typeof spawnSync> {
+const MAC_SANDBOX_CENSUS_SOURCE = String.raw`#include <libproc.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/proc_info.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+enum sandbox_filter_type { SANDBOX_FILTER_NONE, SANDBOX_FILTER_PATH };
+extern const enum sandbox_filter_type SANDBOX_CHECK_NO_REPORT;
+extern int sandbox_check(pid_t pid, const char *operation, enum sandbox_filter_type filter_type, ...);
+
+static int same_user_and_profile(pid_t pid, uid_t expected_uid, const char *allowed, const char *denied) {
+  struct proc_bsdinfo info;
+  int bytes = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+  if (bytes != sizeof(info) || info.pbi_uid != expected_uid) return 0;
+  return sandbox_check(pid, "file-write-data", SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT, allowed) == 0
+    && sandbox_check(pid, "file-write-data", SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT, denied) != 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc != 4) return 64;
+  int signal_number = 0;
+  if (strcmp(argv[3], "stop") == 0) signal_number = SIGSTOP;
+  else if (strcmp(argv[3], "kill") == 0) signal_number = SIGKILL;
+  else if (strcmp(argv[3], "list") != 0) return 65;
+  int capacity = proc_listallpids(NULL, 0);
+  if (capacity <= 0) return 66;
+  int count = 0;
+  int slots = capacity + 64;
+  pid_t *pids = NULL;
+  for (int attempt = 0; attempt < 4; attempt++) {
+    pids = calloc((size_t)slots, sizeof(pid_t));
+    if (!pids) return 67;
+    /* proc_listallpids returns a PID count, not a byte count. Retry when the
+       buffer filled because concurrent forks may have grown the process table
+       between the sizing and census calls. */
+    count = proc_listallpids(pids, slots * (int)sizeof(pid_t));
+    if (count < 0) { free(pids); return 68; }
+    if (count < slots) break;
+    free(pids);
+    pids = NULL;
+    slots *= 2;
+  }
+  if (!pids || count >= slots) { free(pids); return 69; }
+  uid_t expected_uid = geteuid();
+  for (int i = 0; i < count; i++) {
+    pid_t pid = pids[i];
+    if (pid <= 1 || pid == getpid()) continue;
+    if (!same_user_and_profile(pid, expected_uid, argv[1], argv[2])) continue;
+    if (signal_number != 0) {
+      /* Re-run the effective-UID and exact random profile fingerprint in the
+         same helper immediately before every signal. */
+      if (!same_user_and_profile(pid, expected_uid, argv[1], argv[2])) continue;
+      if (kill(pid, signal_number) != 0) continue;
+    }
+    printf("%d\n", pid);
+  }
+  free(pids);
+  return 0;
+}
+`;
+
+function prepareMacSandboxIdentity(supervisorRoot: string): MacSandboxIdentity {
+  const canonicalRoot = fs.realpathSync(supervisorRoot);
+  const sourcePath = path.join(canonicalRoot, ".trusted-sandbox-census.c");
+  const censusExecutable = path.join(canonicalRoot, ".trusted-sandbox-census");
+  if (!fs.existsSync(censusExecutable)) {
+    writeExclusiveNoFollow(sourcePath, MAC_SANDBOX_CENSUS_SOURCE);
+    try {
+      execFileSync("/usr/bin/clang", ["-O2", "-Wall", "-Wextra", "-Werror", sourcePath, "-o", censusExecutable], {
+        cwd: canonicalRoot,
+        encoding: "utf8",
+        timeout: 30_000,
+        env: { PATH: "/usr/bin:/bin", HOME: canonicalRoot, TMPDIR: canonicalRoot },
+      });
+      fs.chmodSync(censusExecutable, 0o700);
+      const stat = fs.lstatSync(censusExecutable);
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("native sandbox census output is not a regular file");
+    } finally {
+      try { fs.unlinkSync(sourcePath); } catch (error) {
+        if (!pathError(error, "ENOENT")) throw error;
+      }
+    }
+  }
+  const token = crypto.randomBytes(16).toString("hex");
+  const identity = {
+    censusExecutable,
+    allowedPath: path.join(canonicalRoot, `.sandbox-identity-allowed-${token}`),
+    deniedPath: path.join(canonicalRoot, `.sandbox-identity-denied-${token}`),
+  };
+  writeExclusiveNoFollow(identity.allowedPath, "allowed identity\n");
+  writeExclusiveNoFollow(identity.deniedPath, "denied identity\n");
+  return identity;
+}
+
+function removeMacSandboxIdentity(identity: MacSandboxIdentity): void {
+  for (const marker of [identity.allowedPath, identity.deniedPath]) {
+    try { fs.unlinkSync(marker); } catch (error) {
+      if (!pathError(error, "ENOENT")) throw error;
+    }
+  }
+}
+
+function runMacSandboxCensus(identity: MacSandboxIdentity, action: "list" | "stop" | "kill"): number[] {
+  const output = execFileSync(identity.censusExecutable, [identity.allowedPath, identity.deniedPath, action], {
+    encoding: "utf8",
+    timeout: 10_000,
+    env: { PATH: "/usr/bin:/bin" },
+  });
+  return [...new Set(output.split(/\s+/)
+    .filter(Boolean)
+    .map((value) => Number.parseInt(value, 10))
+    .filter((pid) => Number.isSafeInteger(pid) && pid > 1))];
+}
+
+function samePidSet(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((pid) => rightSet.has(pid));
+}
+
+function terminateMacSandboxIdentity(identity: MacSandboxIdentity): TrustedVerificationProcessContainment {
+  const observed = new Set<number>();
+  let previous: number[] = [];
+  let stable = false;
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    // The helper re-censuses UID + both random policy paths immediately before
+    // each SIGSTOP; callers never signal a PID from a stale list.
+    const stopped = runMacSandboxCensus(identity, "stop");
+    stopped.forEach((pid) => observed.add(pid));
+    if (samePidSet(stopped, previous)) {
+      stable = true;
+      break;
+    }
+    previous = stopped;
+  }
+  if (!stable) {
+    return {
+      isolatedProcessGroup: true,
+      descendantsTerminated: false,
+      cleanupSignal: observed.size > 0 ? "SIGKILL" : null,
+      identityCensus: "macos-sandbox-check-v1",
+      identityMatchesObserved: observed.size,
+    };
+  }
+
+  const killed = runMacSandboxCensus(identity, "kill");
+  killed.forEach((pid) => observed.add(pid));
+  const deadline = Date.now() + 2_000;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    const remaining = runMacSandboxCensus(identity, "list");
+    if (remaining.length === 0) {
+      return {
+        isolatedProcessGroup: true,
+        descendantsTerminated: true,
+        cleanupSignal: observed.size > 0 ? "SIGKILL" : null,
+        identityCensus: "macos-sandbox-check-v1",
+        identityMatchesObserved: observed.size,
+      };
+    }
+    // Re-census before STOP/KILL rather than using `remaining` as a signal
+    // target list. This protects unrelated processes if a PID was recycled.
+    runMacSandboxCensus(identity, "stop").forEach((pid) => observed.add(pid));
+    runMacSandboxCensus(identity, "kill").forEach((pid) => observed.add(pid));
+    Atomics.wait(sleeper, 0, 0, 25);
+  }
+  return {
+    isolatedProcessGroup: true,
+    descendantsTerminated: runMacSandboxCensus(identity, "list").length === 0,
+    cleanupSignal: observed.size > 0 ? "SIGKILL" : null,
+    identityCensus: "macos-sandbox-check-v1",
+    identityMatchesObserved: observed.size,
+  };
+}
+
+function processGroupExists(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if (pathError(error, "ESRCH")) return false;
+    // EPERM still proves that a process survived. Treat every other failure as
+    // a containment failure rather than assuming the group disappeared.
+    return true;
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !pathError(error, "ESRCH");
+  }
+}
+
+function waitForProcessGroupExit(processGroupId: number, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (processGroupExists(processGroupId)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    Atomics.wait(sleeper, 0, 0, Math.min(remaining, 25));
+  }
+  return true;
+}
+
+function terminateSandboxProcessGroup(processGroupId: number | undefined): TrustedVerificationProcessContainment {
+  const identityCensus = process.platform === "darwin" ? "macos-sandbox-check-v1" : "linux-pid-namespace-v1";
+  if (!Number.isSafeInteger(processGroupId) || (processGroupId ?? 0) <= 1) {
+    return { isolatedProcessGroup: true, descendantsTerminated: false, cleanupSignal: null, identityCensus, identityMatchesObserved: 0 };
+  }
+  const groupId = processGroupId!;
+  if (!processGroupExists(groupId)) {
+    return { isolatedProcessGroup: true, descendantsTerminated: true, cleanupSignal: null, identityCensus, identityMatchesObserved: 0 };
+  }
+
+  let cleanupSignal: "SIGTERM" | "SIGKILL" = "SIGTERM";
+  try { process.kill(-groupId, "SIGTERM"); } catch (error) {
+    if (!pathError(error, "ESRCH")) {
+      return { isolatedProcessGroup: true, descendantsTerminated: false, cleanupSignal, identityCensus, identityMatchesObserved: 0 };
+    }
+  }
+  if (waitForProcessGroupExit(groupId, 250)) {
+    return { isolatedProcessGroup: true, descendantsTerminated: true, cleanupSignal, identityCensus, identityMatchesObserved: 0 };
+  }
+
+  cleanupSignal = "SIGKILL";
+  try { process.kill(-groupId, "SIGKILL"); } catch (error) {
+    if (!pathError(error, "ESRCH")) {
+      return { isolatedProcessGroup: true, descendantsTerminated: false, cleanupSignal, identityCensus, identityMatchesObserved: 0 };
+    }
+  }
+  return {
+    isolatedProcessGroup: true,
+    descendantsTerminated: waitForProcessGroupExit(groupId, 2_000),
+    cleanupSignal,
+    identityCensus,
+    identityMatchesObserved: 0,
+  };
+}
+
+function spawnContainedProcess(
+  executable: string,
+  argv: string[],
+  options: {
+    cwd: string;
+    shell: false;
+    encoding: "utf8";
+    timeout: number;
+    maxBuffer: number;
+    env: NodeJS.ProcessEnv;
+  },
+  supervisorRoot: string,
+  sandboxIdentity?: MacSandboxIdentity,
+): SandboxedProcessOutcome {
+  // spawnSync cannot create a detached process group. A tiny trusted helper
+  // uses async spawn (which can), supervises output and timeout, and records
+  // the group id in a private path before waiting. The parent always performs
+  // a second TERM/KILL + extinction check, so a crashed or timed-out helper
+  // cannot abandon the sandbox process tree.
+  const supervisorPath = fileURLToPath(new URL("./trusted-process-supervisor.js", import.meta.url));
+  const canonicalSupervisorRoot = fs.realpathSync(supervisorRoot);
+  const pidFile = path.join(canonicalSupervisorRoot, `.trusted-process-${crypto.randomBytes(16).toString("hex")}.pid`);
+  const request = {
+    executable,
+    argv,
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: options.timeout,
+    maxBufferBytes: options.maxBuffer,
+    pidFile,
+    sandboxIdentity,
+  };
+  const helper = spawnSync(process.execPath, [supervisorPath], {
+    cwd: canonicalSupervisorRoot,
+    shell: false,
+    encoding: "utf8",
+    input: JSON.stringify(request),
+    timeout: options.timeout + 10_000,
+    maxBuffer: Math.max(12 * 1024 * 1024, options.maxBuffer * 3),
+    env: { PATH: path.dirname(process.execPath), NO_COLOR: "1" },
+  });
+
+  let recordedPid: number | undefined;
+  let pidFileError: Error | null = null;
+  try {
+    const descriptor = fs.openSync(pidFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const parsed = Number.parseInt(fs.readFileSync(descriptor, "utf8").trim(), 10);
+      if (Number.isSafeInteger(parsed) && parsed > 1) recordedPid = parsed;
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch (error) {
+    if (!pathError(error, "ENOENT")) {
+      try { fs.unlinkSync(pidFile); } catch { /* preserve the read failure */ }
+      pidFileError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  let response: SerializedSupervisorOutcome | null = null;
+  if (helper.status === 0 && typeof helper.stdout === "string") {
+    try { response = JSON.parse(helper.stdout) as SerializedSupervisorOutcome; } catch { response = null; }
+  }
+  const responsePid = response && Number.isSafeInteger(response.pid) && (response.pid ?? 0) > 1
+    ? response.pid
+    : undefined;
+  const processGroupId = recordedPid ?? responsePid;
+  const parentGroupCleanup = terminateSandboxProcessGroup(processGroupId);
+  const parentIdentityCleanup = sandboxIdentity
+    ? terminateMacSandboxIdentity(sandboxIdentity)
+    : {
+      isolatedProcessGroup: true as const,
+      descendantsTerminated: true,
+      cleanupSignal: null,
+      identityCensus: "linux-pid-namespace-v1" as const,
+      identityMatchesObserved: 0,
+    };
+  try { fs.unlinkSync(pidFile); } catch (error) {
+    if (!pathError(error, "ENOENT")) parentGroupCleanup.descendantsTerminated = false;
+  }
+
+  const pidConsistent = recordedPid !== undefined && responsePid !== undefined && recordedPid === responsePid;
+  const responseValid = response !== null
+    && response.processContainment?.isolatedProcessGroup === true
+    && response.processContainment.identityCensus === parentIdentityCleanup.identityCensus
+    && Number.isSafeInteger(response.processContainment.identityMatchesObserved)
+    && response.processContainment.identityMatchesObserved >= 0
+    && pidFileError === null
+    && pidConsistent;
+  const descendantsTerminated = Boolean(processGroupId)
+    && parentGroupCleanup.descendantsTerminated
+    && parentIdentityCleanup.descendantsTerminated
+    && responseValid
+    && response!.processContainment.descendantsTerminated;
+  const processContainment: TrustedVerificationProcessContainment = {
+    isolatedProcessGroup: true,
+    descendantsTerminated,
+    cleanupSignal: parentIdentityCleanup.cleanupSignal
+      ?? parentGroupCleanup.cleanupSignal
+      ?? response?.processContainment.cleanupSignal
+      ?? null,
+    identityCensus: parentIdentityCleanup.identityCensus,
+    identityMatchesObserved: parentIdentityCleanup.identityMatchesObserved
+      + (responseValid ? response!.processContainment.identityMatchesObserved : 0),
+  };
+  try {
+    if (sandboxIdentity) removeMacSandboxIdentity(sandboxIdentity);
+  } catch {
+    processContainment.descendantsTerminated = false;
+  }
+
+  if (!responseValid) {
+    const helperMessage = pidFileError?.message
+      ?? helper.error?.message
+      ?? String(helper.stderr || "trusted process supervisor returned invalid output").trim();
+    const helperCode = pidFileError
+      ? "ESUPERVISORPID"
+      : helper.error && "code" in helper.error
+        ? String(helper.error.code)
+        : "ESUPERVISOR";
+    return {
+      pid: processGroupId,
+      status: null,
+      signal: helper.signal,
+      stdout: "",
+      stderr: helperMessage,
+      error: Object.assign(new Error(helperMessage), { code: helperCode }),
+      processContainment,
+    };
+  }
+
+  const serializedError = response!.error;
+  return {
+    pid: processGroupId,
+    status: response!.status,
+    signal: response!.signal,
+    stdout: response!.stdout,
+    stderr: response!.stderr,
+    error: serializedError
+      ? Object.assign(new Error(serializedError.message), { code: serializedError.code })
+      : undefined,
+    processContainment,
+  };
+}
+
+function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcessOutcome {
   const resolvedExecutable = resolveExecutable(options.executable, options.cwd);
   const env = { ...options.env, PATH: sanitizedPath(resolvedExecutable, options.validationRoot) };
   if (options.selection.backend === "macos-sandbox-exec") {
+    const supervisorRoot = path.dirname(options.validationRoot);
+    const sandboxIdentity = prepareMacSandboxIdentity(supervisorRoot);
     const profile = macSandboxProfile({
       validationRoot: options.validationRoot,
       cacheRoot: options.cacheRoot,
       executable: resolvedExecutable,
+      identityPath: sandboxIdentity.allowedPath,
     });
-    return spawnSync(options.selection.executable, ["-p", profile, resolvedExecutable, ...options.argv], {
+    return spawnContainedProcess(options.selection.executable, ["-p", profile, resolvedExecutable, ...options.argv], {
       cwd: options.cwd,
       shell: false,
       encoding: "utf8",
       timeout: options.timeout,
       maxBuffer: 5 * 1024 * 1024,
       env,
-    });
+    }, supervisorRoot, sandboxIdentity);
   }
 
   const readPaths = existingPaths([
@@ -460,7 +911,11 @@ function runSandboxedProcess(options: SandboxedProcessOptions): ReturnType<typeo
   ]).filter((candidate) => !isWithinOrEqual(options.validationRoot, candidate)
     && !isWithinOrEqual(options.cacheRoot, candidate));
   const mountTargets = [...readPaths, options.validationRoot, options.cacheRoot];
-  const args = ["--die-with-parent", "--new-session", "--unshare-all", "--cap-drop", "ALL", "--tmpfs", "/"];
+  // The outer process-group isolation already creates a new session. Omitting
+  // bwrap's `--new-session` keeps the namespace init and every payload
+  // descendant in that group as a second lifetime boundary; `--unshare-all`
+  // also supplies a PID namespace whose init reaps/terminates stragglers.
+  const args = ["--die-with-parent", "--unshare-all", "--cap-drop", "ALL", "--tmpfs", "/"];
   for (const directory of mountParentDirectories(mountTargets)) args.push("--dir", directory);
   for (const candidate of readPaths) args.push("--ro-bind", candidate, candidate);
   args.push("--bind", options.validationRoot, options.validationRoot);
@@ -473,14 +928,14 @@ function runSandboxedProcess(options: SandboxedProcessOptions): ReturnType<typeo
     if (value !== undefined) args.push("--setenv", key, value);
   }
   args.push("--chdir", options.cwd, resolvedExecutable, ...options.argv);
-  return spawnSync(options.selection.executable, args, {
+  return spawnContainedProcess(options.selection.executable, args, {
     cwd: options.cwd,
     shell: false,
     encoding: "utf8",
     timeout: options.timeout,
     maxBuffer: 5 * 1024 * 1024,
     env: {},
-  });
+  }, path.dirname(options.validationRoot));
 }
 
 function backendExecutable(platform: NodeJS.Platform): SandboxBackendSelection | null {
@@ -519,17 +974,25 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
   const cacheRoot = path.join(scratch, "cache");
   const deniedRead = path.join(scratch, "secret.txt");
   const deniedWrite = path.join(scratch, "outside.txt");
+  let unrelatedPid: number | undefined;
   try {
     fs.mkdirSync(validationRoot, { mode: 0o700 });
     fs.mkdirSync(cacheRoot, { mode: 0o700 });
     fs.writeFileSync(deniedRead, "sandbox-probe-secret", { mode: 0o600 });
+    const unrelated = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { stdio: "ignore" });
+    unrelated.unref();
+    unrelatedPid = unrelated.pid;
     const probe = [
-      "const fs=require('node:fs');",
+      "const fs=require('node:fs'),{spawn}=require('node:child_process');",
       "let denied=0;",
       "try { fs.readFileSync(process.argv[1]); } catch { denied++; }",
       "try { fs.writeFileSync(process.argv[2], 'escape'); } catch { denied++; }",
-      "fs.writeFileSync(process.argv[3], 'allowed');",
-      "process.exit(denied === 2 ? 0 : 91);",
+      "const sleeper=['-e','setTimeout(()=>{},60000)'];",
+      "const grouped=spawn(process.execPath,sleeper,{stdio:'ignore'});",
+      "grouped.once('error',()=>process.exit(94)); grouped.unref();",
+      "const detachedPids=[];",
+      "for(let i=0;i<12;i++){const child=spawn(process.execPath,sleeper,{detached:true,stdio:'ignore'});child.once('error',()=>{});child.unref();if(Number.isSafeInteger(child.pid))detachedPids.push(child.pid)}",
+      "setTimeout(()=>{fs.writeFileSync(process.argv[3],JSON.stringify({denied,groupedPid:grouped.pid,detachedPids}));process.exit(denied===2?0:91)},150);",
     ].join("");
     const outcome = runSandboxedProcess({
       selection,
@@ -541,18 +1004,41 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       env: { CI: "1", HOME: validationRoot, TMPDIR: validationRoot },
       timeout: 10_000,
     });
+    let spawnedPids: number[] = [];
+    try {
+      const proof = JSON.parse(fs.readFileSync(path.join(validationRoot, "allowed.txt"), "utf8")) as {
+        denied?: number;
+        groupedPid?: number;
+        detachedPids?: number[];
+      };
+      spawnedPids = [proof.groupedPid, ...(Array.isArray(proof.detachedPids) ? proof.detachedPids : [])]
+        .filter((pid): pid is number => Number.isSafeInteger(pid) && (pid ?? 0) > 1);
+    } catch { /* a missing/malformed proof fails below */ }
+    const escapedPids = spawnedPids.filter(processExists);
+    for (const pid of escapedPids) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* capability probe cleanup */ }
+      try { process.kill(-pid, "SIGKILL"); } catch { /* detached escape cleanup */ }
+    }
+    const unrelatedSurvived = Number.isSafeInteger(unrelatedPid) && processExists(unrelatedPid!);
     const ok = outcome.status === 0
-      && fs.existsSync(path.join(validationRoot, "allowed.txt"))
+      && outcome.processContainment.descendantsTerminated
+      && spawnedPids.length >= 13
+      && outcome.processContainment.identityMatchesObserved >= 12
+      && escapedPids.length === 0
+      && unrelatedSurvived
       && !fs.existsSync(deniedWrite);
     return {
       ok,
       reason: ok
         ? "capability probe passed"
-        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)}`,
+        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}; identity matches: ${outcome.processContainment.identityMatchesObserved}; escaped descendants: ${escapedPids.join(",") || "none"}; unrelated sibling survived: ${unrelatedSurvived}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)}`,
     };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   } finally {
+    if (Number.isSafeInteger(unrelatedPid) && (unrelatedPid ?? 0) > 1) {
+      try { process.kill(unrelatedPid!, "SIGKILL"); } catch { /* already exited */ }
+    }
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 }
@@ -756,7 +1242,7 @@ function writeProcessResult(params: {
   validationSha: string;
   artifact: string;
   startedAt: string;
-  outcome: ReturnType<typeof spawnSync>;
+  outcome: SandboxedProcessOutcome;
 }): TrustedVerificationResult {
   const timedOut = Boolean(params.outcome.error && "code" in params.outcome.error && params.outcome.error.code === "ETIMEDOUT");
   const exitCode = typeof params.outcome.status === "number" ? params.outcome.status : null;
@@ -771,6 +1257,11 @@ function writeProcessResult(params: {
     `Exit code: ${exitCode ?? "none"}`,
     `Signal: ${params.outcome.signal ?? "none"}`,
     `Timed out: ${timedOut}`,
+    `Process group isolated: ${params.outcome.processContainment.isolatedProcessGroup}`,
+    `Descendants terminated: ${params.outcome.processContainment.descendantsTerminated}`,
+    `Containment cleanup signal: ${params.outcome.processContainment.cleanupSignal ?? "none"}`,
+    `Identity census: ${params.outcome.processContainment.identityCensus}`,
+    `Identity matches observed: ${params.outcome.processContainment.identityMatchesObserved}`,
     "",
     "STDOUT:",
     (params.outcome.stdout ?? "").slice(0, 2_000_000),
@@ -782,7 +1273,7 @@ function writeProcessResult(params: {
   return {
     id: params.id,
     name: params.name,
-    status: exitCode === 0 ? "PASS" : "FAIL",
+    status: exitCode === 0 && params.outcome.processContainment.descendantsTerminated ? "PASS" : "FAIL",
     exitCode,
     artifact: params.artifact,
     startedAt: params.startedAt,
@@ -790,6 +1281,62 @@ function writeProcessResult(params: {
     artifactSha256: sha256(artifactBytes),
     timedOut,
     signal: params.outcome.signal ?? null,
+    processContainment: params.outcome.processContainment,
+  };
+}
+
+function writeNotRunResult(params: {
+  id: string;
+  name: string;
+  executable: string;
+  argv: string[];
+  configuredCwd: string;
+  validationSha: string;
+  artifact: string;
+  reason: string;
+}): TrustedVerificationResult {
+  const startedAt = new Date().toISOString();
+  const endedAt = new Date().toISOString();
+  const identityCensus = process.platform === "darwin"
+    ? "macos-sandbox-check-v1" as const
+    : "linux-pid-namespace-v1" as const;
+  const artifactBytes = [
+    `Started: ${startedAt}`,
+    `Ended: ${endedAt}`,
+    `Executable: ${params.executable}`,
+    `Argv: ${JSON.stringify(params.argv)}`,
+    `Cwd: ${params.configuredCwd}`,
+    `Validation SHA: ${params.validationSha}`,
+    "Status: NOT_RUN",
+    `Reason: ${params.reason}`,
+    "Exit code: none",
+    "Signal: none",
+    "Timed out: false",
+    "Process group isolated: false",
+    "Descendants terminated: true",
+    "Containment cleanup signal: none",
+    `Identity census: ${identityCensus}`,
+    "Identity matches observed: 0",
+  ].join("\n");
+  writeExclusiveNoFollow(params.artifact, artifactBytes);
+  return {
+    id: params.id,
+    name: params.name,
+    status: "NOT_RUN",
+    exitCode: null,
+    artifact: params.artifact,
+    startedAt,
+    endedAt,
+    artifactSha256: sha256(artifactBytes),
+    timedOut: false,
+    signal: null,
+    processContainment: {
+      isolatedProcessGroup: false,
+      descendantsTerminated: true,
+      cleanupSignal: null,
+      identityCensus,
+      identityMatchesObserved: 0,
+    },
   };
 }
 
@@ -819,6 +1366,22 @@ function createDetachedValidationCheckout(sourceRoot: string, validationRoot: st
 function removeValidationCheckout(validationRoot: string): void {
   // Removal is scoped to the freshly minted managed validation directory.
   fs.rmSync(validationRoot, { recursive: true, force: true });
+}
+
+function selectedNpmLockfile(repositoryRoot: string): string | null {
+  // npm gives shrinkwrap precedence when both files exist. lstat intentionally
+  // treats a dangling symlink as present so materialization rejects it rather
+  // than silently falling through to a less authoritative lock.
+  for (const filename of ["npm-shrinkwrap.json", "package-lock.json"]) {
+    const candidate = path.join(repositoryRoot, filename);
+    try {
+      fs.lstatSync(candidate);
+      return candidate;
+    } catch (error) {
+      if (!pathError(error, "ENOENT")) throw error;
+    }
+  }
+  return null;
 }
 
 export function runTrustedVerification(params: {
@@ -861,16 +1424,23 @@ export function runTrustedVerification(params: {
   let validationSha = "";
   let validationShaAfter = "";
   let validationTrackedTreeClean = false;
+  let dependencyMaterialization: TrustedNpmMaterializationReceipt | null = null;
   let dependencyBootstrap: TrustedVerificationResult | null = null;
 
   try {
     createDetachedValidationCheckout(sourceRoot, validationRoot, sourceSha);
     validationSha = git(validationRoot, ["rev-parse", "HEAD"]);
+    const npmLockfile = selectedNpmLockfile(validationRoot);
+    if (npmLockfile) {
+      dependencyMaterialization = materializeTrustedNpmCache({
+        lockfilePath: npmLockfile,
+        cacheRoot,
+        sourceRoot: validationRoot,
+      });
+    }
     const env = validationEnvironment(validationRoot, cacheRoot);
 
-    const hasNpmLock = fs.existsSync(path.join(validationRoot, "package-lock.json"))
-      || fs.existsSync(path.join(validationRoot, "npm-shrinkwrap.json"));
-    if (hasNpmLock) {
+    if (npmLockfile && dependencyMaterialization?.status === "PASS") {
       const bootstrapStartedAt = new Date().toISOString();
       const executable = process.platform === "win32" ? "npm.cmd" : "npm";
       const argv = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
@@ -888,7 +1458,7 @@ export function runTrustedVerification(params: {
       });
       dependencyBootstrap = writeProcessResult({
         id: "dependency-bootstrap",
-        name: "Lockfile dependency bootstrap (fresh offline cache; lifecycle scripts disabled)",
+        name: "Lockfile dependency bootstrap (integrity-verified private cache; offline; lifecycle scripts disabled)",
         executable,
         argv,
         configuredCwd: ".",
@@ -897,11 +1467,43 @@ export function runTrustedVerification(params: {
         startedAt: bootstrapStartedAt,
         outcome,
       });
+    } else if (npmLockfile) {
+      dependencyBootstrap = writeNotRunResult({
+        id: "dependency-bootstrap",
+        name: "Lockfile dependency bootstrap (integrity-verified private cache; offline; lifecycle scripts disabled)",
+        executable: process.platform === "win32" ? "npm.cmd" : "npm",
+        argv: ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        configuredCwd: ".",
+        validationSha,
+        artifact: path.join(artifactAttemptDir, "trusted-dependency-bootstrap.txt"),
+        reason: `dependency materialization failed: ${dependencyMaterialization?.error ?? "unknown failure"}`,
+      });
     }
 
+    const prerequisiteFailure = dependencyMaterialization?.status === "FAIL"
+      ? `dependency materialization failed: ${dependencyMaterialization.error ?? "unknown failure"}`
+      : dependencyBootstrap?.status !== undefined && dependencyBootstrap.status !== "PASS"
+        ? "dependency bootstrap did not pass"
+        : null;
     for (const check of config.checks) {
       const command = check.command;
       const artifact = path.join(artifactAttemptDir, `trusted-${check.id}.txt`);
+      if (prerequisiteFailure) {
+        const result = writeNotRunResult({
+          id: check.id,
+          name: check.name,
+          executable: command?.executable ?? "missing",
+          argv: command?.argv ?? [],
+          configuredCwd: command?.cwd ?? ".",
+          validationSha,
+          artifact,
+          reason: prerequisiteFailure,
+        });
+        fs.writeSync(resultsDescriptor, `${JSON.stringify(result)}\n`);
+        fs.fsyncSync(resultsDescriptor);
+        results.push(result);
+        continue;
+      }
       const checkStartedAt = new Date().toISOString();
       const checkCwd = resolveCheckCwd(validationRoot, command?.cwd);
       assertCheckExecutableScoped(validationRoot, checkCwd, command!.executable);
@@ -920,6 +1522,7 @@ export function runTrustedVerification(params: {
       const timedOut = Boolean(outcome?.error && "code" in outcome.error && outcome.error.code === "ETIMEDOUT");
       const exitCode = outcome && typeof outcome.status === "number" ? outcome.status : null;
       const status: VerificationResult["status"] = command && exitCode === 0
+        && outcome?.processContainment.descendantsTerminated === true
         ? "PASS"
         : command
           ? "FAIL"
@@ -936,6 +1539,11 @@ export function runTrustedVerification(params: {
         `Exit code: ${exitCode ?? "none"}`,
         `Signal: ${outcome?.signal ?? "none"}`,
         `Timed out: ${timedOut}`,
+        `Process group isolated: ${outcome?.processContainment.isolatedProcessGroup ?? false}`,
+        `Descendants terminated: ${outcome?.processContainment.descendantsTerminated ?? false}`,
+        `Containment cleanup signal: ${outcome?.processContainment.cleanupSignal ?? "none"}`,
+        `Identity census: ${outcome?.processContainment.identityCensus ?? "missing"}`,
+        `Identity matches observed: ${outcome?.processContainment.identityMatchesObserved ?? 0}`,
         "",
         "STDOUT:",
         (outcome?.stdout ?? "").slice(0, 2_000_000),
@@ -955,6 +1563,13 @@ export function runTrustedVerification(params: {
         artifactSha256: sha256(artifactBytes),
         timedOut,
         signal: outcome?.signal ?? null,
+        processContainment: outcome?.processContainment ?? {
+          isolatedProcessGroup: true,
+          descendantsTerminated: false,
+          cleanupSignal: null,
+          identityCensus: process.platform === "darwin" ? "macos-sandbox-check-v1" : "linux-pid-namespace-v1",
+          identityMatchesObserved: 0,
+        },
       };
       fs.writeSync(resultsDescriptor, `${JSON.stringify(result)}\n`);
       fs.fsyncSync(resultsDescriptor);
@@ -991,9 +1606,11 @@ export function runTrustedVerification(params: {
     checksHash: trustedVerificationConfigHash(config),
     resultsHash: sha256(results.map((result) => JSON.stringify(result)).join("\n")),
     sandbox: sandboxSelection.receipt,
+    dependencyMaterialization,
     dependencyBootstrap,
     results,
-    ok: (!dependencyBootstrap || dependencyBootstrap.status === "PASS")
+    ok: (!dependencyMaterialization || dependencyMaterialization.status === "PASS")
+      && (!dependencyBootstrap || dependencyBootstrap.status === "PASS")
       && !requiredFailed
       && sourceSha === sourceShaAfter
       && sourceSha === validationSha
@@ -1020,6 +1637,12 @@ export function runTrustedVerification(params: {
         validationShaAfter,
         sandboxBackend: receipt.sandbox.backend,
         sandboxProfile: receipt.sandbox.profile,
+        descendantProcessContainment: receipt.sandbox.descendantProcessContainment,
+        dependencyLockfileSha256: receipt.dependencyMaterialization?.lockfileSha256 ?? null,
+        dependencyManifestSha256: receipt.dependencyMaterialization?.manifestSha256 ?? null,
+        dependencyTarballs: receipt.dependencyMaterialization?.uniqueTarballs ?? 0,
+        dependencyBytes: receipt.dependencyMaterialization?.verifiedBytes ?? 0,
+        dependencyNetworkUsed: receipt.dependencyMaterialization?.networkUsed ?? false,
       },
       purpose: "kernel-owned delivered-HEAD verification",
       risk: "read",
@@ -1065,6 +1688,29 @@ function readFileNoFollowWithin(root: string, candidate: string): Buffer {
   }
 }
 
+function hasValidProcessContainment(
+  result: TrustedVerificationResult,
+  expectedIdentityCensus: TrustedVerificationProcessContainment["identityCensus"],
+): boolean {
+  const containment = result.processContainment;
+  if (!containment
+    || containment.descendantsTerminated !== true
+    || !([null, "SIGTERM", "SIGKILL"] as const).includes(containment.cleanupSignal)
+    || containment.identityCensus !== expectedIdentityCensus
+    || !Number.isSafeInteger(containment.identityMatchesObserved)
+    || containment.identityMatchesObserved < 0) return false;
+  if (result.status === "NOT_RUN") {
+    return result.exitCode === null
+      && result.timedOut === false
+      && result.signal === null
+      && containment.isolatedProcessGroup === false
+      && containment.cleanupSignal === null
+      && containment.identityMatchesObserved === 0;
+  }
+  if (containment.isolatedProcessGroup !== true) return false;
+  return result.status === (result.exitCode === 0 ? "PASS" : "FAIL");
+}
+
 export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoalState, stateManager: StateManagerAPI): TrustedVerificationReceiptV1 | null {
   try {
     const repositoryRoot = resolveRepositoryRoot(cwd);
@@ -1080,7 +1726,8 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
       || receipt.sandbox.networkDenied !== true
       || receipt.sandbox.ambientCredentialsStripped !== true
       || receipt.sandbox.validationWorktreeWritable !== true
-      || receipt.sandbox.sourceRepositoryReadDenied !== true) return null;
+      || receipt.sandbox.sourceRepositoryReadDenied !== true
+      || receipt.sandbox.descendantProcessContainment !== "isolated-process-lifetime-v1") return null;
     if (!Array.isArray(receipt.results) || typeof receipt.resultsHash !== "string" || typeof receipt.checksHash !== "string") return null;
     const currentSha = git(repositoryRoot, ["rev-parse", "HEAD"]);
     if (receipt.sourceSha !== receipt.sourceShaAfter
@@ -1096,14 +1743,23 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
     if (new Set(resultIds).size !== resultIds.length || JSON.stringify(configuredIds) !== JSON.stringify(resultIds)) return null;
     const requiredFailed = config.checks.some((check) => check.required
       && receipt.results.find((result) => result.id === check.id)?.status !== "PASS");
-    const expectsDependencyBootstrap = fs.existsSync(path.join(repositoryRoot, "package-lock.json"))
-      || fs.existsSync(path.join(repositoryRoot, "npm-shrinkwrap.json"));
-    if (expectsDependencyBootstrap !== Boolean(receipt.dependencyBootstrap)) return null;
+    const npmLockfile = selectedNpmLockfile(repositoryRoot);
+    const expectsDependencyBootstrap = Boolean(npmLockfile);
+    if (expectsDependencyBootstrap !== Boolean(receipt.dependencyMaterialization)
+      || expectsDependencyBootstrap !== Boolean(receipt.dependencyBootstrap)) return null;
+    if (receipt.dependencyMaterialization
+      && (!npmLockfile || !trustedNpmMaterializationMatchesLock(receipt.dependencyMaterialization, npmLockfile, repositoryRoot))) return null;
+    const expectedIdentityCensus = receipt.sandbox.backend === "macos-sandbox-exec"
+      ? "macos-sandbox-check-v1"
+      : "linux-pid-namespace-v1";
     if (receipt.dependencyBootstrap) {
+      if (!hasValidProcessContainment(receipt.dependencyBootstrap, expectedIdentityCensus)) return null;
       if (sha256(readFileNoFollowWithin(artifactRoot, receipt.dependencyBootstrap.artifact)) !== receipt.dependencyBootstrap.artifactSha256) return null;
     }
+    const materializationPassed = !receipt.dependencyMaterialization
+      || receipt.dependencyMaterialization.status === "PASS";
     const bootstrapPassed = !receipt.dependencyBootstrap || receipt.dependencyBootstrap.status === "PASS";
-    const recomputedOk = bootstrapPassed && !requiredFailed
+    const recomputedOk = materializationPassed && bootstrapPassed && !requiredFailed
       && receipt.sourceSha === receipt.sourceShaAfter
       && receipt.sourceSha === receipt.validationSha
       && receipt.validationSha === receipt.validationShaAfter
@@ -1112,6 +1768,7 @@ export function readTrustedVerificationReceipt(cwd: string, state: IterativeGoal
     if (sha256(receipt.results.map((result) => JSON.stringify(result)).join("\n")) !== receipt.resultsHash) return null;
     for (const result of receipt.results) {
       if (typeof result.artifact !== "string" || typeof result.artifactSha256 !== "string") return null;
+      if (!hasValidProcessContainment(result, expectedIdentityCensus)) return null;
       if (sha256(readFileNoFollowWithin(artifactRoot, result.artifact)) !== result.artifactSha256) return null;
     }
     const absoluteReceiptPath = path.resolve(receiptPath);

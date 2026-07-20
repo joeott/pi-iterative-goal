@@ -17,6 +17,12 @@ import {
   runTrustedVerification,
 } from "../dist/trusted-verification.js";
 
+const cliArgs = process.argv.slice(2);
+if (cliArgs.some((arg) => arg !== "--require-backend")) {
+  throw new Error("usage: test-trusted-security.mjs [--require-backend]");
+}
+const requireBackend = cliArgs.includes("--require-backend");
+
 function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30_000 }).trim();
 }
@@ -36,7 +42,17 @@ function expectThrow(fn, pattern) {
   assert.match(String(thrown), pattern);
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-trusted-security-"));
+const descendantPids = new Set();
 try {
   const repo = path.join(scratch, "repo");
   const external = path.join(scratch, "external");
@@ -85,16 +101,11 @@ try {
     sandbox: { profile: "local_build" },
     attestations: [],
   };
-  const cycleDir = path.join(repo, ".pi", "iterative-goal", "runs", state.runId, "cycles", "1");
+  const runDir = path.join(fs.realpathSync(repo), ".pi", "iterative-goal", "runs", state.runId);
+  const cycleDir = path.join(runDir, "cycles", "1");
   const phaseDir = path.join(cycleDir, "validate");
-  const runDir = path.join(repo, ".pi", "iterative-goal", "runs", state.runId);
   const manager = {
     getRunDir() { return runDir; },
-    getRunDir() {
-      const directory = path.join(repo, ".pi", "iterative-goal", "runs", state.runId);
-      fs.mkdirSync(directory, { recursive: true });
-      return fs.realpathSync(directory);
-    },
     getPhaseDir(_cycle, phase) {
       const directory = path.join(cycleDir, phase);
       fs.mkdirSync(directory, { recursive: true });
@@ -126,6 +137,9 @@ try {
   fs.symlinkSync(resultsListTrap, path.join(phaseDir, "trusted-verification-results.jsonl"));
 
   const sandboxBackend = detectTrustedVerificationSandboxBackend();
+  if (!sandboxBackend && requireBackend) {
+    throw new Error("required trusted verification sandbox backend is unavailable");
+  }
   if (!sandboxBackend) {
     expectThrow(
       () => runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config }),
@@ -162,6 +176,49 @@ try {
       timeoutMs: 10_000,
     },
   });
+  config.checks.push({
+    id: "descendant-cleanup",
+    name: "terminate grouped daemons and deny detached escapes",
+    required: true,
+    command: {
+      executable: process.execPath,
+      argv: ["-e", [
+        "const{spawn}=require('node:child_process');",
+        "const grouped=spawn('/bin/sh',['-c',\"trap '' TERM; while :; do sleep 1; done\"],{stdio:'ignore'});grouped.unref();",
+        "console.log('DESCENDANT_GROUP_PID='+grouped.pid);",
+        "const finish=(pid)=>{if(pid)console.log('DESCENDANT_DETACHED_PID='+pid);setTimeout(()=>process.exit(0),250)};",
+        "const detached=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});",
+        "detached.once('spawn',()=>{detached.unref();finish(detached.pid)});",
+        "detached.once('error',()=>finish(null));",
+      ].join("")],
+      timeoutMs: 10_000,
+    },
+  });
+  config.checks.push({
+    id: "descendant-lifetime",
+    name: "terminate a same-group descendant after its direct parent exits",
+    required: true,
+    command: {
+      executable: process.execPath,
+      argv: ["-e", [
+        "const {spawn}=require('node:child_process');",
+        "const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});",
+        "child.unref();",
+        "console.log(child.pid);",
+      ].join("")],
+      timeoutMs: 10_000,
+    },
+  });
+  config.checks.push({
+    id: "fast-exit",
+    name: "capture an immediate child exit without an event-listener race",
+    required: true,
+    command: {
+      executable: process.execPath,
+      argv: ["-e", "process.exit(0)"],
+      timeoutMs: 1_000,
+    },
+  });
   writeSettings(repo, config);
   const receipt = runTrustedVerification({ cwd: path.join(repo, "sub"), state, stateManager: manager, config });
   assert.equal(receipt.ok, true);
@@ -171,11 +228,52 @@ try {
   assert.equal(fs.readFileSync(resultsListTrap, "utf8"), "results-list-trap-unchanged\n");
   assert.equal(fs.lstatSync(legacyCachePath).isSymbolicLink(), true);
   assert.deepEqual(fs.readdirSync(cacheTrap), ["sentinel.txt"], "source-tree cache symlink must never be used");
-  assert.match(receipt.dependencyBootstrap?.name ?? "", /fresh offline cache/);
+  assert.match(receipt.dependencyBootstrap?.name ?? "", /integrity-verified private cache/);
+  assert.equal(receipt.dependencyMaterialization?.status, "PASS");
+  assert.equal(receipt.dependencyMaterialization?.uniqueTarballs, 0);
+  assert.equal(receipt.dependencyMaterialization?.verifiedCacheHits, 0);
+  assert.equal(receipt.dependencyMaterialization?.verifiedRegistryFetches, 0);
+  assert.equal(receipt.dependencyMaterialization?.networkUsed, false);
+  assert.equal(JSON.stringify(receipt.dependencyMaterialization).includes("https://"), false);
   assert.match(receipt.results[0].artifact, /trusted-attempt-/);
   assert.equal(fs.statSync(path.dirname(receipt.results[0].artifact)).mode & 0o077, 0, "artifact attempt directory is private");
   assert.deepEqual(receipt.sandbox, sandboxBackend);
   assert.equal(receipt.results.find((result) => result.id === "sandbox-escape")?.status, "PASS");
+  const descendantResult = receipt.results.find((result) => result.id === "descendant-cleanup");
+  assert.equal(descendantResult?.status, "PASS");
+  assert.equal(descendantResult?.processContainment?.isolatedProcessGroup, true);
+  assert.equal(descendantResult?.processContainment?.descendantsTerminated, true);
+  assert.equal(
+    descendantResult?.processContainment?.identityCensus,
+    sandboxBackend.backend === "macos-sandbox-exec" ? "macos-sandbox-check-v1" : "linux-pid-namespace-v1",
+  );
+  if (sandboxBackend.backend === "macos-sandbox-exec") {
+    assert.ok(descendantResult.processContainment.identityMatchesObserved >= 1, "detached Seatbelt child must be observed by the identity census");
+  }
+  const descendantArtifact = fs.readFileSync(descendantResult.artifact, "utf8");
+  assert.match(descendantArtifact, /Identity census: (?:macos-sandbox-check-v1|linux-pid-namespace-v1)/);
+  assert.match(descendantArtifact, /Identity matches observed: \d+/);
+  for (const match of descendantArtifact.matchAll(/DESCENDANT_(?:GROUP|DETACHED)_PID=(\d+)/g)) {
+    const pid = Number.parseInt(match[1], 10);
+    descendantPids.add(pid);
+    assert.equal(processAlive(pid), false, `sandbox descendant ${pid} must not outlive its check`);
+  }
+  assert.ok(descendantPids.size >= 1, "daemon containment test must observe at least one spawned descendant");
+  const lifetimeResult = receipt.results.find((result) => result.id === "descendant-lifetime");
+  assert.equal(lifetimeResult?.status, "PASS");
+  assert.equal(lifetimeResult?.processContainment.isolatedProcessGroup, true);
+  assert.equal(lifetimeResult?.processContainment.descendantsTerminated, true);
+  assert.match(lifetimeResult?.processContainment.cleanupSignal ?? "", /^SIG(?:TERM|KILL)$/);
+  const lifetimeArtifact = fs.readFileSync(lifetimeResult.artifact, "utf8");
+  const lifetimePidMatch = lifetimeArtifact.match(/STDOUT:\n(\d+)\n/);
+  assert.ok(lifetimePidMatch, "same-group daemon test must record its descendant PID");
+  const lifetimePid = Number.parseInt(lifetimePidMatch[1], 10);
+  descendantPids.add(lifetimePid);
+  assert.equal(processAlive(lifetimePid), false, `same-group descendant ${lifetimePid} must not outlive its check`);
+  const fastExitResult = receipt.results.find((result) => result.id === "fast-exit");
+  assert.equal(fastExitResult?.status, "PASS");
+  assert.equal(fastExitResult?.timedOut, false);
+  assert.equal(fastExitResult?.processContainment.descendantsTerminated, true);
   assert.equal(fs.existsSync(path.join(external, "sandbox-escape.txt")), false);
   assert.equal(receipt.sourceSha, git(repo, "rev-parse", "HEAD"));
   assert.equal(receipt.dependencyBootstrap?.status, "PASS");
@@ -206,6 +304,12 @@ try {
   modifiedReceipt.ok = false;
   fs.writeFileSync(receiptPath, JSON.stringify(modifiedReceipt, null, 2));
   assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "receipt tamper must invalidate signature");
+  fs.writeFileSync(receiptPath, receiptBytes);
+
+  const containmentTamper = JSON.parse(receiptBytes);
+  containmentTamper.results[0].processContainment.descendantsTerminated = false;
+  fs.writeFileSync(receiptPath, JSON.stringify(containmentTamper, null, 2));
+  assert.equal(readTrustedVerificationReceipt(repo, state, manager), null, "descendant containment tamper must invalidate receipt");
   fs.writeFileSync(receiptPath, receiptBytes);
 
   state.attestations.at(-1).cryptographicSignature = Buffer.from("invalid").toString("base64");
@@ -346,7 +450,7 @@ try {
     sandbox: { profile: "local_build" },
     attestations: [],
   };
-  const offlineRunDir = path.join(offlineRepo, ".pi", "iterative-goal", "runs", offlineState.runId);
+  const offlineRunDir = path.join(fs.realpathSync(offlineRepo), ".pi", "iterative-goal", "runs", offlineState.runId);
   const offlineManager = {
     getRunDir() { return offlineRunDir; },
     getPhaseDir(_cycle, phase) {
@@ -363,9 +467,13 @@ try {
     enabled: true,
     checks: [{
       id: "local-check",
-      name: "local check still runs",
+      name: "local check must not run",
       required: true,
-      command: { executable: process.execPath, argv: ["-e", "process.exit(0)"], timeoutMs: 10_000 },
+      command: {
+        executable: process.execPath,
+        argv: ["-e", "process.exit(73)"],
+        timeoutMs: 10_000,
+      },
     }],
   };
   writeSettings(offlineRepo, offlineConfig);
@@ -375,8 +483,21 @@ try {
     stateManager: offlineManager,
     config: offlineConfig,
   });
-  assert.equal(offlineReceipt.dependencyBootstrap?.status, "FAIL");
+  assert.equal(offlineReceipt.dependencyMaterialization?.status, "FAIL");
+  assert.equal(offlineReceipt.dependencyMaterialization?.networkUsed, false, "a disallowed lock origin fails before network");
+  assert.equal(JSON.stringify(offlineReceipt.dependencyMaterialization).includes("https://"), false);
+  assert.equal(offlineReceipt.dependencyBootstrap?.status, "NOT_RUN");
+  assert.equal(offlineReceipt.dependencyBootstrap?.exitCode, null);
+  assert.equal(offlineReceipt.dependencyBootstrap?.processContainment.isolatedProcessGroup, false);
+  assert.match(fs.readFileSync(offlineReceipt.dependencyBootstrap.artifact, "utf8"), /dependency materialization failed/);
+  assert.equal(offlineReceipt.results[0]?.status, "NOT_RUN");
+  assert.equal(offlineReceipt.results[0]?.exitCode, null);
+  assert.equal(offlineReceipt.results[0]?.processContainment.isolatedProcessGroup, false);
+  assert.match(fs.readFileSync(offlineReceipt.results[0].artifact, "utf8"), /dependency materialization failed/);
   assert.equal(offlineReceipt.ok, false, "an empty offline cache miss must fail closed");
+  const offlineReceiptPath = path.join(offlineRunDir, "cycles", "1", "validate", "trusted-verification-receipt.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(offlineReceiptPath, "utf8")), offlineReceipt, "failed materialization leaves a durable receipt");
+  assert.equal(offlineState.attestations.length, 1, "failed materialization receipt is signed for auditability");
   assert.equal(readTrustedVerificationReceipt(offlineRepo, offlineState, offlineManager), null);
 
   const phaseBackup = `${phaseDir}.real`;
@@ -556,5 +677,9 @@ try {
 
   console.log(`trusted-security: PASS (${sandboxBackend ? `${sandboxBackend.backend} receipt signature/artifact/config/HEAD/cwd/clean-tree` : "OS sandbox unavailable -> trusted runner failed closed"} + scoped one-use approvals)`);
 } finally {
+  for (const pid of descendantPids) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already reaped */ }
+    try { process.kill(-pid, "SIGKILL"); } catch { /* already reaped */ }
+  }
   fs.rmSync(scratch, { recursive: true, force: true });
 }
