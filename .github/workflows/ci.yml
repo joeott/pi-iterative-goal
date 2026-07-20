@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic:
+    name: deterministic validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind run to the exact event head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.16.0
+          cache: npm
+      - name: Install trusted Linux sandbox
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+      - name: Pin npm
+        run: npm install --global npm@11.13.0 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run validate
+      - name: Require real Linux trusted-sandbox execution
+        run: npm run test:trusted-security -- --require-backend
+      - name: Certify the exact event head with the committed policy
+        run: npm run trusted:head -- --output "$RUNNER_TEMP/trusted-head-proof.json"
+      - name: Prove provider preflight is offline by default
+        run: node scripts/model-roster-probe.mjs --output "$RUNNER_TEMP/model-roster-offline.json"
+      - name: Preserve exact-head validation receipts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exact-head-validation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/trusted-head-proof.json
+            ${{ runner.temp }}/model-roster-offline.json
+          if-no-files-found: error
+          retention-days: 14
+
+  trusted-macos:
+    name: trusted verification (macOS Seatbelt)
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind run to the exact event head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.16.0
+          cache: npm
+      - name: Pin npm
+        run: npm install --global npm@11.13.0 --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - name: Require real macOS Seatbelt execution
+        run: npm run test:trusted-security -- --require-backend

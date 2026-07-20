@@ -450,6 +450,7 @@ function fakePi() {
     },
     async setModel(model) {
       appendTrace({ type: "model.set", provider: model?.provider, model: model?.id ?? model?.model ?? model?.name });
+      return true;
     },
     async exec(command, args, options = {}) {
       const started = Date.now();
@@ -527,6 +528,27 @@ async function startHeadlessRun(registerExtension, cwd, goal) {
   await pi.commands.get("goal-start").handler(goal, ctx);
   const status = await readStatus(pi, ctx);
   return { pi, ctx, status };
+}
+
+async function approveExactCommand(pi, ctx, command, purpose) {
+  const approval = await pi.tools.get("cyber_request_approval").execute(
+    `approve-${crypto.randomUUID()}`,
+    {
+      requested_action: command,
+      blast_radius_assessment: "Runs only in the disposable headless workload repository.",
+      justification: purpose,
+      rollback_plan: "Discard the disposable workload repository.",
+      affected_resources: [path.resolve(ctx.cwd)],
+      exact_commands: [command],
+      data_access_scope: "disposable-local-test-fixture",
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(approval.details.rejected, false, `approval request rejected for ${command}`);
+  await pi.commands.get("goal-approve").handler(approval.details.token, ctx);
+  return approval.details.token;
 }
 
 async function readStatus(pi, ctx) {
@@ -1008,9 +1030,15 @@ await check("workload-benchmark", "Representative coding-agent workloads satisfy
       dataClassification: "internal",
       allowedPaths: [parsePathScope("src/math.mjs")],
     }, AbortSignal.timeout(10_000));
+    const testApproval = await approveExactCommand(
+      pi,
+      ctx,
+      "npm test",
+      "Validate the representative coding workload through the guarded shell.",
+    );
     const testResult = await pi.tools.get("goal_shell").execute(
       "workload-node-test",
-      { command: "npm test", cwd: tmpRepo, purpose: "validate representative coding workload" },
+      { command: "npm test", cwd: tmpRepo, purpose: "validate representative coding workload", approvalToken: testApproval },
       undefined,
       undefined,
       ctx,
@@ -1233,9 +1261,15 @@ await check("vulnerability-remediation-workload", "Headless CLI remediates repre
   const runId = status.runId;
   const phaseAttemptId = status.lock.activePhaseId;
 
+  const initialTestApproval = await approveExactCommand(
+    pi,
+    ctx,
+    "npm test",
+    "Establish the failing vulnerability-remediation baseline through the guarded shell.",
+  );
   const initialTest = await pi.tools.get("goal_shell").execute(
     "vuln-initial-test",
-    { command: "npm test", cwd: tmpRepo, purpose: "establish failing vulnerability-remediation baseline" },
+    { command: "npm test", cwd: tmpRepo, purpose: "establish failing vulnerability-remediation baseline", approvalToken: initialTestApproval },
     undefined,
     undefined,
     ctx,
@@ -1321,9 +1355,15 @@ await check("vulnerability-remediation-workload", "Headless CLI remediates repre
     allowedPaths: [parsePathScope("src/security.mjs")],
   }, AbortSignal.timeout(10_000));
 
+  const finalTestApproval = await approveExactCommand(
+    pi,
+    ctx,
+    "npm test",
+    "Validate the completed vulnerability remediation through the guarded shell.",
+  );
   const finalTest = await pi.tools.get("goal_shell").execute(
     "vuln-final-test",
-    { command: "npm test", cwd: tmpRepo, purpose: "validate vulnerability remediation" },
+    { command: "npm test", cwd: tmpRepo, purpose: "validate vulnerability remediation", approvalToken: finalTestApproval },
     undefined,
     undefined,
     ctx,
@@ -1617,8 +1657,18 @@ await check("shard-merge-back-gate", "C4 merge-back: 2-shard fan-out merges thro
       unverifiedShards: items.filter((item) => item.kind === "shard").length,
     };
   };
-  const markerFor = (kind, pid) => JSON.stringify({ pid, kind, createdAt: new Date().toISOString() });
-  const deadPid = spawnSync("true").pid ?? 999999;
+  const markerFor = (kind, pid, extra = {}) => JSON.stringify({
+    schema: "pi-iterative-goal.worktree-owner.v2",
+    pid,
+    processStartToken: null,
+    kind,
+    createdAt: new Date().toISOString(),
+    ...extra,
+  });
+  // Use a PID above the kernel PID range. A just-exited child PID can be
+  // recycled by another concurrent test process and turn a deterministic
+  // dead-owner fixture into ambiguous live ownership.
+  const deadPid = 2_147_483_647;
 
   // ── §8.7 (1): 2-shard fan-out, non-overlapping write scopes ──────────
   const plan2 = planFixture("plan-c4-merge", 1, [
@@ -1980,7 +2030,23 @@ await check("shard-merge-back-gate", "C4 merge-back: 2-shard fan-out merges thro
   stateManager.incrementCycle(); // cycle 3.
   const staleIntegration = path.join(os.tmpdir(), `pi-ig-integration-stale-${Math.random().toString(16).slice(2, 10)}`);
   assert.equal(spawnSync("git", ["worktree", "add", staleIntegration, branch], { cwd: repo }).status, 0);
-  fs.writeFileSync(path.join(staleIntegration, ".pi-ig-worktree.json"), markerFor("integration", deadPid));
+  const staleLeaseNonce = crypto.randomBytes(16).toString("hex");
+  const gitCommonDirRaw = spawnSync("git", ["rev-parse", "--git-common-dir"], { cwd: repo, encoding: "utf8" }).stdout.trim();
+  const staleLeaseRoot = path.join(fs.realpathSync(path.resolve(repo, gitCommonDirRaw)), "pi-iterative-goal", "integration-leases");
+  fs.mkdirSync(staleLeaseRoot, { recursive: true });
+  fs.writeFileSync(path.join(staleLeaseRoot, `${crypto.createHash("sha256").update(branch).digest("hex")}.json`), JSON.stringify({
+    schema: "pi-iterative-goal.integration-lease.v1",
+    repoRoot: fs.realpathSync(repo),
+    branch,
+    pid: deadPid,
+    processStartToken: null,
+    nonce: staleLeaseNonce,
+    acquiredAt: new Date().toISOString(),
+  }));
+  fs.writeFileSync(path.join(staleIntegration, ".pi-ig-worktree.json"), markerFor("integration", deadPid, {
+    branch,
+    leaseNonce: staleLeaseNonce,
+  }));
   // test/suite.test.mjs is tracked at seed but never merged, so a patch
   // based on main HEAD applies cleanly onto the branch — an alpha/beta patch
   // would correctly conflict with plan2's already-merged changes. The new
