@@ -1,0 +1,142 @@
+[
+  {
+    "id": "C4-ADV-001",
+    "severity": "high",
+    "category": "scope-gate-bypass",
+    "requirementIds": ["C4", "S6.6"],
+    "message": "Scope-gate bypass via git C-quoted paths: regex parser missed quoted paths, letting out-of-scope files pass the allowlist gate.",
+    "location": "src/workspace/change-set.ts:105-129",
+    "status": "resolved",
+    "resolution": "listPatchChangedFiles derives the write-target list from git apply --numstat -z plus fully C-unquoted rename headers; fail-closed on git errors, malformed records, unterminatable quoting, section-count mismatch. Headless fixtures: unicode path, mixed quoted+unquoted, garbage patch."
+  },
+  {
+    "id": "C4-ADV-002",
+    "severity": "high",
+    "category": "availability",
+    "requirementIds": ["C4"],
+    "message": "Scope check threw on legal filenames (spaces), wedging the batch with a stranded proposal.",
+    "location": "src/workspace/change-set.ts:147-151, src/domain/path-scope.ts:19-21, src/workspace/worktrees.ts:413",
+    "status": "resolved",
+    "resolution": "Per-file check wrapped: un-normalizable path becomes a normal allowlist violation routed through the repair loop; batch continues, no stranded proposal. Fixture: src/space file.ts."
+  },
+  {
+    "id": "C4-ADV-003",
+    "severity": "high",
+    "category": "liveness",
+    "requirementIds": ["C4", "S6.6"],
+    "message": "Any gate rejection made goal_met permanently unreachable (any-cycle evaluator block vs current-cycle hook, no re-dispatch).",
+    "location": "src/evaluator.ts (findUnfinishedWork), src/workspace/worktrees.ts:525-528",
+    "status": "resolved",
+    "resolution": "Evaluator blocks only on the current cycle's latest fan_out plan; claimed-with-rejected-merge shard yields an honest blocker naming the manual re-drive/flag-off path; superseding plan unblocks. Headless asserts all three."
+  },
+  {
+    "id": "C4-ADV-004",
+    "severity": "high",
+    "category": "crash-recovery",
+    "requirementIds": ["C4", "S6.6"],
+    "message": "Crash recovery didn't cover kill -9 with a surviving worktree directory (branch locked 'already used by worktree').",
+    "location": "src/workspace/worktrees.ts:309-327,140-147",
+    "status": "resolved",
+    "resolution": "recoverWorktrees scoped to harness prefixes with pruned/reclaimed/skippedForeign classes (PID-marker dead-creator proof; foreign registrations never touched); wired into session_start; mergeShardPlan reuses/resets an existing integration worktree. Headless: surviving-dir kill -9 recovers and merges."
+  },
+  {
+    "id": "C4-ADV-005",
+    "severity": "medium",
+    "category": "provenance",
+    "requirementIds": ["C4"],
+    "message": "git add -A swept test-suite side effects into the shard commit.",
+    "location": "src/workspace/worktrees.ts:438,452",
+    "status": "resolved",
+    "resolution": "Staging is git add -A -- <patch files> only; smoke 81 + headless assert the commit tree contains only patched paths while the suite writes coverage.txt."
+  },
+  {
+    "id": "C4-ADV-006",
+    "severity": "medium",
+    "category": "config-usability",
+    "requirementIds": ["C4"],
+    "message": "Default testCommand 'npm test' unworkable in a fresh worktree (no node_modules).",
+    "location": "src/workspace/worktrees.ts:166-167,241-249",
+    "status": "resolved",
+    "resolution": "defaultRunTests short-circuits npm-family commands when deps are declared but node_modules is absent, failing with a bootstrap-required message; documented in header + config."
+  },
+  {
+    "id": "C4-ADV-007",
+    "severity": "medium",
+    "category": "judge-independence",
+    "requirementIds": ["C4", "S7.3"],
+    "message": "loadJudgeConfig misparsed separate-fields form for slash model ids, silently falling back to the actor.",
+    "location": "src/evaluator.ts:122-133",
+    "status": "resolved",
+    "resolution": "Explicit provider field wins; model id kept verbatim; slash-splitting only without explicit provider; loud log on fallback. Fixture: openrouter + z-ai/glm-5.2."
+  },
+  {
+    "id": "C4-ADV-008",
+    "severity": "medium",
+    "category": "judge-independence",
+    "requirementIds": ["C4", "S7.3"],
+    "message": "Independence check enforced registry-entry inequality, not model identity.",
+    "location": "src/evaluator.ts:155-174, src/domain/models.ts:38-40",
+    "status": "resolved",
+    "resolution": "canonicalModelKey (namespace fold + zai->z-ai alias) drives the comparison; aliased pair now fails as canonically identical."
+  },
+  {
+    "id": "C4-ADV-009",
+    "severity": "medium",
+    "category": "git-safety",
+    "requirementIds": ["C4"],
+    "message": "integrationBranch override escaped harness confinement (existing branch names accepted).",
+    "location": "src/workspace/worktrees.ts:291,313-318",
+    "status": "resolved",
+    "resolution": "Overrides must carry the pi-ig/ prefix (refused at load); existing branches must have a harness-authored tip (tip author check) else mergeShardPlan throws. Fixtures both ways."
+  },
+  {
+    "id": "C4-ADV-010",
+    "severity": "medium",
+    "category": "crash-recovery",
+    "requirementIds": ["C4"],
+    "message": "recoverWorktrees unscoped (pruned every stale registration repo-wide) with no production caller.",
+    "location": "src/workspace/worktrees.ts:140-147",
+    "status": "resolved",
+    "resolution": "Scoped to pi-ig-agent-*/pi-ig-integration-* prefixes with skippedForeign reporting; wired into session_start. Headless asserts a user's vanished ad-hoc worktree survives recovery."
+  },
+  {
+    "id": "C4-ADV-011",
+    "severity": "low",
+    "category": "misleading-success",
+    "requirementIds": ["C4"],
+    "message": "capturePatch() returned '' on git error, indistinguishable from 'no changes'.",
+    "location": "src/workspace/worktrees.ts:76-79",
+    "status": "resolved",
+    "resolution": "capturePatch throws on git error; pool degrades to patch:null; merge layer rejects null at a new capture gate before any proposal."
+  },
+  {
+    "id": "C4-ADV-012",
+    "severity": "low",
+    "category": "evidence-integrity",
+    "requirementIds": ["C4", "S8.7"],
+    "message": "Signed-evidence coverage was partial (trace hashed mid-run then grew; coverage files unsigned).",
+    "location": "scripts/headless-feature-evidence.mjs:1860-1871",
+    "status": "resolved",
+    "resolution": "Attestation restructured: coverage written before signing; manifest covers final trace.jsonl + coverage files; deliveredBytesVerified:true (87 artifacts)."
+  },
+  {
+    "id": "C4-ADV-013",
+    "severity": "low",
+    "category": "robustness",
+    "requirementIds": ["C4"],
+    "message": "Stale base between shard capture and branch cut; no --3way fallback.",
+    "location": "src/workspace/worktrees.ts:312-318,419-434",
+    "status": "resolved",
+    "resolution": "2-way-only rationale documented (stale base = HEAD moved mid-run = should reject) in header + config comment."
+  },
+  {
+    "id": "C4-ADV-014",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C4"],
+    "message": "change-set.ts header promised a '--- a/' fallback the code didn't have; line-count nit.",
+    "location": "src/workspace/change-set.ts:100-103,119-129",
+    "status": "resolved",
+    "resolution": "Parser comment rewritten to match reality."
+  }
+]

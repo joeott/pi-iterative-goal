@@ -1,0 +1,48 @@
+{
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEASgHDd0h2m9mlzeJb3i7JkEJQEf48cnBDsCpLt0mERzE=\n-----END PUBLIC KEY-----\n",
+  "attestation": {
+    "artifactId": "art-d71880f18e867996",
+    "runId": "headless-2026-07-20T13-16-35-625Z",
+    "cycle": 1,
+    "phase": "headless-evidence",
+    "path": "ai_docs/headless_evidence/runs/headless-2026-07-20T13-16-35-625Z/evidence-manifest.json",
+    "type": "json",
+    "createdAt": "2026-07-20T13:17:13.627Z",
+    "sha256": "553acc8d68e15441cb2394068395d537f359b0af19c24ff271928d54b0c3ea14",
+    "cryptographicSignature": "50SFGn4W0ArdmIXBLO73PA8hCWk2WKQiue5L1r0t6Pq4i/tOdM0G/UBVbqK1RXkbKg3mAx1i7DWPxjnN7cf6Cw==",
+    "provenanceAttestation": {
+      "_type": "https://in-toto.io/Statement/v1",
+      "subject": [
+        {
+          "name": "ai_docs/headless_evidence/runs/headless-2026-07-20T13-16-35-625Z/evidence-manifest.json",
+          "digest": {
+            "sha256": "553acc8d68e15441cb2394068395d537f359b0af19c24ff271928d54b0c3ea14"
+          }
+        }
+      ],
+      "predicateType": "https://samu.legal/pi-iterative-goal/action/v1",
+      "predicate": {
+        "runId": "headless-2026-07-20T13-16-35-625Z",
+        "cycle": 1,
+        "phase": "headless-evidence",
+        "actionId": "headless-evidence-manifest",
+        "effect": "fs.read",
+        "resource": {
+          "type": "path",
+          "value": "ai_docs/headless_evidence/runs/headless-2026-07-20T13-16-35-625Z"
+        },
+        "actor": {
+          "kind": "tool",
+          "id": "headless-feature-evidence"
+        },
+        "purpose": "sign headless evidence manifest",
+        "sandboxProfile": "unspecified",
+        "dlpScanId": null,
+        "trustClassification": "internal",
+        "createdAt": "2026-07-20T13:17:13.627Z"
+      }
+    },
+    "dlpScanId": null,
+    "trustClassification": "internal"
+  }
+}

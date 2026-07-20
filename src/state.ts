@@ -77,7 +77,7 @@ import {
   filterAllowedModels,
   normalizeConfiguredModel,
 } from "./domain/models.js";
-import type { PendingShardPlan, ShardClaimRecord, ShardPlan } from "./domain/shard.js";
+import type { PendingShardPlan, ShardClaimRecord, ShardMergeRecord, ShardPlan } from "./domain/shard.js";
 import { logDebug } from "./logging.js";
 
 const PERSISTENCE_TYPE = "iterative-goal-state";
@@ -143,7 +143,14 @@ export interface StateManagerAPI {
   recordShardClaimed(claim: ShardClaimRecord, evidence?: Record<string, unknown>): void;
   recordShardFinished(
     shardId: string,
-    finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null },
+    finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null; patchArtifactPath?: string | null },
+  ): void;
+
+  // ── New: merge-back ledger (Campaign 4, §6.6) ──────────────────
+  recordMergeProposed(merge: ShardMergeRecord): void;
+  recordMergeVerified(
+    shardId: string,
+    verdict: { runId: string; planId: string; cycle: number; gate: ShardMergeRecord["gate"]; verifiedAt?: string },
   ): void;
   updateDlpState(dlp: CyberDlpState): void;
   updateSanitizationState(sanitizer: CyberSanitizationState): void;
@@ -392,6 +399,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       claim.finishedAt = event.timestamp;
       claim.error = null;
       if (typeof event.taskId === "string") claim.taskId = event.taskId;
+      claim.patchArtifactPath = typeof event.patchArtifactPath === "string" ? event.patchArtifactPath : null;
     },
     shard_failed(replayed, event) {
       const claim = replayed.shards.claims.find(
@@ -402,6 +410,36 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       claim.finishedAt = event.timestamp;
       claim.error = typeof event.error === "string" ? event.error : null;
       if (typeof event.taskId === "string") claim.taskId = event.taskId;
+      // Figure D5 (§6.6): merge_proposed → failed on gate rejection. An open
+      // merge proposal for this shard dies with the failure; the repair-loop
+      // re-claim leaves the rejected record until a new proposal replaces it.
+      const merge = replayed.shards.merges.find(
+        (item) => item.planId === event.planId && item.cycle === event.cycle && item.shardId === event.shardId,
+      );
+      if (merge && merge.status === "proposed") {
+        merge.status = "rejected";
+        merge.error = typeof event.error === "string" ? event.error : null;
+      }
+    },
+    merge_proposed(replayed, event) {
+      const merge = event.merge as ShardMergeRecord;
+      // Latest merge episode wins (repair re-proposals replace); the log
+      // keeps every episode — same discipline as the claim ledger.
+      const index = replayed.shards.merges.findIndex(
+        (item) => item.planId === merge.planId && item.cycle === merge.cycle && item.shardId === merge.shardId,
+      );
+      if (index >= 0) replayed.shards.merges[index] = merge;
+      else replayed.shards.merges.push(merge);
+    },
+    merge_verified(replayed, event) {
+      const merge = replayed.shards.merges.find(
+        (item) => item.planId === event.planId && item.cycle === event.cycle && item.shardId === event.shardId,
+      );
+      if (!merge) return; // Same unknown-record tolerance as shard_completed.
+      merge.status = "verified";
+      merge.verifiedAt = event.timestamp;
+      merge.error = null;
+      if (event.gate) merge.gate = event.gate as ShardMergeRecord["gate"];
     },
     project_instructions_updated(replayed, event) {
       replayed.projectInstructions = event.projectInstructions;
@@ -577,6 +615,9 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (!Array.isArray(raw.shards.plans)) raw.shards.plans = [];
     if (!("pendingPlan" in raw.shards)) raw.shards.pendingPlan = null;
     if (!Array.isArray(raw.shards.claims)) raw.shards.claims = [];
+    // C4 merge ledger backfill: runs ledgered before merge-back replay into
+    // the new field as empty — no merge events exist to replay into it.
+    if (!Array.isArray(raw.shards.merges)) raw.shards.merges = [];
     raw.constraints = {
       ...(raw.constraints ?? {}),
       neverStopUntilEvaluatorGoalMet: true,
@@ -678,6 +719,77 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
     if (orphanedClaims.length > 0) {
       logDebug("state", `reconciled ${orphanedClaims.length} orphaned claimed shard(s) as failed: process_restart`);
     }
+  }
+
+  // Stale merge reconciliation (C4-OUS-001): a merge stuck in proposed at
+  // load time means the gating process died between dispatch and verdict
+  // (kill -9 mid-gate). Replay stays deterministic — the proposal replays
+  // as-is; only at load time do we fail it back through the Figure D5 repair
+  // loop with process_restart evidence (mirroring C3-ADV-009's claim rule):
+  // proposed → rejected, claim completed → failed → claimed, so a warm
+  // restart re-drives the merge from the ledgered patch artifact instead of
+  // wedging the run on a gate that will never verdict. Each transition is
+  // itself a hash-chained event, so live and replayed state converge.
+  function reconcileStaleMergeProposals(): void {
+    if (!state) return;
+    const stale = state.shards.merges.filter((merge) => merge.status === "proposed");
+    for (const merge of stale) {
+      const claim = state.shards.claims.find(
+        (item) => item.planId === merge.planId && item.cycle === merge.cycle && item.shardId === merge.shardId,
+      );
+      // Only a completed claim can carry an open proposal; anything else is
+      // already on a repair path (or inconsistent in a way replay tolerated).
+      if (!claim || claim.status !== "completed") continue;
+      const failedAt = new Date().toISOString();
+      claim.status = "failed";
+      claim.finishedAt = failedAt;
+      claim.error = "process_restart";
+      merge.status = "rejected";
+      merge.error = "process_restart";
+      appendEvent({
+        type: "shard_failed",
+        shardId: merge.shardId,
+        planId: merge.planId,
+        cycle: merge.cycle,
+        taskId: claim.taskId,
+        error: "process_restart",
+        timestamp: failedAt,
+      });
+      const reclaimedAt = new Date().toISOString();
+      const reclaimed: ShardClaimRecord = {
+        ...claim,
+        status: "claimed",
+        taskId: null,
+        claimedAt: reclaimedAt,
+        finishedAt: null,
+        error: "process_restart",
+      };
+      const index = state.shards.claims.findIndex(
+        (item) => item.planId === claim.planId && item.cycle === claim.cycle && item.shardId === claim.shardId,
+      );
+      state.shards.claims[index] = reclaimed;
+      appendEvent({
+        type: "shard_claimed",
+        shardId: merge.shardId,
+        planId: merge.planId,
+        cycle: merge.cycle,
+        claim: reclaimed,
+        evidence: {
+          repairLoop: true,
+          staleMergeReconciled: true,
+          reason: "merge proposal open at process start — the gating process died mid-gate; returned to claimed for repair (Figure D5)",
+        },
+        timestamp: reclaimedAt,
+      });
+    }
+    if (stale.length > 0) {
+      logDebug("state", `reconciled ${stale.length} stale proposed merge(s) back to claimed: process_restart`);
+    }
+  }
+
+  function reconcileAfterRestore(): void {
+    reconcileRunningSubagents();
+    reconcileStaleMergeProposals();
   }
 
   function ensureRunDirs(): void {
@@ -967,7 +1079,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         },
         releaseAuthorization: null,
         swarm: { backend: null, detectedBackend: null, tasks: [] },
-        shards: { pendingPlan: null, plans: [], claims: [] },
+        shards: { pendingPlan: null, plans: [], claims: [], merges: [] },
       };
 
       ensureRunDirs();
@@ -1222,7 +1334,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
 
     recordShardFinished(
       shardId: string,
-      finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null },
+      finish: { runId: string; planId: string; cycle: number; status: "completed" | "failed"; taskId?: string | null; error?: string | null; patchArtifactPath?: string | null },
     ): void {
       if (!state) return;
       if (finish.runId !== state.runId) {
@@ -1244,6 +1356,22 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
       claim.finishedAt = finishedAt;
       claim.error = finish.status === "failed" ? (finish.error ?? null) : null;
       if (finish.taskId) claim.taskId = finish.taskId;
+      // C4-OUS-001: the completed shard's patch bytes live in a run-dir
+      // artifact so a crash before merge-back never strands the work; a
+      // failed shard carries no merge-able patch.
+      claim.patchArtifactPath = finish.status === "completed" ? (finish.patchArtifactPath ?? null) : null;
+      // Figure D5 (§6.6): merge_proposed → failed on gate rejection — an open
+      // merge proposal dies with the failure. Mirrors the shard_failed replay
+      // handler exactly so live and replayed state converge.
+      if (finish.status === "failed") {
+        const merge = state.shards.merges.find(
+          (item) => item.planId === finish.planId && item.cycle === finish.cycle && item.shardId === shardId,
+        );
+        if (merge && merge.status === "proposed") {
+          merge.status = "rejected";
+          merge.error = finish.error ?? null;
+        }
+      }
       appendEvent({
         type: finish.status === "completed" ? "shard_completed" : "shard_failed",
         shardId,
@@ -1251,7 +1379,82 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
         cycle: finish.cycle,
         taskId: finish.taskId ?? null,
         error: finish.status === "failed" ? (finish.error ?? null) : null,
+        patchArtifactPath: claim.patchArtifactPath,
         timestamp: finishedAt,
+      });
+    },
+
+    // ── Merge-back ledger (Campaign 4, §6.6) ─────────────────────
+
+    recordMergeProposed(merge: ShardMergeRecord): void {
+      if (!state) return;
+      if (merge.runId !== state.runId) {
+        logDebug("state", `recordMergeProposed ignored for shard ${merge.shardId}: merge runId ${merge.runId} != current runId ${state.runId}`);
+        return;
+      }
+      // Orphan discipline (same rationale as C3-ADV-008): a merge proposal
+      // for a shard with no claim record asserts a lifecycle transition the
+      // ledger never saw start — skip the event and say why.
+      const claim = state.shards.claims.find(
+        (item) => item.planId === merge.planId && item.cycle === merge.cycle && item.shardId === merge.shardId,
+      );
+      if (!claim) {
+        logDebug("state", `recordMergeProposed skipped for shard ${merge.shardId} (plan ${merge.planId} cycle ${merge.cycle}): no matching claim — orphan merge not ledgered`);
+        return;
+      }
+      const index = state.shards.merges.findIndex(
+        (item) => item.planId === merge.planId && item.cycle === merge.cycle && item.shardId === merge.shardId,
+      );
+      if (index >= 0) state.shards.merges[index] = merge;
+      else state.shards.merges.push(merge);
+      // shardId/planId/cycle stay top-level: the C3 error-cascade monitor
+      // reads exactly those fields on shard events (C4 contract note).
+      appendEvent({
+        type: "merge_proposed",
+        shardId: merge.shardId,
+        planId: merge.planId,
+        cycle: merge.cycle,
+        merge,
+        timestamp: merge.proposedAt,
+      });
+    },
+
+    recordMergeVerified(
+      shardId: string,
+      verdict: { runId: string; planId: string; cycle: number; gate: ShardMergeRecord["gate"]; verifiedAt?: string },
+    ): void {
+      if (!state) return;
+      if (verdict.runId !== state.runId) {
+        logDebug("state", `recordMergeVerified ignored for shard ${shardId}: verdict runId ${verdict.runId} != current runId ${state.runId}`);
+        return;
+      }
+      const merge = state.shards.merges.find(
+        (item) => item.planId === verdict.planId && item.cycle === verdict.cycle && item.shardId === shardId,
+      );
+      // A verify with no proposal has no state effect (orphan discipline,
+      // C3-ADV-008) — ledgering it would claim a transition nothing made.
+      if (!merge) {
+        logDebug("state", `recordMergeVerified skipped for shard ${shardId} (plan ${verdict.planId} cycle ${verdict.cycle}): no matching merge proposal — orphan verify not ledgered`);
+        return;
+      }
+      // C4-OUS-011: the caller's clock reaches verifiedAt (test injection);
+      // the wall clock is only the default.
+      const verifiedAt = verdict.verifiedAt ?? new Date().toISOString();
+      merge.status = "verified";
+      merge.verifiedAt = verifiedAt;
+      merge.error = null;
+      merge.gate = verdict.gate;
+      // Event type is exactly "merge_verified" — the C3 cascade monitor
+      // heals failure episodes on it (C4 contract note).
+      appendEvent({
+        type: "merge_verified",
+        shardId,
+        planId: verdict.planId,
+        cycle: verdict.cycle,
+        gate: verdict.gate,
+        integrationBranch: merge.integrationBranch,
+        patchSha256: merge.patchSha256,
+        timestamp: verifiedAt,
       });
     },
 
@@ -1478,7 +1681,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           if (replayed) {
             state = migrateState(replayed);
             ensureRunDirs();
-            reconcileRunningSubagents();
+            reconcileAfterRestore();
             persistToDisk();
             updateLatestMd();
             return state;
@@ -1491,7 +1694,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
               if (envelope.state) {
                 state = migrateState(envelope.state);
                 ensureRunDirs();
-                reconcileRunningSubagents();
+                reconcileAfterRestore();
                 return state;
               }
             } catch { /* corrupted, ignore */ }
@@ -1509,7 +1712,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
             if (replayed) {
               state = migrateState(replayed);
               ensureRunDirs();
-              reconcileRunningSubagents();
+              reconcileAfterRestore();
               persistToDisk();
               updateLatestMd();
               return state;
@@ -1524,7 +1727,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
                 state = migrateState(envelope.state);
                 runDir = path.join(runsDir, runId);
                 ensureRunDirs();
-                reconcileRunningSubagents();
+                reconcileAfterRestore();
                 return state;
               }
             } catch { /* continue */ }
@@ -1545,7 +1748,7 @@ export function createStateManager(pi: ExtensionAPI): StateManagerAPI {
           stateDir = path.join(ctx.cwd, ".pi", "iterative-goal");
           if (state.runId) {
             ensureRunDirs();
-            reconcileRunningSubagents();
+            reconcileAfterRestore();
             persistToDisk();
             updateLatestMd();
           }

@@ -1,13 +1,17 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { Value } from "typebox/value";
 import { normalizeRepoPath } from "../domain/path-scope.js";
+import { prepareIsolatedWorktree } from "../workspace/worktrees.js";
+import type { IsolatedWorkspace } from "../workspace/worktrees.js";
 import type { AgentRole } from "./roles.js";
 
 export type { AgentRole } from "./roles.js";
+// The isolated-worktree primitive lives in src/workspace/worktrees.ts (C4
+// promotion, §6.6) — re-exported here so existing pool consumers and tests
+// keep a stable import path.
+export { prepareIsolatedWorktree } from "../workspace/worktrees.js";
+export type { IsolatedWorkspace } from "../workspace/worktrees.js";
 
 /** Swarm fan-out band (§5.1): default 4, hard cap 8 — the single source. */
 export const DEFAULT_SWARM_CONCURRENCY = 4;
@@ -44,7 +48,12 @@ export interface AgentResult<T = unknown> {
   exitCode: number | null;
   stderr: string;
   workspacePath?: string;
-  patch?: string;
+  /**
+   * The isolated worktree's captured diff; "" when nothing changed; null/
+   * undefined when capture FAILED (C4-ADV-011 — failure must stay
+   * distinguishable from "no changes"; the merge layer rejects null).
+   */
+  patch?: string | null;
   /** True when the run succeeded but output failed schema validation (prose preserved). */
   degraded?: boolean;
   usage: {
@@ -142,7 +151,15 @@ export class PiSubprocessAgentPool implements AgentPool {
         signal?.removeEventListener("abort", abort);
         this.running.delete(task.id);
         this.activeWriteScopes.delete(task.id);
-        const patch = workspace?.capturePatch() ?? "";
+        // Capture failure is NOT "no changes" (C4-ADV-011): capturePatch
+        // throws on git error; the reader path degrades to null and the
+        // merge layer rejects null instead of verifying vanished work.
+        let patch: string | null = null;
+        try {
+          patch = workspace?.capturePatch() ?? null;
+        } catch {
+          patch = null;
+        }
         const workspacePath = workspace?.path;
         workspace?.cleanup();
         const outputText = extractFinalText(stdout);
@@ -312,63 +329,6 @@ export function buildPiSubprocessArgs(task: AgentTask): string[] {
   if (task.modelProfile) args.push("--model", task.modelProfile);
   args.push(prompt);
   return args;
-}
-
-export interface IsolatedWorkspace {
-  path: string;
-  capturePatch(): string;
-  cleanup(): void;
-}
-
-export function prepareIsolatedWorktree(repoRoot: string, taskId: string): IsolatedWorkspace {
-  execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: repoRoot, stdio: "ignore" });
-  const safeId = taskId.replace(/[^A-Za-z0-9._-]/g, "-");
-  const workspacePath = path.join(os.tmpdir(), `pi-ig-agent-${safeId}-${crypto.randomBytes(4).toString("hex")}`);
-  execFileSync("git", ["worktree", "add", "--detach", workspacePath, "HEAD"], { cwd: repoRoot, stdio: "ignore" });
-  registerWorktreeForCleanup(repoRoot, workspacePath);
-  return {
-    path: workspacePath,
-    capturePatch() {
-      try {
-        return execFileSync("git", ["diff", "--binary"], { cwd: workspacePath, encoding: "utf8", timeout: 30_000 }).trim();
-      } catch {
-        return "";
-      }
-    },
-    cleanup() {
-      try {
-        execFileSync("git", ["worktree", "remove", "--force", workspacePath], { cwd: repoRoot, stdio: "ignore", timeout: 30_000 });
-      } catch {
-        try { fs.rmSync(workspacePath, { recursive: true, force: true }); } catch {}
-      }
-      unregisterWorktreeForCleanup(repoRoot, workspacePath);
-    },
-  };
-}
-
-const pendingWorktreeCleanups = new Map<string, string>();
-let cleanupHandlersRegistered = false;
-
-function registerWorktreeForCleanup(repoRoot: string, workspacePath: string): void {
-  pendingWorktreeCleanups.set(workspacePath, repoRoot);
-  if (cleanupHandlersRegistered) return;
-  cleanupHandlersRegistered = true;
-  const cleanupAll = () => {
-    for (const [workspace, root] of pendingWorktreeCleanups.entries()) {
-      try {
-        execFileSync("git", ["worktree", "remove", "--force", workspace], { cwd: root, stdio: "ignore", timeout: 30_000 });
-      } catch {
-        try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
-      }
-      pendingWorktreeCleanups.delete(workspace);
-    }
-  };
-  process.once("beforeExit", cleanupAll);
-  process.once("exit", cleanupAll);
-}
-
-function unregisterWorktreeForCleanup(_repoRoot: string, workspacePath: string): void {
-  pendingWorktreeCleanups.delete(workspacePath);
 }
 
 function failedResult<T>(task: AgentTask<T>, stderr: string): AgentResult<T> {

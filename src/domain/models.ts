@@ -39,6 +39,37 @@ export function modelKey(model: { provider: string; model: string }): string {
   return `${model.provider}/${model.model}`;
 }
 
+/**
+ * Provider-namespace aliases that route the SAME weights (C4-ADV-008): the
+ * judge-independence rule is about model identity, not registry-entry
+ * inequality — `zai/glm-5.2`, `z-ai/glm-5.2`, and `openrouter/z-ai/glm-5.2`
+ * are one model reached through different providers and must compare EQUAL.
+ */
+const MODEL_NAMESPACE_ALIASES: Record<string, string> = {
+  "z-ai": "z-ai",
+  zai: "z-ai",
+};
+
+/**
+ * Canonical identity for independence comparisons: a model id carrying a
+ * known namespace prefix (e.g. openrouter's `z-ai/glm-5.2`) folds the
+ * namespace into the provider; provider aliases then collapse (zai → z-ai).
+ * Unknown providers/namespaces pass through unchanged.
+ */
+export function canonicalModelKey(model: { provider: string; model: string }): string {
+  let provider = model.provider.toLowerCase();
+  let modelId = model.model;
+  for (const namespace of Object.keys(MODEL_NAMESPACE_ALIASES)) {
+    if (modelId.startsWith(`${namespace}/`)) {
+      provider = namespace;
+      modelId = modelId.slice(namespace.length + 1);
+      break;
+    }
+  }
+  provider = MODEL_NAMESPACE_ALIASES[provider] ?? provider;
+  return `${provider}/${modelId}`;
+}
+
 export function isAllowedModel(provider: string, model: string): boolean {
   return ALLOWED_MODELS.some((entry) => entry.provider === provider && entry.model === model);
 }

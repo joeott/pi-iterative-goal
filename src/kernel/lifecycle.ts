@@ -1,7 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { detectSubagentBackend } from "../capabilities.js";
 import { createErrorRecord } from "../errors.js";
-import { runExternalEvaluator } from "../evaluator.js";
+import { findUnfinishedWork, runExternalEvaluator } from "../evaluator.js";
 import {
   renderCompactionSummary,
   renderPhasePrompt,
@@ -15,9 +15,10 @@ import {
   type PhaseArtifact,
 } from "../types.js";
 import { verifyImplementationAgainstPlan } from "../workspace/change-set.js";
+import { loadMergeBackConfig, recoverWorktrees, runMergeBackHook } from "../workspace/worktrees.js";
 import { shutdownRunAgentPools } from "../agents/run-pool.js";
 import { runSharderHook } from "./sharder.js";
-import { runSchedulerHook } from "./scheduler.js";
+import { type ShardExecutionReport, runSchedulerHook } from "./scheduler.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
 
@@ -152,6 +153,19 @@ export function registerGoalLifecycle(
 
   pi.on("session_start", async (_event, ctx) => {
     services.log(`session_start: reason=${(_event as any).reason}`);
+
+    // C4-ADV-004: scoped worktree crash recovery on every session start —
+    // harness-prefixed registrations from dead runs are reclaimed (surviving
+    // directories included) before anything can wedge on them. Recovery is
+    // an observer here: its own failure must never block a restore.
+    try {
+      const recovery = recoverWorktrees(ctx.cwd);
+      if (recovery.pruned.length > 0 || recovery.reclaimed.length > 0) {
+        services.log(`worktree recovery: ${recovery.pruned.length} pruned, ${recovery.reclaimed.length} reclaimed (${recovery.skippedForeign.length} foreign left alone)`);
+      }
+    } catch (err) {
+      services.log(`worktree recovery skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const restored = stateManager.restore(ctx);
     if (restored) {
@@ -335,11 +349,49 @@ async function advanceToNextPhase(
     // runSchedulerHook (default OFF — returns before touching anything, so
     // flag-off behavior is byte-identical); a scheduler failure degrades to
     // the single-slice implement prompt, never wedges the loop motor.
+    let schedulerReport: ShardExecutionReport | null = null;
     try {
-      await runSchedulerHook({ stateManager, cwd: ctx.cwd, log: services.log });
+      schedulerReport = await runSchedulerHook({ stateManager, cwd: ctx.cwd, log: services.log });
     } catch (err) {
       services.log(`Scheduler hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
       ctx.ui.notify("Iterative goal scheduler failed; implement phase continues single-slice.", "warning");
+    }
+
+    // C4 merge-back attach seam (§6.6): same transition, immediately after
+    // the scheduler — the completed shards' captured patches merge onto the
+    // integration branch in HEFT order through the three-part merge gate.
+    // Flag-gated inside runMergeBackHook (default OFF — returns before
+    // touching anything, so flag-off behavior is byte-identical); a merge
+    // failure degrades to the single-slice implement prompt, never wedges
+    // the loop motor.
+    try {
+      // The snapshot closure reads the REAL flag value (C4-OUS-007) and the
+      // merge layer passes the shard being verified so the recorded evidence
+      // is the post-verdict view (C4-OUS-006).
+      const mergeBackEnabled = loadMergeBackConfig(ctx.cwd).enabled;
+      await runMergeBackHook({
+        stateManager,
+        cwd: ctx.cwd,
+        schedulerReport,
+        mergeBackEnabled,
+        // Gate part 3 evidence snapshot (§6.6): the evaluator's extended
+        // unfinished-work gate, shared so merge-time evidence and the
+        // validate-phase gate read the same predicate.
+        snapshotUnfinishedWork: (excludeShardId) => {
+          const current = stateManager.getState();
+          if (!current) return { pendingTaskItems: 0, unverifiedShards: 0 };
+          const items = findUnfinishedWork(current, { mergeBackEnabled })
+            .filter((item) => !(item.kind === "shard" && item.id === excludeShardId));
+          return {
+            pendingTaskItems: items.filter((item) => item.kind === "task").length,
+            unverifiedShards: items.filter((item) => item.kind === "shard").length,
+          };
+        },
+        log: services.log,
+      });
+    } catch (err) {
+      services.log(`Merge-back hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      ctx.ui.notify("Iterative goal merge-back failed; implement phase continues single-slice.", "warning");
     }
   }
 

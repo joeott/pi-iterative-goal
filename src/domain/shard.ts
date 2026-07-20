@@ -107,6 +107,16 @@ export interface PendingShardPlan {
 export type ShardClaimStatus = "claimed" | "completed" | "failed";
 
 /**
+ * THE dispatch task-id convention for scheduled shards (C4-OUS-008): the
+ * scheduler builds dispatch ids through this helper and the merge-back hook
+ * matches outcomes through the same one — never a duplicated string format —
+ * so a rename here cannot silently disable merge-back.
+ */
+export function shardDispatchTaskId(cycle: number, shardId: string): string {
+  return `sched-c${cycle}-${shardId}`;
+}
+
+/**
  * One shard-step award + outcome (Campaign 3). Lives beside ShardState for
  * cohesion — it is part of the replayed shard state — and follows the plain-
  * interface ledger-record precedent of SubagentTaskRecord in src/types.ts:
@@ -131,6 +141,70 @@ export interface ShardClaimRecord {
   claimedAt: string;
   finishedAt: string | null;
   error: string | null;
+  /**
+   * Run-dir artifact holding the shard's captured patch bytes (C4-OUS-001),
+   * repo-relative (.pi/iterative-goal/runs/...). Persisted at completion so a
+   * crash before merge-back never strands the work — a warm restart rebuilds
+   * merge inputs from ledgered claims + these artifacts. Null when the shard
+   * produced no diff or no patch has been persisted yet.
+   */
+  patchArtifactPath: string | null;
+}
+
+/**
+ * Merge lifecycle (§6.6 Figure D5): completed → merge_proposed → merge_verified
+ * on gate pass; merge_proposed → failed on gate rejection (the shard_failed
+ * replay transition marks the proposal rejected); failed → claimed on repair.
+ */
+export type ShardMergeStatus = "proposed" | "verified" | "rejected";
+
+/**
+ * One shard merge episode (Campaign 4). Plain-interface ledger record in the
+ * ShardClaimRecord precedent: trusted at write time, runId-guarded, latest
+ * episode per (planId, cycle, shardId) wins in state while events.jsonl keeps
+ * every episode. The three-part merge gate's evidence rides the record so
+ * replay and the acceptance gate read the same verdict the merge layer made.
+ */
+export interface ShardMergeRecord {
+  shardId: string;
+  /** Owning shard plan (PlanSpec id); merges match plans/claims on (planId, cycle). */
+  planId: string;
+  runId: string;
+  cycle: number;
+  status: ShardMergeStatus;
+  /** sha256 of the exact patch text proposed for merge — provenance for the applied diff. */
+  patchSha256: string;
+  /**
+   * Run-dir artifact holding the proposed patch bytes (C4-OUS-001),
+   * repo-relative. Proposal-time pointer at the claim-persisted capture so a
+   * warm restart can re-drive the merge from the ledger alone.
+   */
+  patchArtifactPath: string | null;
+  /** Harness-owned integration branch the patch was applied onto. */
+  integrationBranch: string;
+  /** HEFT upward rank the merge order was taken from; null when unranked. */
+  rank: number | null;
+  /**
+   * Gate evidence (§6.6): parts (1) per-shard allowlist verify and (2) the
+   * repository test suite on the merged tree decide the merge; part (3) the
+   * extended unfinished-work gate is recorded as a snapshot and enforced at
+   * goal time by the evaluator (rejecting shard i because shard j has not
+   * merged yet would deadlock the fan-out — completion is the evaluator's
+   * gate, not the merge layer's). The snapshot is the POST-verdict view for
+   * this shard: it excludes the shard being verified (C4-OUS-006), so the
+   * ledger shows the gate actually clearing.
+   */
+  gate: {
+    allowlistOk: boolean;
+    extraFiles: string[];
+    testsOk: boolean;
+    testCommand: string | null;
+    unfinishedWork: { pendingTaskItems: number; unverifiedShards: number } | null;
+  } | null;
+  /** Rejection reason (gate failure / patch conflict); null while proposed or verified. */
+  error: string | null;
+  proposedAt: string;
+  verifiedAt: string | null;
 }
 
 /** Shard state carried on IterativeGoalState; rebuilt from shard_* events under replay. */
@@ -139,4 +213,6 @@ export interface ShardState {
   plans: ShardPlan[];
   /** Campaign 3 scheduler ledger: latest claim episode per (planId, cycle, shardId). */
   claims: ShardClaimRecord[];
+  /** Campaign 4 merge ledger: latest merge episode per (planId, cycle, shardId). */
+  merges: ShardMergeRecord[];
 }

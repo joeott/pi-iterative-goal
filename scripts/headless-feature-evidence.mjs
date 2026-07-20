@@ -56,6 +56,7 @@ const features = [
   ["claude_code_parity_analysis", "Empirical scorecard against Claude Code-style agentic coding expectations"],
   ["self_capability_iteration", "Self-comparison between generic coding and cyber-remediation workloads"],
   ["continuous_readonly_prod_review", "Continuous read-only third-party production security review loop"],
+  ["shard_merge_back", "Shard fan-out merge-back onto an integration branch, repair loop, and judge independence (deployment plan §6.6/§7.3, Campaign 4)"],
 ];
 
 const selfCapabilityComparisonEnabled = process.env.PI_ENABLE_SELF_CAPABILITY_COMPARISON !== "0";
@@ -404,6 +405,11 @@ function fakePi() {
     sendUserMessage(message, options = {}) {
       userMessages.push({ message, options });
       appendTrace({ type: "pi.send_user_message", bytes: Buffer.byteLength(String(message)), options });
+    },
+    // Real ExtensionAPI surface (pi.registerProvider, types.d.ts) — the fake
+    // delegates to its model registry, mirroring Pi's own wiring.
+    registerProvider(name, config) {
+      modelRegistry.registerProvider(name, config);
     },
     appendEntry(entry) {
       appendTrace({ type: "pi.append_entry", entryType: entry?.type ?? typeof entry });
@@ -1427,6 +1433,759 @@ if (selfCapabilityComparisonEnabled) {
   );
 }
 
+// ── Campaign 4 acceptance gate (deployment plan §6.6/§7.3, §8.7) ─────────
+// Placed BEFORE local-trace-artifact and the attestation step so this
+// scenario's artifacts land in the signed evidence manifest — the gate
+// requires signed coverage and trace artifacts.
+await check("shard-merge-back-gate", "C4 merge-back: 2-shard fan-out merges through the three-part gate, conflict returns to claimed with failure evidence, scoped crash recovery incl. kill -9, ledgered patches re-drive after crash, judge independence is configuration, merge events hash-chain and replay", [
+  "subagent_worktree_isolation",
+  "evaluator_gating",
+  "resumability",
+  "compaction_recovery",
+  "shard_merge_back",
+], async () => {
+  const { createStateManager } = await import(path.join(repoRoot, "dist", "state.js"));
+  const { prepareIsolatedWorktree, mergeShardPlan, recoverWorktrees, loadMergeBackConfig, runMergeBackHook, persistShardPatchArtifact } = await import(path.join(repoRoot, "dist", "workspace", "worktrees.js"));
+  const { verifyShardPatchAgainstScope, listPatchChangedFiles } = await import(path.join(repoRoot, "dist", "workspace", "change-set.js"));
+  const { findUnfinishedWork, checkJudgeIndependence, loadJudgeConfig, resolveJudgeModel, DEFAULT_JUDGE_RUBRIC } = await import(path.join(repoRoot, "dist", "evaluator.js"));
+  const { runExternalEvaluator } = await import(path.join(repoRoot, "dist", "evaluator.js"));
+  const { pathsOverlap } = await import(path.join(repoRoot, "dist", "agents", "pool.js"));
+  const { buildShardDag, detectErrorCascadeSignatures } = await import(path.join(repoRoot, "dist", "kernel", "scheduler.js"));
+  const { attestAction } = await import(path.join(repoRoot, "dist", "cyber-runtime.js"));
+  const { parsePathScope } = await import(path.join(repoRoot, "dist", "domain", "path-scope.js"));
+
+  const details = {};
+
+  // Fixture: a repo with a real test suite, two non-overlapping shard files,
+  // and a bridge file the conflict fixture will collide on. mergeBack and
+  // the §7.3 judge configuration come from the repo's own .pi/settings.json —
+  // the configuration surface the gate exists to prove. realpath: git
+  // registers worktrees in realpath form (/private/var/... on macOS), so the
+  // fixture's paths must be real for exact registry comparisons.
+  const repo = fs.realpathSync(makeTempRepo("pi-ig-c4-merge-"));
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
+    name: "pi-ig-c4-merge-fixture",
+    version: "0.0.0",
+    type: "module",
+    // The trailing writer is the C4-ADV-005 side effect: bare `git add -A`
+    // would sweep it into the shard commit; scoped staging must not.
+    scripts: { test: "node --test test/*.test.mjs && node -e \"require('node:fs').writeFileSync('coverage.txt','side effect')\"" },
+  }, null, 2));
+  fs.writeFileSync(path.join(repo, "src", "alpha.mjs"), "export const alpha = 1;\n");
+  fs.writeFileSync(path.join(repo, "src", "beta.mjs"), "export const beta = 2;\n");
+  fs.writeFileSync(path.join(repo, "src", "bridge.mjs"), "export const seam = \"base\";\n");
+  // Tracked in the seed so adversarial patches are REAL diffs (untracked
+  // files never appear in `git diff` captures): the unicode path is C-quoted
+  // by git (C4-ADV-001), the space path exercises normalization (C4-ADV-002).
+  fs.writeFileSync(path.join(repo, "src", "ünicode.ts"), "export const snow = \"base\";\n");
+  fs.writeFileSync(path.join(repo, "src", "space file.ts"), "export const spaced = false;\n");
+  fs.mkdirSync(path.join(repo, "test"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "test", "suite.test.mjs"), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { alpha } from '../src/alpha.mjs';",
+    "import { beta } from '../src/beta.mjs';",
+    "",
+    "test('fixture modules are intact', () => {",
+    "  assert.equal(typeof alpha, 'number');",
+    "  assert.equal(typeof beta, 'number');",
+    "});",
+    "",
+  ].join("\n"));
+  fs.mkdirSync(path.join(repo, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".pi", "settings.json"), JSON.stringify({
+    iterativeGoal: {
+      mergeBack: { enabled: true, testCommand: "npm test", testTimeoutMs: 120_000 },
+      judge: {
+        model: "openrouter/anthropic/claude-sonnet-4.6",
+        rubric: ["Goal criterion verifiably satisfied", "No shard outside its write scope", "Repository test suite green on the merged tree"],
+      },
+    },
+  }, null, 2));
+  {
+    const add = spawnSync("git", ["add", "."], { cwd: repo });
+    assert.equal(add.status, 0);
+    const commit = spawnSync("git", ["commit", "-qm", "seed c4 merge fixture"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "Headless Evidence",
+        GIT_AUTHOR_EMAIL: "headless@example.invalid",
+        GIT_COMMITTER_NAME: "Headless Evidence",
+        GIT_COMMITTER_EMAIL: "headless@example.invalid",
+      },
+    });
+    assert.equal(commit.status, 0);
+  }
+  assert.equal(loadMergeBackConfig(repo).enabled, true, "mergeBack flag loads from the fixture settings");
+
+  const stateManager = createStateManager(fakePi());
+  assert.equal(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("C4 merge-back gate", "Shards merge through the gate");
+  const runId = run.runId;
+
+  const planFixture = (id, cycle, shards, decision = "fan_out") => ({
+    id, version: 1, createdAt: new Date().toISOString(),
+    tasks: shards.map((shard) => ({
+      id: `t-${shard.id}`, title: `implement ${shard.id}`, dependsOn: [], satisfies: [],
+      allowedPaths: shard.allowedPaths, requiredCapabilities: [], checks: [],
+      rollback: "git checkout -- <files>", risk: "low",
+    })),
+    runId, cycle,
+    shards: decision === "fan_out" ? shards : [],
+    cutWeight: 1, totalEdgeWeight: 3, couplingDensity: 1 / 3, balanceTolerance: 0.34,
+    decision, decisionReason: "c4 gate fixture",
+    algorithm: {
+      prior: "spectral-fiedler", priorSplit: "sign", refinement: "kernighan-lin",
+      bisections: 1, refinementPasses: 1, refinementEvaluatedSwaps: 2,
+      refinementSwapsExecuted: 0, refinementImproved: false, initialCutWeight: 1,
+    },
+    postedAt: new Date().toISOString(),
+  });
+  const shardFixture = (id, index, file, contracts = []) => ({
+    id, index, files: [file], taskIds: [`t-${id}`],
+    allowedPaths: [parsePathScope(file)],
+    crossShardContracts: contracts,
+  });
+  // Production claim shape (C4-OUS-001): the completed shard's patch bytes are
+  // persisted to a run-dir artifact and the claim carries the path.
+  const claimCompleted = (plan, shardId, rank, patch = null) => {
+    stateManager.recordShardClaimed({
+      shardId, planId: plan.id, runId, cycle: plan.cycle,
+      status: "claimed", workerSlot: 0, rank, taskId: `sched-c${plan.cycle}-${shardId}`,
+      claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    const patchArtifactPath = patch ? persistShardPatchArtifact(stateManager, plan.cycle, shardId, patch, repo) : null;
+    stateManager.recordShardFinished(shardId, {
+      runId, planId: plan.id, cycle: plan.cycle, status: "completed",
+      taskId: `sched-c${plan.cycle}-${shardId}`, patchArtifactPath,
+    });
+  };
+  // Real patches from the promoted primitive: edit inside an isolated
+  // worktree, capture `git diff --binary`, clean up — the exact capture the
+  // scheduler hands the merge layer in production.
+  const captureShardPatch = (taskId, file, content) => {
+    const workspace = prepareIsolatedWorktree(repo, taskId);
+    try {
+      fs.writeFileSync(path.join(workspace.path, file), content);
+      return workspace.capturePatch();
+    } finally {
+      workspace.cleanup();
+    }
+  };
+  // Gate part 3 evidence snapshot (same wiring as the lifecycle seam —
+  // excludes the shard being verified, C4-OUS-006).
+  const snapshotUnfinishedWork = (excludeShardId) => {
+    const items = findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true })
+      .filter((item) => !(item.kind === "shard" && item.id === excludeShardId));
+    return {
+      pendingTaskItems: items.filter((item) => item.kind === "task").length,
+      unverifiedShards: items.filter((item) => item.kind === "shard").length,
+    };
+  };
+  const markerFor = (kind, pid) => JSON.stringify({ pid, kind, createdAt: new Date().toISOString() });
+  const deadPid = spawnSync("true").pid ?? 999999;
+
+  // ── §8.7 (1): 2-shard fan-out, non-overlapping write scopes ──────────
+  const plan2 = planFixture("plan-c4-merge", 1, [
+    shardFixture("shard-a", 0, "src/alpha.mjs", [{ from: "src/alpha.mjs", to: "src/beta.mjs", weight: 1 }]),
+    shardFixture("shard-b", 1, "src/beta.mjs", [{ from: "src/beta.mjs", to: "src/alpha.mjs", weight: 1 }]),
+  ]);
+  assert.equal(pathsOverlap(["src/alpha.mjs"], ["src/beta.mjs"]), false, "shard write scopes are non-overlapping");
+  stateManager.recordShardPlan(plan2);
+  const patchA = captureShardPatch("c4-shard-a", "src/alpha.mjs", "export const alpha = 42;\n");
+  const patchB = captureShardPatch("c4-shard-b", "src/beta.mjs", "export const beta = 1337;\n");
+  assert(patchA.includes("src/alpha.mjs") && patchB.includes("src/beta.mjs"), "captured patches carry the shard files");
+  claimCompleted(plan2, "shard-a", 100, patchA);
+  claimCompleted(plan2, "shard-b", 500, patchB);
+
+  // Evaluator prerequisites (same shape as production at validate time):
+  // four current-cycle artifacts + one signed attestation.
+  for (const phase of ["research", "plan", "implement", "validate"]) {
+    stateManager.recordArtifact({ phase, cycle: 1, status: "completed", content: `${phase} artifact`, timestamp: new Date().toISOString(), toolCalls: [], toolErrors: [] });
+  }
+  stateManager.recordAttestation(attestAction({
+    runId, cycle: 1, phase: "validate", artifactPath: "validate/result.json",
+    action: {
+      id: "c4-gate-attestation", actor: { kind: "tool", id: "headless-feature-evidence" }, runId,
+      effect: "process.exec", resource: { kind: "command", executable: "npm", argv: ["test"] },
+      input: {}, purpose: "c4 merge gate validation", risk: "read", dataClassification: "internal",
+    },
+    outputBytes: "merge gate evidence", dlpScanId: null, trustClassification: "internal",
+    signing: stateManager.getState().signing,
+  }));
+
+  // The extended unfinished-work gate (gate part 3) BEFORE any merge: both
+  // shards block goal_met; flag-guarded off under rollback.
+  const unfinishedBefore = findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true });
+  assert.equal(unfinishedBefore.filter((item) => item.kind === "shard").length, 2, "both unverified shards block goal_met");
+  assert.equal(findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: false }).filter((item) => item.kind === "shard").length, 0, "flag-guarded: gate semantics unchanged when mergeBack is off");
+
+  // §8.7 (4) deterministic-first: the shard gate rejects WITHOUT any judge
+  // invocation — an instrumented registry proves getApiKeyAndHeaders (the
+  // call that precedes every judge completion) never fires.
+  let judgeInvocations = 0;
+  const instrumentedRegistry = {
+    find: (provider, model) => ({ provider, id: model, model, api: "openai-completions", name: `${provider}/${model}` }),
+    async getApiKeyAndHeaders() {
+      judgeInvocations += 1;
+      return { ok: true, apiKey: "headless-never-used", headers: {} };
+    },
+  };
+  const blockedVerdict = await runExternalEvaluator(
+    fakePi(),
+    stateManager.getState(),
+    { cwd: repo, modelRegistry: instrumentedRegistry, signal: AbortSignal.timeout(30_000) },
+    stateManager,
+  );
+  assert.equal(blockedVerdict.goal_met, false);
+  assert(blockedVerdict.completion_blockers.some((blocker) => blocker.includes("Shard not merge_verified")), `shard gate blocker surfaced: ${blockedVerdict.completion_blockers.join(" | ")}`);
+  assert.equal(judgeInvocations, 0, "deterministic checks (allowlist scan, cyber prereqs, extended unfinished-work gate) all run before any judge invocation");
+  details.deterministicFirst = { goalMet: blockedVerdict.goal_met, judgeInvocations, blockers: blockedVerdict.completion_blockers };
+
+  // Merge in HEFT order: shard-b outranks shard-a on the LEDGERED CLAIMS and
+  // must land FIRST even though the inputs arrive in completion order
+  // (C4-OUS-009: inputs carry no rank — the claim ledger is the source).
+  appendTrace({ type: "c4.merge_back.start", planId: plan2.id, shards: ["shard-a", "shard-b"] });
+  const mergeReport = await mergeShardPlan(plan2, [
+    { shardId: "shard-a", patch: patchA },
+    { shardId: "shard-b", patch: patchB },
+  ], { stateManager, cwd: repo, snapshotUnfinishedWork });
+  assert.equal(mergeReport.enabled, true);
+  assert.deepEqual(mergeReport.verified, ["shard-b", "shard-a"], "both shards merge_verified in claim-rank HEFT order");
+  assert.deepEqual(mergeReport.rejected, []);
+  assert.equal(mergeReport.commits.length, 2, "one commit per verified shard on the integration branch");
+  const branch = mergeReport.integrationBranch;
+  assert.match(branch, /^pi-ig\/integration\//);
+  const branchLog = () => spawnSync("git", ["log", "--format=%s", branch], { cwd: repo, encoding: "utf8" }).stdout.trim().split("\n");
+  assert.match(branchLog()[0], /^merge\(shard-a\)/, "newest commit is the lower-rank shard");
+  assert.match(branchLog()[1], /^merge\(shard-b\)/, "oldest merge commit is the highest-rank shard — HEFT merge order");
+  const mergedAlpha = spawnSync("git", ["show", `${branch}:src/alpha.mjs`], { cwd: repo, encoding: "utf8" }).stdout;
+  const mergedBeta = spawnSync("git", ["show", `${branch}:src/beta.mjs`], { cwd: repo, encoding: "utf8" }).stdout;
+  assert(mergedAlpha.includes("42") && mergedBeta.includes("1337"), "both shard patches landed on the integration branch");
+  // C4-ADV-005: the shard commit contains ONLY the patch's file — the test
+  // suite's coverage.txt side effect never entered the shard commit.
+  const shardACommitFiles = spawnSync("git", ["show", "--name-only", "--format=", branch], { cwd: repo, encoding: "utf8" }).stdout.trim().split("\n");
+  assert.deepEqual(shardACommitFiles, ["src/alpha.mjs"], "scoped staging: no test side effects in the shard commit");
+
+  // The three-part gate, asserted from the ledgered evidence: (1) per-shard
+  // allowlist verify, (2) repository test suite green on the merged tree,
+  // (3) the extended unfinished-work gate snapshot — POST-verdict view
+  // (C4-OUS-006): the shard being verified excludes itself.
+  const eventsPath = stateManager.getEventsPath();
+  const ledgerEvents = () => fs.readFileSync(eventsPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  const verifiedEvents = ledgerEvents().filter((event) => event.type === "merge_verified");
+  assert.equal(verifiedEvents.length, 2);
+  for (const event of verifiedEvents) {
+    assert.equal(event.gate.allowlistOk, true, "gate part 1: per-shard verifyImplementationAgainstPlan-style allowlist check passed");
+    assert.equal(event.gate.testsOk, true, "gate part 2: repository test suite green on the merged tree");
+    assert.equal(event.gate.testCommand, "npm test");
+    assert(event.gate.unfinishedWork && typeof event.gate.unfinishedWork.unverifiedShards === "number", "gate part 3: extended unfinished-work gate snapshot recorded");
+    assert(typeof event.shardId === "string" && event.planId === plan2.id && event.cycle === 1, "merge_verified carries top-level shardId/planId/cycle (cascade-monitor contract)");
+  }
+  const evidenceByShard = Object.fromEntries(verifiedEvents.map((event) => [event.shardId, event.gate.unfinishedWork.unverifiedShards]));
+  assert.equal(evidenceByShard["shard-b"], 1, "first merge's snapshot: one sibling still pending (self excluded)");
+  assert.equal(evidenceByShard["shard-a"], 0, "second merge's snapshot: the gate clears (C4-OUS-006)");
+  const proposedEvents = ledgerEvents().filter((event) => event.type === "merge_proposed");
+  assert.equal(proposedEvents.length, 2, "every completed shard emitted merge_proposed before the gate");
+  assert(proposedEvents.every((event) => /^[0-9a-f]{64}$/.test(event.merge.patchSha256)), "merge_proposed records the patch provenance hash");
+  assert(proposedEvents.every((event) => typeof event.merge.patchArtifactPath === "string" && event.merge.patchArtifactPath.includes(".patch")), "C4-OUS-001: the proposal carries the ledgered patch artifact path");
+
+  // Per-shard allowlist verification as a unit (gate part 1 negative path).
+  const scopeViolation = verifyShardPatchAgainstScope(patchA, [parsePathScope("src/beta.mjs")], { cwd: repo });
+  assert.equal(scopeViolation.allowlistViolation, true);
+  assert.deepEqual(scopeViolation.extraFiles, ["src/alpha.mjs"]);
+  assert.deepEqual(listPatchChangedFiles(patchA, { cwd: repo }).files, ["src/alpha.mjs"]);
+
+  // Gate part 3 after merge: nothing shard-shaped blocks goal_met anymore.
+  assert.equal(findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true }).filter((item) => item.kind === "shard").length, 0, "all shards merge_verified — gate part 3 clears");
+  details.twoShardMerge = {
+    planId: plan2.id,
+    integrationBranch: branch,
+    mergeOrder: mergeReport.mergeOrder,
+    verified: mergeReport.verified,
+    commits: mergeReport.commits,
+    gateEvidence: verifiedEvents.map((event) => ({ shardId: event.shardId, gate: event.gate })),
+  };
+
+  // ── C4-ADV-001: quoted/unicode paths cannot bypass the scope gate ──────
+  // git C-quotes the unicode path in diff headers — a regex parser dropped
+  // exactly this section and passed the allowlist. The git-native parser
+  // must see the file, and the out-of-scope patch must be REJECTED.
+  const unicodePatch = captureShardPatch("c4-unicode", "src/ünicode.ts", "export const snow = \"man\";\n");
+  const unicodeListed = listPatchChangedFiles(unicodePatch, { cwd: repo });
+  assert.deepEqual(unicodeListed.files, ["src/ünicode.ts"], "C-quoted unicode path is parsed, never silently dropped");
+  assert.deepEqual(unicodeListed.parseErrors, []);
+  const unicodeViolation = verifyShardPatchAgainstScope(unicodePatch, [parsePathScope("src/alpha.mjs")], { cwd: repo });
+  assert.equal(unicodeViolation.allowlistViolation, true, "unicode out-of-scope file is a violation, not an invisible pass");
+  assert.deepEqual(unicodeViolation.extraFiles, ["src/ünicode.ts"]);
+  // Mixed quoted+unquoted patch: both files surface; only the in-scope one passes.
+  const mixedPatch = (() => {
+    const workspace = prepareIsolatedWorktree(repo, "c4-mixed");
+    try {
+      fs.writeFileSync(path.join(workspace.path, "src", "alpha.mjs"), "export const alpha = 77;\n");
+      fs.writeFileSync(path.join(workspace.path, "src", "ünicode.ts"), "export const snow = \"mixed\";\n");
+      return workspace.capturePatch();
+    } finally {
+      workspace.cleanup();
+    }
+  })();
+  const mixedViolation = verifyShardPatchAgainstScope(mixedPatch, [parsePathScope("src/alpha.mjs")], { cwd: repo });
+  assert.deepEqual(mixedViolation.changedFiles, ["src/alpha.mjs", "src/ünicode.ts"], "mixed patch lists quoted and unquoted files");
+  assert.deepEqual(mixedViolation.extraFiles, ["src/ünicode.ts"], "only the out-of-scope file violates");
+  // Fail closed on an unparseable patch body — never an empty-file pass.
+  const garbage = verifyShardPatchAgainstScope("diff --git a/src/alpha.mjs b/src/alpha.mjs\n@@ not a real hunk\n", [parsePathScope("src/alpha.mjs")], { cwd: repo });
+  assert.equal(garbage.allowlistViolation, true, "unparseable patch fails closed as a violation");
+  assert(garbage.parseErrors.length > 0, "parse failure is reported, not dropped");
+  details.scopeGateAdversarial = { unicodeListed: unicodeListed.files, mixed: mixedViolation, garbageParseErrors: garbage.parseErrors.length };
+
+  // ── C4-ADV-002/C4-ADV-011: space-file + unavailable patch reject cleanly ─
+  // A filename with spaces is legal but outside the shard scope vocabulary —
+  // it must reject through the normal repair loop (never a thrown abort that
+  // strands a proposed record), and the batch must continue. A null patch
+  // (capture failure) rejects at the capture gate — never merge_verified
+  // with vanished work.
+  const spacePlan = planFixture("plan-c4-space", 1, [
+    shardFixture("shard-ok", 0, "src/app.ts"),
+    shardFixture("shard-space", 1, "src/alpha.mjs"),
+    shardFixture("shard-null", 2, "src/alpha.mjs"),
+  ]);
+  stateManager.recordShardPlan(spacePlan);
+  // src/app.ts comes from makeTempRepo's seed and is untouched by any other
+  // merge — a beta patch here would (correctly) conflict with plan2's
+  // already-merged beta change on the shared integration branch.
+  const patchOk = captureShardPatch("c4-ok", "src/app.ts", "export const message = 'shard-ok';\n");
+  const patchSpace = captureShardPatch("c4-space", "src/space file.ts", "export const spaced = true;\n");
+  claimCompleted(spacePlan, "shard-ok", 900, patchOk);
+  claimCompleted(spacePlan, "shard-space", 500, patchSpace);
+  claimCompleted(spacePlan, "shard-null", 100);
+  const spaceReport = await mergeShardPlan(spacePlan, [
+    { shardId: "shard-ok", patch: patchOk },
+    { shardId: "shard-space", patch: patchSpace },
+    { shardId: "shard-null", patch: null },
+  ], { stateManager, cwd: repo, snapshotUnfinishedWork });
+  assert.deepEqual(spaceReport.verified, ["shard-ok"], "the in-scope sibling still merges — the batch continues (C4-ADV-002)");
+  assert.equal(spaceReport.rejected.length, 2);
+  const spaceRejection = spaceReport.rejected.find((rejection) => rejection.shardId === "shard-space");
+  assert.equal(spaceRejection.gate, "allowlist", "space file rejects at the allowlist gate");
+  assert.match(spaceRejection.reason, /space file\.ts/, "the violating file is named");
+  const nullRejection = spaceReport.rejected.find((rejection) => rejection.shardId === "shard-null");
+  assert.equal(nullRejection.gate, "capture", "unavailable patch rejects at the capture gate (C4-ADV-011)");
+  for (const rejectedId of ["shard-space", "shard-null"]) {
+    const merge = stateManager.getState().shards.merges.find((item) => item.planId === spacePlan.id && item.shardId === rejectedId);
+    assert.notEqual(merge?.status, "proposed", `${rejectedId}: no stranded proposed record`);
+    const claim = stateManager.getState().shards.claims.find((item) => item.planId === spacePlan.id && item.shardId === rejectedId);
+    assert.equal(claim.status, "claimed", `${rejectedId}: returned to claimed via the repair loop`);
+    assert.equal(claim.taskId, null, `${rejectedId}: repair claim carries no dispatch task`);
+  }
+  // shard-space's hostile patch (out-of-scope file) was rejected BEFORE
+  // proposal? No — it was proposed, then rejected: the merge record is
+  // "rejected" via the shard_failed transition (Figure D5), never stranded.
+  assert.equal(stateManager.getState().shards.merges.find((item) => item.planId === spacePlan.id && item.shardId === "shard-space").status, "rejected");
+  assert.equal(stateManager.getState().shards.merges.some((item) => item.planId === spacePlan.id && item.shardId === "shard-null"), false, "capture rejection precedes proposal — no merge record at all");
+  details.cleanRejections = spaceReport.rejected;
+
+  // ── §8.7 (4) + C4-ADV-007/008/009: judge independence as configuration ──
+  const judgeConfig = loadJudgeConfig(repo);
+  assert.deepEqual(judgeConfig.rubric, ["Goal criterion verifiably satisfied", "No shard outside its write scope", "Repository test suite green on the merged tree"], "rubric-based grading is configured");
+  assert.equal(judgeConfig.customRubric, true);
+  assert.equal(judgeConfig.model.model, "anthropic/claude-sonnet-4.6");
+  const independence = checkJudgeIndependence(stateManager.getState(), judgeConfig);
+  assert.equal(independence.independent, true, "validate-phase judge model differs from the implement-phase actor model");
+  assert.equal(independence.rubricConfigured, true);
+  assert.equal(independence.violations.length, 0);
+  // C4-ADV-007: the separate-fields form keeps slash-containing model ids
+  // verbatim — {provider:'openrouter', model:'z-ai/glm-5.2'} must parse as
+  // openrouter/z-ai/glm-5.2, not provider 'z-ai'.
+  const separateDir = fs.realpathSync(makeTempRepo("pi-ig-c4-judge-"));
+  fs.mkdirSync(path.join(separateDir, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(separateDir, ".pi", "settings.json"), JSON.stringify({
+    iterativeGoal: { judge: { provider: "openrouter", model: "z-ai/glm-5.2" } },
+  }, null, 2));
+  const separateJudge = loadJudgeConfig(separateDir);
+  assert.deepEqual(separateJudge.model, { provider: "openrouter", model: "z-ai/glm-5.2" }, "explicit provider field wins; model id verbatim (C4-ADV-007)");
+  // C4-ADV-008: canonical identity — openrouter/z-ai/glm-5.2 and
+  // zai/glm-5.2 are the SAME weights; the aliased pair must FAIL the rule.
+  const aliased = checkJudgeIndependence(stateManager.getState(), { model: separateJudge.model, rubric: ["x"], customRubric: true });
+  assert.equal(aliased.independent, false, "provider-prefix alias of the actor model is not independent (C4-ADV-008)");
+  assert(aliased.violations.some((violation) => violation.includes("canonically identical")));
+  // The pre-C4 default FAILS the rule honestly: judge falls back to the
+  // primary model (judge == actor) and the violation is surfaced, not hidden.
+  const defaultIndependence = checkJudgeIndependence(stateManager.getState(), { model: null, rubric: [], customRubric: false });
+  assert.equal(defaultIndependence.independent, false, "default configuration flags judge == actor");
+  assert(defaultIndependence.violations.length >= 2, "judge==actor and missing rubric both flagged");
+  assert(DEFAULT_JUDGE_RUBRIC.length > 0, "the standing rubric exists as the default");
+  assert.equal(resolveJudgeModel(stateManager.getState(), { model: { provider: "not-allowed", model: "nope" }, rubric: [], customRubric: false }).model, run.evaluator.model, "a disallowed judge override falls back to state.evaluator");
+  // C4-ADV-009: integration branch confinement — an override without the
+  // pi-ig/ prefix is ignored; an override naming an existing NON-harness
+  // branch refuses.
+  const evilDir = fs.realpathSync(makeTempRepo("pi-ig-c4-branch-"));
+  fs.mkdirSync(path.join(evilDir, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(evilDir, ".pi", "settings.json"), JSON.stringify({
+    iterativeGoal: { mergeBack: { enabled: true, integrationBranch: "main" } },
+  }, null, 2));
+  assert.equal(loadMergeBackConfig(evilDir).integrationBranch, null, "override without the pi-ig/ prefix is refused at config load");
+  {
+    // An existing pi-ig/ branch whose tip is NOT harness-authored refuses.
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("git", ["init", "-q"], { cwd: evilDir });
+    execFileSync("git", ["config", "user.email", "user@example.invalid"], { cwd: evilDir });
+    execFileSync("git", ["config", "user.name", "User"], { cwd: evilDir });
+    fs.writeFileSync(path.join(evilDir, "f.txt"), "user work\n");
+    execFileSync("git", ["add", "."], { cwd: evilDir });
+    execFileSync("git", ["commit", "-qm", "user commit"], { cwd: evilDir });
+    execFileSync("git", ["branch", "pi-ig/integration/pre-existing"], { cwd: evilDir });
+    fs.writeFileSync(path.join(evilDir, ".pi", "settings.json"), JSON.stringify({
+      iterativeGoal: { mergeBack: { enabled: true, integrationBranch: "pi-ig/integration/pre-existing" } },
+    }, null, 2));
+    const evilManager = createStateManager(fakePi());
+    evilManager.restore({ cwd: evilDir, sessionManager: { getEntries: () => [] } });
+    const evilRun = evilManager.createRun("branch confinement", "non-harness branch refuses");
+    const evilPlan = planFixture("plan-c4-evil", 1, [shardFixture("shard-e", 0, "f.txt")]);
+    evilPlan.runId = evilRun.runId;
+    evilPlan.tasks = [{ id: "t-shard-e", title: "x", dependsOn: [], satisfies: [], allowedPaths: [parsePathScope("f.txt")], requiredCapabilities: [], checks: [], rollback: "x", risk: "low" }];
+    evilManager.recordShardPlan(evilPlan);
+    evilManager.recordShardClaimed({
+      shardId: "shard-e", planId: evilPlan.id, runId: evilRun.runId, cycle: 1,
+      status: "claimed", workerSlot: 0, rank: 1, taskId: "t", claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    evilManager.recordShardFinished("shard-e", { runId: evilRun.runId, planId: evilPlan.id, cycle: 1, status: "completed", taskId: "t", patchArtifactPath: null });
+    // A real captured patch, so gate 1 passes and the confinement refusal is
+    // what stops the merge.
+    const evilWorkspace = prepareIsolatedWorktree(evilDir, "c4-evil");
+    fs.writeFileSync(path.join(evilWorkspace.path, "f.txt"), "hijacked\n");
+    const evilPatch = evilWorkspace.capturePatch();
+    evilWorkspace.cleanup();
+    await assert.rejects(
+      mergeShardPlan(evilPlan, [{ shardId: "shard-e", patch: evilPatch }], { stateManager: evilManager, cwd: evilDir }),
+      /refusing to merge onto a non-harness branch/,
+      "existing non-harness branch refuses (C4-ADV-009)",
+    );
+    assert.equal(spawnSync("git", ["log", "--format=%s", "pi-ig/integration/pre-existing"], { cwd: evilDir, encoding: "utf8" }).stdout.trim(), "user commit", "the non-harness branch was not advanced");
+  }
+  details.judgeIndependence = { configured: independence, aliased: aliased.violations, defaultFlags: defaultIndependence.violations, branchConfinement: "both ways asserted" };
+
+  // ── §8.7 (2): conflict fixture — two shard diffs on the bridge file ────
+  stateManager.incrementCycle(); // cycle 2 isolates the conflict plan's keys.
+  const conflictPlan = planFixture("plan-c4-conflict", 2, [
+    shardFixture("shard-c", 0, "src/bridge.mjs"),
+    shardFixture("shard-d", 1, "src/bridge.mjs"),
+  ]);
+  stateManager.recordShardPlan(conflictPlan);
+  // Both diffs change the SAME bridge line — the second can never apply onto
+  // the first's merged tree (isolation deferred the conflict to merge time).
+  const patchC = captureShardPatch("c4-shard-c", "src/bridge.mjs", "export const seam = \"gamma\";\n");
+  const patchD = captureShardPatch("c4-shard-d", "src/bridge.mjs", "export const seam = \"delta\";\n");
+  claimCompleted(conflictPlan, "shard-c", 500, patchC);
+  claimCompleted(conflictPlan, "shard-d", 100, patchD);
+  const conflictReport = await mergeShardPlan(conflictPlan, [
+    { shardId: "shard-d", patch: patchD },
+    { shardId: "shard-c", patch: patchC },
+  ], { stateManager, cwd: repo, snapshotUnfinishedWork });
+  assert.deepEqual(conflictReport.verified, ["shard-c"], "the non-conflicting shard still merges");
+  assert.equal(conflictReport.rejected.length, 1);
+  assert.equal(conflictReport.rejected[0].shardId, "shard-d");
+  assert.equal(conflictReport.rejected[0].gate, "apply", "rejected at patch application — the merge-time conflict surface");
+  assert.deepEqual(conflictReport.repaired, ["shard-d"], "gate-rejected shard returned to claimed (Figure D5 repair loop)");
+  const repairClaim = stateManager.getState().shards.claims.find((claim) => claim.planId === conflictPlan.id && claim.shardId === "shard-d");
+  assert.equal(repairClaim.status, "claimed", "shard returned to claimed for repair");
+  assert.match(repairClaim.error, /does not apply|conflict/, "failure evidence attached to the claim");
+  assert.equal(repairClaim.taskId, null, "repair claim has no dispatch task yet (crash-reconciliation safe)");
+  const rejectedMerge = stateManager.getState().shards.merges.find((merge) => merge.planId === conflictPlan.id && merge.shardId === "shard-d");
+  assert.equal(rejectedMerge.status, "rejected", "shard_failed transition marks the proposal rejected");
+  const repairClaimEvent = ledgerEvents().filter((event) => event.type === "shard_claimed" && event.shardId === "shard-d").at(-1);
+  assert.equal(repairClaimEvent.evidence.repairLoop, true, "repair-loop re-claim is ledgered with evidence");
+  assert.equal(repairClaimEvent.evidence.gateFailure.gate, "apply");
+  const conflictBranch = spawnSync("git", ["show", `${branch}:src/bridge.mjs`], { cwd: repo, encoding: "utf8" }).stdout;
+  assert(conflictBranch.includes("gamma") && !conflictBranch.includes("delta"), "the rejected patch never touched the integration branch");
+
+  // C4-ADV-003: the rejected shard blocks goal_met IN-CYCLE with the honest
+  // repair blocker (no automatic re-dispatch in v1) — named, not hidden.
+  const inCycleBlockers = findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true }).filter((item) => item.kind === "shard");
+  assert.equal(inCycleBlockers.length, 1, "the conflict-rejected shard blocks in-cycle");
+  assert.match(inCycleBlockers[0].description, /rejected.*awaiting repair|awaiting repair|manual|disabling merge-back/i, "honest repair guidance in the blocker text");
+  details.conflictFixture = {
+    verified: conflictReport.verified,
+    rejected: conflictReport.rejected,
+    repairClaim: { status: repairClaim.status, error: repairClaim.error },
+    inCycleBlocker: inCycleBlockers[0].description,
+  };
+
+  // Cascade-monitor contract (C4 contract note): the monitor heals a failure
+  // episode on exactly the "merge_verified" event type this layer emits.
+  const cascadeDag = buildShardDag(planFixture("plan-c4-cascade", 2, [
+    shardFixture("shard-up", 0, "src/up.mjs"),
+    { ...shardFixture("shard-down-1", 1, "src/down1.mjs"), taskIds: ["t-shard-down-1"] },
+    { ...shardFixture("shard-down-2", 2, "src/down2.mjs"), taskIds: ["t-shard-down-2"] },
+  ]));
+  cascadeDag.edges.push({ from: "shard-up", to: "shard-down-1", contractWeight: 0, kind: "dependsOn" });
+  cascadeDag.edges.push({ from: "shard-up", to: "shard-down-2", contractWeight: 0, kind: "dependsOn" });
+  const ts = new Date().toISOString();
+  const cascadeEvents = [
+    { type: "shard_failed", shardId: "shard-up", planId: "plan-c4-cascade", cycle: 2, timestamp: ts },
+    { type: "shard_claimed", shardId: "shard-down-1", planId: "plan-c4-cascade", cycle: 2, timestamp: ts },
+    { type: "shard_claimed", shardId: "shard-down-2", planId: "plan-c4-cascade", cycle: 2, timestamp: ts },
+  ];
+  assert.equal(detectErrorCascadeSignatures(cascadeEvents, cascadeDag).length, 1, "unverified failed-output fan-out flags");
+  // Intervening verification heals the episode (C3 Test 70 semantics): with
+  // merge_verified landing between the failure and the second consumer's
+  // claim, no cascade signature is emitted — the event type is emitted
+  // exactly as the monitor expects.
+  const healed = detectErrorCascadeSignatures([
+    cascadeEvents[0],
+    cascadeEvents[1],
+    { type: "merge_verified", shardId: "shard-up", planId: "plan-c4-cascade", cycle: 2, timestamp: ts },
+    { type: "shard_claimed", shardId: "shard-down-2", planId: "plan-c4-cascade", cycle: 2, timestamp: ts },
+  ], cascadeDag);
+  assert.equal(healed.length, 0, "merge_verified heals the episode — the event type is emitted exactly");
+  details.cascadeMonitorContract = { flagged: 1, healed: healed.length };
+
+  // ── C4-ADV-003(c)/C4-ADV-004(c): superseding plan + kill-9 worktree reuse ─
+  // A stale integration worktree SURVIVING from a killed merge (the kill -9
+  // case) must not wedge the next merge — the driver reuses/resets it.
+  stateManager.incrementCycle(); // cycle 3.
+  const staleIntegration = path.join(os.tmpdir(), `pi-ig-integration-stale-${Math.random().toString(16).slice(2, 10)}`);
+  assert.equal(spawnSync("git", ["worktree", "add", staleIntegration, branch], { cwd: repo }).status, 0);
+  fs.writeFileSync(path.join(staleIntegration, ".pi-ig-worktree.json"), markerFor("integration", deadPid));
+  // test/suite.test.mjs is tracked at seed but never merged, so a patch
+  // based on main HEAD applies cleanly onto the branch — an alpha/beta patch
+  // would correctly conflict with plan2's already-merged changes. The new
+  // content keeps the suite green (gate part 2 runs it on the merged tree).
+  const supersedePlan = planFixture("plan-c4-supersede", 3, [shardFixture("shard-sup", 0, "test/suite.test.mjs")]);
+  stateManager.recordShardPlan(supersedePlan);
+  const patchSup = captureShardPatch("c4-sup", "test/suite.test.mjs", [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { alpha } from '../src/alpha.mjs';",
+    "import { beta } from '../src/beta.mjs';",
+    "",
+    "test('fixture modules are intact', () => {",
+    "  assert.equal(typeof alpha, 'number');",
+    "  assert.equal(typeof beta, 'number');",
+    "});",
+    "",
+    "test('the supersede shard merged', () => {",
+    "  assert.equal(1 + 1, 2);",
+    "});",
+    "",
+  ].join("\n"));
+  claimCompleted(supersedePlan, "shard-sup", 100, patchSup);
+  const supersedeReport = await mergeShardPlan(supersedePlan, [{ shardId: "shard-sup", patch: patchSup }], { stateManager, cwd: repo, snapshotUnfinishedWork });
+  assert.deepEqual(supersedeReport.rejected, [], "kill -9 with a surviving worktree directory: the next merge still succeeds (C4-ADV-004)");
+  assert.deepEqual(supersedeReport.verified, ["shard-sup"]);
+  // C4-ADV-003: the superseding current-cycle fan_out plan unblocks the
+  // evaluator — the stale rejected plan from cycle 2 no longer gates.
+  assert.equal(findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true }).filter((item) => item.kind === "shard").length, 0, "superseding fan_out plan unblocks goal_met");
+  // C4-ADV-003(c): single_slice plans never block.
+  stateManager.recordShardPlan(planFixture("plan-c4-single", 3, [shardFixture("shard-solo", 0, "src/alpha.mjs")], "single_slice"));
+  assert.equal(findUnfinishedWork(stateManager.getState(), { mergeBackEnabled: true }).filter((item) => item.kind === "shard").length, 0, "single_slice plans never block");
+
+  // ── §8.7 (3) + C4-ADV-004/010: scoped crash recovery ───────────────────
+  // Class 1 (vanished directory): a crashed shard worktree's registration.
+  const crashedWorkspace = prepareIsolatedWorktree(repo, "c4-crash-shard");
+  fs.writeFileSync(path.join(crashedWorkspace.path, "src", "alpha.mjs"), "export const alpha = 777;\n");
+  const crashedPath = crashedWorkspace.path;
+  // git registers worktrees in realpath form; capture before the kill.
+  const crashedRealPath = fs.realpathSync(crashedPath);
+  fs.rmSync(crashedPath, { recursive: true, force: true });
+  // Class 2 (surviving directory, dead creator): kill -9 during a shard —
+  // the directory AND its registration survive; the PID marker proves the
+  // creator is dead.
+  const deadWorkspace = prepareIsolatedWorktree(repo, "c4-dead-shard");
+  const deadRealPath = fs.realpathSync(deadWorkspace.path);
+  fs.writeFileSync(path.join(deadWorkspace.path, ".pi-ig-worktree.json"), markerFor("shard", deadPid));
+  // Foreign worktree (user ad-hoc, no harness prefix) with a vanished
+  // directory: scoped recovery must leave it alone even though plain
+  // `git worktree prune` would remove it.
+  const foreignPath = path.join(os.tmpdir(), `user-adhoc-${Math.random().toString(16).slice(2, 10)}`);
+  assert.equal(spawnSync("git", ["worktree", "add", "--detach", foreignPath, "HEAD"], { cwd: repo }).status, 0);
+  fs.rmSync(foreignPath, { recursive: true, force: true });
+  const recovery = recoverWorktrees(repo);
+  assert(recovery.pruned.includes(crashedRealPath), "vanished harness registration pruned");
+  assert(recovery.reclaimed.includes(deadRealPath), "surviving-directory worktree of a dead run reclaimed (kill -9, C4-ADV-004)");
+  assert(recovery.skippedForeign.some((entry) => entry.includes("user-adhoc-")), "foreign worktrees are never touched (C4-ADV-010)");
+  assert(spawnSync("git", ["worktree", "list", "--porcelain"], { cwd: repo, encoding: "utf8" }).stdout.includes("user-adhoc-"), "the foreign registration survives scoped recovery");
+  assert(!recovery.after.includes(crashedRealPath) && !recovery.after.includes(deadRealPath), "harness registry is clean after recovery");
+  spawnSync("git", ["worktree", "remove", "--force", foreignPath], { cwd: repo }); // Tidy the fixture's foreign worktree.
+  // Verified branch work survives everything: seed + plan2 (2) + space (1) +
+  // conflict (1) + supersede (1) commits.
+  assert.equal(branchLog().length, 6, "verified branch work survives crash recovery");
+  details.crashRecovery = recovery;
+
+  // ── C4-OUS-001: crash after dispatch → restore → merge from ledger ─────
+  {
+    const crashRepo = fs.realpathSync(makeTempRepo("pi-ig-c4-crash-"));
+    fs.writeFileSync(path.join(crashRepo, "src", "alpha.mjs"), "export const alpha = 1;\n");
+    fs.mkdirSync(path.join(crashRepo, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(crashRepo, ".pi", "settings.json"), JSON.stringify({
+      iterativeGoal: { mergeBack: { enabled: true, testCommand: "true" } },
+    }, null, 2));
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Headless Evidence", GIT_AUTHOR_EMAIL: "headless@example.invalid",
+      GIT_COMMITTER_NAME: "Headless Evidence", GIT_COMMITTER_EMAIL: "headless@example.invalid",
+    };
+    assert.equal(spawnSync("git", ["add", "."], { cwd: crashRepo }).status, 0);
+    assert.equal(spawnSync("git", ["commit", "-qm", "seed crash fixture"], { cwd: crashRepo, env: commitEnv }).status, 0);
+
+    const managerA = createStateManager(fakePi());
+    managerA.restore({ cwd: crashRepo, sessionManager: { getEntries: () => [] } });
+    const crashRun = managerA.createRun("crash after dispatch", "merge completes from the ledgered patch");
+    const crashPlan = planFixture("plan-c4-crash", 1, [
+      shardFixture("shard-1", 0, "src/alpha.mjs"),
+      shardFixture("shard-2", 1, "src/beta.mjs"),
+    ]);
+    crashPlan.runId = crashRun.runId;
+    crashPlan.tasks = crashPlan.tasks.map((task) => ({ ...task }));
+    managerA.recordShardPlan(crashPlan);
+    const crashWorkspace = prepareIsolatedWorktree(crashRepo, "c4-crash-dispatch");
+    fs.writeFileSync(path.join(crashWorkspace.path, "src", "alpha.mjs"), "export const alpha = 9001;\n");
+    const crashPatch = crashWorkspace.capturePatch();
+    crashWorkspace.cleanup();
+    // Production shape: shard-1 completed with its patch persisted; shard-2
+    // completed and its merge was PROPOSED when the process died mid-gate.
+    managerA.recordShardClaimed({
+      shardId: "shard-1", planId: crashPlan.id, runId: crashRun.runId, cycle: 1,
+      status: "claimed", workerSlot: 0, rank: 200, taskId: "sched-c1-shard-1",
+      claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    managerA.recordShardFinished("shard-1", {
+      runId: crashRun.runId, planId: crashPlan.id, cycle: 1, status: "completed", taskId: "sched-c1-shard-1",
+      patchArtifactPath: persistShardPatchArtifact(managerA, 1, "shard-1", crashPatch, crashRepo),
+    });
+    managerA.recordShardClaimed({
+      shardId: "shard-2", planId: crashPlan.id, runId: crashRun.runId, cycle: 1,
+      status: "claimed", workerSlot: 1, rank: 100, taskId: "sched-c1-shard-2",
+      claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    managerA.recordShardFinished("shard-2", { runId: crashRun.runId, planId: crashPlan.id, cycle: 1, status: "completed", taskId: "sched-c1-shard-2", patchArtifactPath: null });
+    managerA.recordMergeProposed({
+      shardId: "shard-2", planId: crashPlan.id, runId: crashRun.runId, cycle: 1,
+      status: "proposed", patchSha256: "0".repeat(64), patchArtifactPath: null,
+      integrationBranch: `pi-ig/integration/${crashRun.runId}`, rank: 100,
+      gate: null, error: null, proposedAt: new Date().toISOString(), verifiedAt: null,
+    });
+    // Simulated kill: drop the manager without any cleanup.
+
+    const managerB = createStateManager(fakePi());
+    const restored = managerB.restore({ cwd: crashRepo, sessionManager: { getEntries: () => [] } });
+    assert(restored, "warm restart replays the crashed run");
+    // Stale-proposal reconciliation (C4-OUS-001): shard-2's open proposal is
+    // failed back through the repair loop with process_restart evidence.
+    const reconciledMerge = restored.shards.merges.find((merge) => merge.shardId === "shard-2");
+    assert.equal(reconciledMerge.status, "rejected", "stale proposed merge reconciled to rejected on restore");
+    assert.equal(reconciledMerge.error, "process_restart");
+    const reconciledClaim = restored.shards.claims.find((claim) => claim.shardId === "shard-2");
+    assert.equal(reconciledClaim.status, "claimed", "stale-proposal shard returned to claimed");
+    assert.equal(reconciledClaim.error, "process_restart");
+    const reconcileEvent = fs.readFileSync(managerB.getEventsPath(), "utf8").split(/\r?\n/).filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.type === "shard_claimed" && event.shardId === "shard-2").at(-1);
+    assert.equal(reconcileEvent.evidence.staleMergeReconciled, true, "reconciliation is ledgered with evidence");
+    // The scheduler's idempotency skip produces NO scheduler report — the
+    // merge hook rebuilds its inputs from ledgered claims + patch artifacts.
+    const hookReport = await runMergeBackHook({ stateManager: managerB, cwd: crashRepo, mergeBackEnabled: true });
+    assert(hookReport, "merge hook re-drives after a warm restart");
+    assert.deepEqual(hookReport.verified, ["shard-1"], "merge completes from the ledgered patch (C4-OUS-001)");
+    assert(!hookReport.mergeOrder.includes("shard-2"), "the repair-pending shard never enters the merge batch");
+    assert.equal(managerB.getState().shards.merges.find((merge) => merge.shardId === "shard-2").status, "rejected", "the reconciled repair-pending shard is not merged");
+    const crashBranchLog = spawnSync("git", ["log", "--format=%s", `pi-ig/integration/${crashRun.runId}`], { cwd: crashRepo, encoding: "utf8" }).stdout;
+    assert.match(crashBranchLog, /merge\(shard-1\)/);
+    assert(spawnSync("git", ["show", `pi-ig/integration/${crashRun.runId}:src/alpha.mjs`], { cwd: crashRepo, encoding: "utf8" }).stdout.includes("9001"), "the ledgered patch landed");
+    details.crashAfterDispatch = { reconciled: reconciledMerge.status, verified: hookReport.verified };
+  }
+
+  // ── C4-ADV-006: npm bootstrap honesty in a fresh worktree ──────────────
+  {
+    const depRepo = fs.realpathSync(makeTempRepo("pi-ig-c4-deps-"));
+    fs.writeFileSync(path.join(depRepo, "package.json"), JSON.stringify({
+      name: "pi-ig-c4-deps-fixture", version: "0.0.0", type: "module",
+      dependencies: { "left-pad": "^1.3.0" },
+      scripts: { test: "node --test test/*.test.mjs" },
+    }, null, 2));
+    fs.mkdirSync(path.join(depRepo, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(depRepo, ".pi", "settings.json"), JSON.stringify({
+      iterativeGoal: { mergeBack: { enabled: true } },
+    }, null, 2));
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Headless Evidence", GIT_AUTHOR_EMAIL: "headless@example.invalid",
+      GIT_COMMITTER_NAME: "Headless Evidence", GIT_COMMITTER_EMAIL: "headless@example.invalid",
+    };
+    assert.equal(spawnSync("git", ["add", "."], { cwd: depRepo }).status, 0);
+    assert.equal(spawnSync("git", ["commit", "-qm", "seed deps fixture"], { cwd: depRepo, env: commitEnv }).status, 0);
+    const depManager = createStateManager(fakePi());
+    depManager.restore({ cwd: depRepo, sessionManager: { getEntries: () => [] } });
+    const depRun = depManager.createRun("bootstrap honesty", "npm with declared deps fails with a bootstrap message");
+    const depPlan = planFixture("plan-c4-deps", 1, [shardFixture("shard-dep", 0, "package.json")]);
+    depPlan.runId = depRun.runId;
+    depManager.recordShardPlan(depPlan);
+    const depWorkspace = prepareIsolatedWorktree(depRepo, "c4-dep");
+    fs.writeFileSync(path.join(depWorkspace.path, "package.json"), JSON.stringify({
+      name: "pi-ig-c4-deps-fixture", version: "0.0.1", type: "module",
+      dependencies: { "left-pad": "^1.3.0" },
+      scripts: { test: "node --test test/*.test.mjs" },
+    }, null, 2));
+    const depPatch = depWorkspace.capturePatch();
+    depWorkspace.cleanup();
+    depManager.recordShardClaimed({
+      shardId: "shard-dep", planId: depPlan.id, runId: depRun.runId, cycle: 1,
+      status: "claimed", workerSlot: 0, rank: 1, taskId: "t", claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    depManager.recordShardFinished("shard-dep", { runId: depRun.runId, planId: depPlan.id, cycle: 1, status: "completed", taskId: "t", patchArtifactPath: null });
+    const depReport = await mergeShardPlan(depPlan, [{ shardId: "shard-dep", patch: depPatch }], { stateManager: depManager, cwd: depRepo });
+    assert.equal(depReport.rejected.length, 1);
+    assert.equal(depReport.rejected[0].gate, "tests");
+    assert.match(depReport.rejected[0].reason, /bootstrap-required/, "npm with declared-but-uninstalled deps fails with a bootstrap-required message, not a raw npm error");
+    details.bootstrapHonesty = depReport.rejected[0].reason.slice(0, 200);
+  }
+
+  // ── §8.7 (5): merge_proposed/merge_verified hash-chain + replay ────────
+  const replayed = stateManager.replayActiveState();
+  assert(replayed, "replay reconstructs the run over the new merge events");
+  const replayedMerge = replayed.shards.merges.find((merge) => merge.planId === plan2.id && merge.shardId === "shard-a");
+  assert.equal(replayedMerge.status, "verified", "replay rebuilds merge state from the ledger");
+  assert.equal(replayedMerge.gate.testsOk, true, "replayed merge keeps the gate evidence");
+  const replayedRejected = replayed.shards.merges.find((merge) => merge.planId === conflictPlan.id && merge.shardId === "shard-d");
+  assert.equal(replayedRejected.status, "rejected", "replay rebuilds the gate rejection via the shard_failed transition");
+  const originalEvents = fs.readFileSync(eventsPath, "utf8");
+  const tampered = originalEvents.split(/\r?\n/).filter(Boolean).map((line) => {
+    const event = JSON.parse(line);
+    if (event.type === "merge_verified" && event.shardId === "shard-a") event.shardId = "shard-tampered";
+    return JSON.stringify(event);
+  }).join("\n") + "\n";
+  fs.writeFileSync(eventsPath, tampered);
+  assert.equal(stateManager.replayActiveState(), null, "hash chain fails closed on a tampered merge_verified event");
+  fs.writeFileSync(eventsPath, originalEvents);
+  assert(stateManager.replayActiveState(), "restored ledger verifies again");
+  details.hashChainReplay = { replayOk: true, tamperRejected: true };
+
+  // ── §8.7 rollback: flag off → no merge, no events, patch blocks ────────
+  const eventCountBefore = ledgerEvents().length;
+  const disabledReport = await mergeShardPlan(plan2, [{ shardId: "shard-a", patch: patchA }], {
+    stateManager,
+    cwd: repo,
+    config: { enabled: false, integrationBranch: null, testCommand: "npm test", testTimeoutMs: 120_000 },
+  });
+  assert.equal(disabledReport.enabled, false);
+  assert.match(disabledReport.reason, /ISOLATED_WORKTREE_PATCH/, "rollback surfaces patches as [ISOLATED_WORKTREE_PATCH] blocks for manual application");
+  assert.equal(disabledReport.verified.length + disabledReport.rejected.length, 0);
+  assert.equal(ledgerEvents().length, eventCountBefore, "disabled merge-back writes nothing to the ledger");
+  details.rollback = { enabled: disabledReport.enabled, reason: disabledReport.reason };
+
+  appendTrace({
+    type: "c4.merge_back.end",
+    verified: details.twoShardMerge.verified,
+    conflictRejected: details.conflictFixture.rejected.map((item) => item.shardId),
+    pruned: recovery.pruned.length,
+    reclaimed: recovery.reclaimed.length,
+    crashAfterDispatch: details.crashAfterDispatch.verified,
+    judgeIndependent: independence.independent,
+  });
+
+  return details;
+});
+
 await check("local-trace-artifact", "Local JSONL trace captures run decisions, latency, outputs, and failures", ["tracing"], async () => {
   assert(fs.existsSync(tracePath));
   const lines = fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean);
@@ -1436,89 +2195,6 @@ await check("local-trace-artifact", "Local JSONL trace captures run decisions, l
   assert(parsed.some((event) => event.type === "tool.registered"));
   assert(parsed.some((event) => event.type === "pi.exec.end"));
   return { tracePath, eventCount: parsed.length };
-});
-
-await check("headless-evidence-attestation", "Headless evidence manifest is signed and signature verification rejects tampering", [
-  "signing_attestation",
-  "tracing",
-], async () => {
-  const { attestAction, createSigningState, verifyActionAttestation } = await import(path.join(repoRoot, "dist", "cyber-runtime.js"));
-  const manifestPath = path.join(runDir, "evidence-manifest.json");
-  const attestationPath = path.join(runDir, "evidence-manifest.attestation.json");
-  const files = listFilesRecursive(runDir)
-    .filter((filePath) => ![manifestPath, attestationPath].includes(filePath))
-    .map((filePath) => {
-      const bytes = fs.readFileSync(filePath);
-      return {
-        path: path.relative(repoRoot, filePath),
-        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
-        bytes: bytes.length,
-      };
-    });
-  const manifest = {
-    runId,
-    traceId,
-    createdAt: new Date().toISOString(),
-    artifactCount: files.length,
-    files,
-  };
-  const manifestBytes = JSON.stringify(manifest, null, 2);
-  fs.writeFileSync(manifestPath, manifestBytes);
-  const signing = createSigningState(runId);
-  const attestation = attestAction({
-    runId,
-    cycle: 1,
-    phase: "headless-evidence",
-    artifactPath: path.relative(repoRoot, manifestPath),
-    action: {
-      id: "headless-evidence-manifest",
-      actor: { kind: "tool", id: "headless-feature-evidence" },
-      runId,
-      effect: "fs.read",
-      resource: { type: "path", value: path.relative(repoRoot, runDir) },
-      input: { artifactCount: files.length },
-      purpose: "sign headless evidence manifest",
-      risk: "read",
-      dataClassification: "internal",
-    },
-    outputBytes: manifestBytes,
-    dlpScanId: null,
-    trustClassification: "internal",
-    signing,
-  });
-  fs.writeFileSync(attestationPath, JSON.stringify({
-    publicKeyPem: signing.runPublicKey,
-    attestation,
-  }, null, 2));
-  const verification = verifyActionAttestation({
-    attestation,
-    publicKeyPem: signing.runPublicKey,
-    artifactBytes: manifestBytes,
-  });
-  assert.equal(verification.ok, true);
-  const tampered = verifyActionAttestation({
-    attestation,
-    publicKeyPem: signing.runPublicKey,
-    artifactBytes: `${manifestBytes}\n`,
-  });
-  assert.equal(tampered.ok, false);
-  assert.equal(tampered.artifactDigestValid, false);
-  appendTrace({
-    type: "evidence.attestation",
-    artifact: attestationPath,
-    manifest: manifestPath,
-    artifactCount: files.length,
-    keyId: signing.keyId,
-    verification,
-  });
-  return {
-    manifestPath,
-    attestationPath,
-    artifactCount: files.length,
-    keyId: signing.keyId,
-    verification,
-    tamperRejected: tampered.ok === false,
-  };
 });
 
 const derivedGaps = [
@@ -1602,7 +2278,7 @@ await check("claude-parity-scorecard", "Empirical outcomes meet Claude Code-styl
     },
     {
       expectation: "Defends cyber workloads with DLP, IPI delimiting, approvals, signed attestations, Secrets Manager handling, AWS boundaries, and CAS route policy",
-      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload", "prod-security-review-readonly", "headless-evidence-attestation"],
+      evidenceIds: ["extension-headless-flow", "workload-benchmark", "vulnerability-remediation-workload", "prod-security-review-readonly"] /* headless-evidence-attestation now runs after the scorecard (C4-ADV-012 ordering) */,
       featureIds: ["approval_flows", "aws_integration", "dlp", "indirect_prompt_injection", "signing_attestation", "secrets_manager_handling", "cas_unify_policy", "continuous_readonly_prod_review"],
       exceedsBaselineOn: ["secret redaction", "untrusted-input delimiting", "explicit approval tokens", "CAS route enforcement", "continuous read-only production review"],
     },
@@ -1719,12 +2395,130 @@ appendTrace({
   coverageMdPath,
 });
 
-console.log(`Headless evidence run complete: ${summary.passedChecks} PASS, ${summary.failedChecks} FAIL`);
-console.log(`Feature coverage: ${summary.passedFeatures} PASS, ${summary.warnedFeatures} WARN, ${summary.failedFeatures} FAIL, ${summary.gapFeatures} GAP`);
+// ── Signed evidence manifest (C4-ADV-012) ────────────────────────────────
+// Runs AFTER every check, AFTER coverage is written, and AFTER the final
+// coverage.summary trace line — trace.jsonl and feature-coverage.* are FINAL
+// here, so the signed manifest covers exactly the delivered bytes. This is
+// intentionally NOT a check(): the wrapper's check.end trace event would
+// grow the trace after hashing. The recordCheck artifact
+// (headless-evidence-attestation.json) is the one intentionally-unsigned
+// file in the run dir — self-reference: a manifest cannot contain the hash
+// of the result that creates it.
+{
+  appendTrace({
+    type: "check.start",
+    name: "headless-evidence-attestation",
+    summary: "Headless evidence manifest is signed over the final trace and coverage bytes",
+    featureIds: ["signing_attestation", "tracing"],
+  });
+  let attestationStatus = "PASS";
+  let attestationSummary = "Headless evidence manifest is signed over the final trace/coverage bytes; signature verification, tamper rejection, and delivered-byte re-hash all pass";
+  let attestationDetails = {};
+  try {
+    const { attestAction, createSigningState, verifyActionAttestation } = await import(path.join(repoRoot, "dist", "cyber-runtime.js"));
+    const manifestPath = path.join(runDir, "evidence-manifest.json");
+    const attestationPath = path.join(runDir, "evidence-manifest.attestation.json");
+    appendTrace({
+      type: "evidence.attestation.start",
+      manifest: manifestPath,
+      note: "trace.jsonl and feature-coverage.* are final at this point — the signed manifest covers the delivered bytes",
+    });
+    const files = listFilesRecursive(runDir)
+      .filter((filePath) => ![manifestPath, attestationPath].includes(filePath))
+      .map((filePath) => {
+        const bytes = fs.readFileSync(filePath);
+        return {
+          path: path.relative(repoRoot, filePath),
+          sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        };
+      });
+    const manifest = {
+      runId,
+      traceId,
+      createdAt: new Date().toISOString(),
+      artifactCount: files.length,
+      files,
+    };
+    const manifestBytes = JSON.stringify(manifest, null, 2);
+    fs.writeFileSync(manifestPath, manifestBytes);
+    const signing = createSigningState(runId);
+    const attestation = attestAction({
+      runId,
+      cycle: 1,
+      phase: "headless-evidence",
+      artifactPath: path.relative(repoRoot, manifestPath),
+      action: {
+        id: "headless-evidence-manifest",
+        actor: { kind: "tool", id: "headless-feature-evidence" },
+        runId,
+        effect: "fs.read",
+        resource: { type: "path", value: path.relative(repoRoot, runDir) },
+        input: { artifactCount: files.length },
+        purpose: "sign headless evidence manifest",
+        risk: "read",
+        dataClassification: "internal",
+      },
+      outputBytes: manifestBytes,
+      dlpScanId: null,
+      trustClassification: "internal",
+      signing,
+    });
+    fs.writeFileSync(attestationPath, JSON.stringify({
+      publicKeyPem: signing.runPublicKey,
+      attestation,
+    }, null, 2));
+    const verification = verifyActionAttestation({
+      attestation,
+      publicKeyPem: signing.runPublicKey,
+      artifactBytes: manifestBytes,
+    });
+    assert.equal(verification.ok, true);
+    const tampered = verifyActionAttestation({
+      attestation,
+      publicKeyPem: signing.runPublicKey,
+      artifactBytes: `${manifestBytes}\n`,
+    });
+    assert.equal(tampered.ok, false);
+    assert.equal(tampered.artifactDigestValid, false);
+    // Delivered-byte verification (C4-ADV-012): every manifest-listed file
+    // must hash identically after signing — the trace must NOT have grown
+    // and coverage must NOT have been rewritten.
+    const mismatches = [];
+    for (const file of files) {
+      const delivered = crypto.createHash("sha256").update(fs.readFileSync(path.join(repoRoot, file.path))).digest("hex");
+      if (delivered !== file.sha256) mismatches.push(file.path);
+    }
+    assert.deepEqual(mismatches, [], `signed manifest must match the delivered bytes, mismatches: ${mismatches.join(", ")}`);
+    attestationDetails = {
+      manifestPath,
+      attestationPath,
+      artifactCount: files.length,
+      keyId: signing.keyId,
+      verification,
+      tamperRejected: tampered.ok === false,
+      deliveredBytesVerified: true,
+      unsignedByConstruction: [path.join(runDir, "headless-evidence-attestation.json")],
+    };
+  } catch (err) {
+    attestationStatus = "FAIL";
+    attestationSummary = err instanceof Error ? err.message : String(err);
+    attestationDetails = { error: truncate(attestationSummary) };
+  }
+  recordCheck("headless-evidence-attestation", attestationStatus, attestationSummary, attestationDetails, ["signing_attestation", "tracing"]);
+}
+
+const finalFailed = results.filter((result) => result.status === "FAIL");
+const finalFeatureRows = features.map(([id]) => {
+  const statuses = (featureEvidence.get(id) ?? []).map((item) => item.status);
+  return statuses.includes("FAIL") ? "FAIL" : statuses.includes("PASS") ? "PASS" : statuses.includes("WARN") ? "WARN" : "GAP";
+});
+console.log(`Headless evidence run complete: ${results.filter((result) => result.status === "PASS").length} PASS, ${finalFailed.length} FAIL`);
+console.log(`Feature coverage: ${finalFeatureRows.filter((status) => status === "PASS").length} PASS, ${finalFeatureRows.filter((status) => status === "WARN").length} WARN, ${finalFeatureRows.filter((status) => status === "FAIL").length} FAIL, ${finalFeatureRows.filter((status) => status === "GAP").length} GAP`);
 console.log(`Trace: ${tracePath}`);
 console.log(`Coverage: ${coverageMdPath}`);
 
-if (summary.failedChecks > 0) process.exit(1);
+if (finalFailed.length > 0) process.exit(1);
 
 function renderCoverageMarkdown(report) {
   const lines = [

@@ -78,10 +78,12 @@ import type { AgentPool } from "../agents/pool.js";
 import { serializePathScope } from "../domain/path-scope.js";
 import { readIterativeGoalSettings } from "../domain/project-settings.js";
 import type { ShardPlan } from "../domain/shard.js";
+import { shardDispatchTaskId } from "../domain/shard.js";
 import { logDebug } from "../logging.js";
 import type { StateManagerAPI } from "../state.js";
 import { buildAgentTaskFromProfile } from "../subagents.js";
 import type { SubagentTaskRecord, SubagentUsageCounters } from "../types.js";
+import { persistShardPatchArtifact } from "../workspace/worktrees.js";
 
 function log(msg: string) {
   logDebug("scheduler", msg);
@@ -906,6 +908,10 @@ export function detectErrorCascadeSignatures(
 
 // ── Executor: dispatch through dispatchAgentTask (C1 contract) ───────
 
+// The dispatch task-id convention lives in src/domain/shard.js
+// (shardDispatchTaskId) — re-exported here for scheduler consumers.
+export { shardDispatchTaskId } from "../domain/shard.js";
+
 export interface ShardExecutionDeps {
   stateManager: StateManagerAPI;
   /** The long-lived run pool (C1 registry owns its lifecycle). */
@@ -1004,7 +1010,7 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
     const slot = scheduled?.slot ?? null;
     try {
       const built = buildAgentTaskFromProfile({
-        id: `sched-c${plan.cycle}-${shardId}`,
+        id: shardDispatchTaskId(plan.cycle, shardId),
         role,
         // checks[].command is ledger-scrubbed UNTRUSTED_DATA and INERT — never
         // rendered into the prompt, never executed (C3 contract note).
@@ -1035,6 +1041,7 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
         claimedAt: new Date().toISOString(),
         finishedAt: null,
         error: null,
+        patchArtifactPath: null,
       }, {
         strategy: schedule.strategy,
         rank: scheduled?.rank ?? null,
@@ -1060,7 +1067,15 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
       outcomes.push(outcome);
 
       if (outcome.ok) {
-        deps.stateManager.recordShardFinished(shardId, { runId, planId: plan.id, cycle: plan.cycle, status: "completed", taskId: agentTask.id });
+        // C4-OUS-001: persist the captured patch bytes BEFORE settling, so a
+        // crash between dispatch and merge-back never strands the work — the
+        // claim carries the run-dir artifact path and a warm restart rebuilds
+        // merge inputs from the ledger.
+        const patchText = outcome.result?.patch ?? "";
+        const patchArtifactPath = patchText
+          ? persistShardPatchArtifact(deps.stateManager, plan.cycle, shardId, patchText, deps.cwd)
+          : null;
+        deps.stateManager.recordShardFinished(shardId, { runId, planId: plan.id, cycle: plan.cycle, status: "completed", taskId: agentTask.id, patchArtifactPath });
         completedShardIds.add(shardId);
       } else {
         deps.stateManager.recordShardFinished(shardId, {
@@ -1090,6 +1105,7 @@ export async function executeShardPlan(plan: ShardPlan, deps: ShardExecutionDeps
           claimedAt: new Date().toISOString(),
           finishedAt: null,
           error: null,
+          patchArtifactPath: null,
         }, { strategy: schedule.strategy, rank: scheduled?.rank ?? null, slot, buildError: message });
         startedShardIds.add(shardId);
       }

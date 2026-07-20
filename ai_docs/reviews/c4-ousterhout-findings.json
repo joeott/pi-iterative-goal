@@ -1,0 +1,112 @@
+[
+  {
+    "id": "C4-OUS-001",
+    "severity": "high",
+    "category": "crash-recovery",
+    "requirementIds": ["C4"],
+    "message": "Crash between dispatch and merge_verified permanently wedged the run; patch bytes were never ledgered (only sha256), making work unrecoverable.",
+    "location": "src/workspace/worktrees.ts:521, src/kernel/scheduler.ts:1234, src/agents/run-pool.ts:209",
+    "status": "resolved",
+    "resolution": "persistShardPatchArtifact writes captured patches under cycles/<n>/implement/shard-<id>.patch at completion; path rides claim+merge records and events/replay; reconcileStaleMergeProposals fails open proposals back to claimed with process_restart evidence on restore; runMergeBackHook rebuilds inputs from ledgered claims+artifacts when no scheduler report exists. Headless: crash after dispatch -> restore -> merge completes from ledgered patch."
+  },
+  {
+    "id": "C4-OUS-002",
+    "severity": "medium",
+    "category": "dead-code",
+    "requirementIds": ["C4"],
+    "message": "recoverWorktrees had no production caller and prune didn't cover surviving directories; header overclaimed.",
+    "location": "src/workspace/worktrees.ts:140,10-13,133-147",
+    "status": "resolved",
+    "resolution": "Wired into session_start; scoped reclaim of surviving harness-prefix directories with PID-marker dead-creator proof; header corrected (plain prune covers vanished dirs only)."
+  },
+  {
+    "id": "C4-OUS-003",
+    "severity": "medium",
+    "category": "convention-break",
+    "requirementIds": ["C4"],
+    "message": "Zero C4 smoke coverage (convention break).",
+    "location": "scripts/smoke-goal-harness.mjs",
+    "status": "resolved",
+    "resolution": "Smoke tests 80 (flag-off no-op), 81 (HEFT order, patch-scoped staging, injected clock), 82 (conflict rejection -> claimed with taskId:null) added."
+  },
+  {
+    "id": "C4-OUS-004",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C4"],
+    "message": "'Promoted verbatim' inaccurate.",
+    "location": "src/workspace/worktrees.ts:5",
+    "status": "resolved",
+    "resolution": "Header now: 'promoted here from src/agents/pool.ts (cleanup extracted into removeWorktree, behavior identical)'."
+  },
+  {
+    "id": "C4-OUS-005",
+    "severity": "low",
+    "category": "rollback-fidelity",
+    "requirementIds": ["C4"],
+    "message": "Judge rubric injection was unflagged (flag-off not prompt-identical).",
+    "location": "src/evaluator.ts:489-495",
+    "status": "resolved",
+    "resolution": "GRADING RUBRIC section injected only when a custom rubric is configured; unconfigured prompts identical to pre-C4."
+  },
+  {
+    "id": "C4-OUS-006",
+    "severity": "low",
+    "category": "evidence-accuracy",
+    "requirementIds": ["C4"],
+    "message": "Gate part-3 snapshot recorded pre-verdict (shard counted itself).",
+    "location": "src/workspace/worktrees.ts:446,465",
+    "status": "resolved",
+    "resolution": "Snapshot callback takes excludeShardId; evidence shows unverifiedShards 1 then 0 — the ledger shows the gate clearing."
+  },
+  {
+    "id": "C4-OUS-007",
+    "severity": "low",
+    "category": "layering",
+    "requirementIds": ["C4"],
+    "message": "Evaluator imported its flag from the workspace layer; lifecycle hardcoded mergeBackEnabled:true.",
+    "location": "src/evaluator.ts:23, src/kernel/lifecycle.ts:365",
+    "status": "resolved",
+    "resolution": "Evaluator reads the flag via readIterativeGoalSettings directly; lifecycle computes and passes the real flag."
+  },
+  {
+    "id": "C4-OUS-008",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C4"],
+    "message": "Task-id convention duplicated as a bare string; zero matches returned null silently.",
+    "location": "src/workspace/worktrees.ts:532, src/kernel/scheduler.ts:1007",
+    "status": "resolved",
+    "resolution": "shardDispatchTaskId(cycle, shardId) in domain/shard.ts shared by scheduler and hook; enabled hook with zero matches logs."
+  },
+  {
+    "id": "C4-OUS-009",
+    "severity": "low",
+    "category": "single-source",
+    "requirementIds": ["C4"],
+    "message": "Driver trusted caller-supplied rank despite reading the claims ledger.",
+    "location": "src/workspace/worktrees.ts:296-301,343-345",
+    "status": "resolved",
+    "resolution": "Merge order reads the ledgered claim rank; ShardMergeInput.rank demoted to optional override. Smoke 81 + headless prove ordering from rankless inputs."
+  },
+  {
+    "id": "C4-OUS-010",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C4"],
+    "message": "Default rubric duplicated the system-prompt criteria verbatim.",
+    "location": "src/evaluator.ts:106-115,36-46",
+    "status": "resolved",
+    "resolution": "EVALUATOR_SYSTEM_PROMPT criteria list built from DEFAULT_JUDGE_RUBRIC (single source)."
+  },
+  {
+    "id": "C4-OUS-011",
+    "severity": "low",
+    "category": "di-consistency",
+    "requirementIds": ["C4"],
+    "message": "Injected clock didn't reach verifiedAt.",
+    "location": "src/state.ts:1363",
+    "status": "resolved",
+    "resolution": "recordMergeVerified takes verifiedAt? and passes it through; smoke 81 asserts the injected clock lands."
+  }
+]

@@ -34,6 +34,9 @@
  *     ledger + replay + crash reconciliation, shards d/t status field,
  *     executor dispatch via dispatchAgentTask, plan→implement lifecycle
  *     wiring flag-off by default (§6.4–6.5, §8.6)
+ * 22. C4 merge-back: flag-off no-op, claim-rank HEFT merge order + scoped
+ *     staging + injected clock, conflict rejection → claimed with taskId:null
+ *     (§6.6, §8.7; headless remains the primary gate — C4-OUS-003)
  *
  * Usage:
  *   node scripts/smoke-goal-harness.mjs
@@ -5287,6 +5290,202 @@ const c3 = await (async () => {
   eq(model.perRole.Implementer.meanTokens, 160, "mean unaffected by the failed run's counters");
 
   console.log("✓ Test 79: C3 shard failure triggers a cadence-guarded re-plan; dependents stay blocked");
+}
+
+// ── C4 shared fixtures: 2-file repo + 2-shard fan_out plan + merge helpers ──
+
+const c4 = await (async () => {
+  const { execFileSync } = await import("node:child_process");
+
+  function makeMergeRepo(prefix) {
+    const repo = c1.makeGitRepo(prefix);
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src", "a.mjs"), "export const a = 1;\n");
+    fs.writeFileSync(path.join(repo, "src", "b.mjs"), "export const b = 2;\n");
+    fs.writeFileSync(path.join(repo, "src", "bridge.mjs"), "export const seam = \"base\";\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed c4 repo"], { cwd: repo });
+    return repo;
+  }
+
+  function twoShardPlan(runId, cycle = 1, shards = null) {
+    const shardList = shards ?? [
+      { id: "shard-a", index: 0, files: ["src/a.mjs"], taskIds: ["t-a"], allowedPaths: [{ kind: "exact", path: "src/a.mjs" }], crossShardContracts: [] },
+      { id: "shard-b", index: 1, files: ["src/b.mjs"], taskIds: ["t-b"], allowedPaths: [{ kind: "exact", path: "src/b.mjs" }], crossShardContracts: [] },
+    ];
+    return {
+      id: "plan-c4-smoke", version: 1, createdAt: new Date().toISOString(),
+      tasks: shardList.map((shard) => ({
+        id: shard.taskIds[0], title: `implement ${shard.id}`, dependsOn: [], satisfies: [],
+        allowedPaths: shard.allowedPaths, requiredCapabilities: [], checks: [],
+        rollback: "git checkout -- <files>", risk: "low",
+      })),
+      runId, cycle,
+      shards: shardList,
+      cutWeight: 0, totalEdgeWeight: 2, couplingDensity: 0, balanceTolerance: 0.34,
+      decision: "fan_out", decisionReason: "c4 smoke fixture",
+      algorithm: {
+        prior: "spectral-fiedler", priorSplit: "sign", refinement: "kernighan-lin",
+        bisections: 1, refinementPasses: 1, refinementEvaluatedSwaps: 2,
+        refinementSwapsExecuted: 0, refinementImproved: false, initialCutWeight: 0,
+      },
+      postedAt: new Date().toISOString(),
+    };
+  }
+
+  function claimCompleted(stateManager, plan, shardId, rank) {
+    stateManager.recordShardClaimed({
+      shardId, planId: plan.id, runId: plan.runId, cycle: plan.cycle,
+      status: "claimed", workerSlot: 0, rank, taskId: `sched-c${plan.cycle}-${shardId}`,
+      claimedAt: new Date().toISOString(), finishedAt: null, error: null, patchArtifactPath: null,
+    });
+    stateManager.recordShardFinished(shardId, {
+      runId: plan.runId, planId: plan.id, cycle: plan.cycle, status: "completed",
+      taskId: `sched-c${plan.cycle}-${shardId}`, patchArtifactPath: null,
+    });
+  }
+
+  // Real patches from the promoted primitive (same capture as production).
+  function capturePatch(repo, taskId, file, content) {
+    return import("../dist/workspace/worktrees.js").then(({ prepareIsolatedWorktree }) => {
+      const workspace = prepareIsolatedWorktree(repo, taskId);
+      try {
+        fs.writeFileSync(path.join(workspace.path, file), content);
+        return workspace.capturePatch();
+      } finally {
+        workspace.cleanup();
+      }
+    });
+  }
+
+  const injectedConfig = { enabled: true, integrationBranch: null, testCommand: "injected", testTimeoutMs: 1000 };
+  const okTests = () => ({ ok: true, output: "ok" });
+
+  return { makeMergeRepo, twoShardPlan, claimCompleted, capturePatch, injectedConfig, okTests };
+})();
+
+// ── Test 80: C4 merge-back flag-off is a ledger-silent no-op (§8.7 rollback) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { mergeShardPlan } = await import("../dist/workspace/worktrees.js");
+
+  const repo = c4.makeMergeRepo("pi-ig-c4-flagoff-");
+  const stateManager = createStateManager({ appendEntry() {} });
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("C4 flag-off", "disabled merge-back is a no-op");
+  const plan = c4.twoShardPlan(run.runId);
+  stateManager.recordShardPlan(plan);
+  c4.claimCompleted(stateManager, plan, "shard-a", 100);
+  c4.claimCompleted(stateManager, plan, "shard-b", 500);
+  const patch = await c4.capturePatch(repo, "c4-off-a", "src/a.mjs", "export const a = 42;\n");
+
+  const eventsBefore = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").length;
+  const report = await mergeShardPlan(plan, [{ shardId: "shard-a", patch }], {
+    stateManager,
+    cwd: repo,
+    config: { enabled: false, integrationBranch: null, testCommand: "npm test", testTimeoutMs: 1000 },
+  });
+  eq(report.enabled, false);
+  ok(report.reason.includes("[ISOLATED_WORKTREE_PATCH]"), "rollback reason names the manual patch channel");
+  eq(report.verified.length + report.rejected.length, 0, "no shard transitions under rollback");
+  const eventsAfter = fs.readFileSync(stateManager.getEventsPath(), "utf8").trim().split("\n").length;
+  eq(eventsAfter, eventsBefore, "disabled merge-back writes nothing to the ledger");
+  eq(stateManager.getState().shards.merges.length, 0, "no merge records under rollback");
+  eq(stateManager.getState().shards.claims.find((claim) => claim.shardId === "shard-a").status, "completed", "claim untouched");
+
+  console.log("✓ Test 80: C4 merge-back flag-off is a ledger-silent no-op (§8.7 rollback)");
+}
+
+// ── Test 81: C4 merge order reads ledgered claim ranks; staging is patch-scoped; clock reaches verifiedAt ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { mergeShardPlan } = await import("../dist/workspace/worktrees.js");
+  const { execFileSync } = await import("node:child_process");
+
+  const repo = c4.makeMergeRepo("pi-ig-c4-heft-");
+  const stateManager = createStateManager({ appendEntry() {} });
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("C4 HEFT order", "merge order follows claim ranks");
+  const plan = c4.twoShardPlan(run.runId);
+  stateManager.recordShardPlan(plan);
+  // Deliberately claim in REVERSE rank order: completion order must not matter.
+  c4.claimCompleted(stateManager, plan, "shard-a", 100);
+  c4.claimCompleted(stateManager, plan, "shard-b", 500);
+  const patchA = await c4.capturePatch(repo, "c4-heft-a", "src/a.mjs", "export const a = 42;\n");
+  const patchB = await c4.capturePatch(repo, "c4-heft-b", "src/b.mjs", "export const b = 1337;\n");
+
+  // Side effect in the worktree that bare `git add -A` would sweep in (C4-ADV-005).
+  const fixedNow = "2026-07-20T12:00:00.000Z";
+  const report = await mergeShardPlan(plan, [
+    { shardId: "shard-a", patch: patchA },
+    { shardId: "shard-b", patch: patchB },
+  ], {
+    stateManager,
+    cwd: repo,
+    config: c4.injectedConfig,
+    runTests: (worktreePath) => {
+      fs.writeFileSync(path.join(worktreePath, "coverage.txt"), "side effect\n");
+      return { ok: true, output: "ok" };
+    },
+    now: () => fixedNow,
+  });
+  deepStrictEqual(report.verified, ["shard-b", "shard-a"], "highest claim rank merges first (C4-OUS-009: from the ledger, inputs carry no rank)");
+  eq(report.commits.length, 2);
+  const branch = report.integrationBranch;
+  const log = execFileSync("git", ["log", "--format=%s", branch], { cwd: repo, encoding: "utf8" }).trim().split("\n");
+  ok(log[0].startsWith("merge(shard-a)") && log[1].startsWith("merge(shard-b)"), "branch commits land in HEFT order");
+  const committed = execFileSync("git", ["show", "--name-only", "--format=", branch], { cwd: repo, encoding: "utf8" }).trim().split("\n");
+  deepStrictEqual(committed, ["src/a.mjs"], "shard commit contains only the patch's file — test side effects never staged (C4-ADV-005)");
+  const mergeA = stateManager.getState().shards.merges.find((merge) => merge.shardId === "shard-a");
+  eq(mergeA.status, "verified");
+  eq(mergeA.verifiedAt, fixedNow, "injected clock reaches verifiedAt (C4-OUS-011)");
+  eq(mergeA.rank, 100, "merge record carries the claim-ledgered rank");
+
+  console.log("✓ Test 81: C4 claim-rank HEFT order, patch-scoped staging, injected clock on verifiedAt");
+}
+
+// ── Test 82: C4 conflict rejection returns the shard to claimed with taskId:null (Figure D5 repair loop) ──
+
+{
+  const { createStateManager } = await import("../dist/state.js");
+  const { mergeShardPlan } = await import("../dist/workspace/worktrees.js");
+  const { execFileSync } = await import("node:child_process");
+
+  const repo = c4.makeMergeRepo("pi-ig-c4-conflict-");
+  const stateManager = createStateManager({ appendEntry() {} });
+  eq(stateManager.restore({ cwd: repo, sessionManager: { getEntries: () => [] } }), null);
+  const run = stateManager.createRun("C4 conflict", "bridge conflict returns to claimed");
+  const plan = c4.twoShardPlan(run.runId, 1, [
+    { id: "shard-c", index: 0, files: ["src/bridge.mjs"], taskIds: ["t-c"], allowedPaths: [{ kind: "exact", path: "src/bridge.mjs" }], crossShardContracts: [] },
+    { id: "shard-d", index: 1, files: ["src/bridge.mjs"], taskIds: ["t-d"], allowedPaths: [{ kind: "exact", path: "src/bridge.mjs" }], crossShardContracts: [] },
+  ]);
+  stateManager.recordShardPlan(plan);
+  c4.claimCompleted(stateManager, plan, "shard-c", 500);
+  c4.claimCompleted(stateManager, plan, "shard-d", 100);
+  // Both diffs change the SAME bridge line — the second can never apply.
+  const patchC = await c4.capturePatch(repo, "c4-conf-c", "src/bridge.mjs", "export const seam = \"gamma\";\n");
+  const patchD = await c4.capturePatch(repo, "c4-conf-d", "src/bridge.mjs", "export const seam = \"delta\";\n");
+
+  const report = await mergeShardPlan(plan, [
+    { shardId: "shard-c", patch: patchC },
+    { shardId: "shard-d", patch: patchD },
+  ], { stateManager, cwd: repo, config: c4.injectedConfig, runTests: c4.okTests });
+  deepStrictEqual(report.verified, ["shard-c"], "the non-conflicting shard still merges — the batch continues (C4-ADV-002)");
+  eq(report.rejected.length, 1);
+  eq(report.rejected[0].gate, "apply", "merge-time conflict rejected at the apply gate");
+  const repairClaim = stateManager.getState().shards.claims.find((claim) => claim.shardId === "shard-d");
+  eq(repairClaim.status, "claimed", "gate-rejected shard returned to claimed");
+  eq(repairClaim.taskId, null, "repair claim carries no dispatch task (crash-reconciliation safe)");
+  ok(/does not apply|conflict/.test(repairClaim.error), "failure evidence attached to the claim");
+  const rejectedMerge = stateManager.getState().shards.merges.find((merge) => merge.shardId === "shard-d");
+  eq(rejectedMerge.status, "rejected", "shard_failed transition marks the proposal rejected");
+  const branch = report.integrationBranch;
+  const bridge = execFileSync("git", ["show", `${branch}:src/bridge.mjs`], { cwd: repo, encoding: "utf8" });
+  ok(bridge.includes("gamma") && !bridge.includes("delta"), "the rejected patch never touched the integration branch");
+
+  console.log("✓ Test 82: C4 conflict rejection returns shard-d to claimed with taskId:null; branch keeps only verified work");
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
