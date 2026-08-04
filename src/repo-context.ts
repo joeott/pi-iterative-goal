@@ -149,8 +149,10 @@ function searchFallback(repoRoot: string, params: RepoContextParams, maxResults:
 function globLikeMatch(file: string, glob: string): boolean {
   const escaped = glob
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*\//g, "GLOBSTAR_SLASH")
     .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*");
+    .replace(/\*/g, "[^/]*")
+    .replace(/GLOBSTAR_SLASH/g, "(?:.*/)?");
   return new RegExp(`^${escaped}$`).test(file);
 }
 

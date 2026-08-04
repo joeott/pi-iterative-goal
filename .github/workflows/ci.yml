@@ -32,7 +32,7 @@ jobs:
           node-version: 24.16.0
           cache: npm
       - name: Install trusted Linux sandbox
-        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
       - name: Pin npm
         run: npm install --global npm@11.13.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
