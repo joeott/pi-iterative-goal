@@ -3,7 +3,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { complete } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { StateManagerAPI } from "../state.js";
 import type {
   CapabilitySnapshot,
@@ -18,6 +18,7 @@ import {
   resolveModelRoute,
   type ResolvedModelRoute,
 } from "../domain/models.js";
+import { createExactModelIdentityStream } from "../worker-extension.js";
 
 const MODEL_COOLDOWN_MS = 300_000;
 
@@ -67,10 +68,22 @@ export async function checkModelHealth(
     if (!auth.ok || !auth.apiKey) {
       return unavailableHealth(exactRoute.provider, exactRoute.model, "Auth failed or no API key");
     }
-    const response = await complete(model, {
+    // Probe through the same exact-identity stream that serves turns. The
+    // identity sentinel forces Pi's adapter to record the concrete upstream
+    // model, so this enforces the same positive-identity contract as the
+    // turn-time policy. complete() from this extension's own pi-ai instance
+    // can neither serve the registered exact API nor observe responseModel
+    // when the upstream echoes the requested id (the adapter drops it then).
+    const probe = createExactModelIdentityStream()(model, {
       messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "Say OK." }], timestamp: Date.now() }],
       systemPrompt: "",
     }, { apiKey: auth.apiKey, headers: auth.headers, maxTokens: 1, signal: AbortSignal.timeout(15_000) });
+    let response: AssistantMessage | null = null;
+    for await (const event of probe) {
+      if (event.type === "done") response = event.message;
+      else if (event.type === "error") response = event.error;
+    }
+    if (!response) throw new Error("Model health probe ended without a terminal message");
     const identityError = exactModelResponseIdentityError(exactRoute, response);
     if (identityError) throw new Error(`Model health response identity failed closed: ${identityError}`);
     return {

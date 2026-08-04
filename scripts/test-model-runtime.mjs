@@ -24,7 +24,7 @@ try {
   const evidencePath = path.join(temporaryRoot, "offline-probe.json");
   const roster = loadRoster();
   const expectedSelections = roster.profiles.map((profile) => `${profile.provider}/${profile.model}`);
-  assert.equal(roster.profiles.length, 9);
+  assert.equal(roster.profiles.length, 12);
   assert.deepEqual(roster.profiles.map((profile) => profile.id), Object.keys(EXPECTED_PROFILES));
   const oneSampleComparisons = ["route-a", "route-b"].map((routeId) => ({
     routeId,
@@ -143,8 +143,8 @@ try {
   const evidence = JSON.parse(evidenceBytes);
   assert.equal(evidence.live, false);
   assert.equal(evidence.networkCallsPermitted, false);
-  assert.equal(evidence.results.length, 9);
-  assert.equal(evidence.summary.notRun, 45);
+  assert.equal(evidence.results.length, 12);
+  assert.equal(evidence.summary.notRun, 60);
   for (const secret of Object.values(markerSecrets)) assert.equal(evidenceBytes.includes(secret), false);
 
   const launchedPiDir = path.join(temporaryRoot, "launcher-pi-agent");

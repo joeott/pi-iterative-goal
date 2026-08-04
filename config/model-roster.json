@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogDate": "2026-07-20",
+  "catalogDate": "2026-08-03",
   "profiles": [
     {
       "id": "zai_glm_5_2",
@@ -11,7 +11,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": true, "contextWindow": 1000000 },
       "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": null },
       "serving": { "variant": "direct", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["coordinator", "planner", "implementer"],
       "fallbackProfileIds": ["fireworks_glm_5_2_max", "openrouter_kimi_k3"]
     },
@@ -24,7 +24,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": true, "contextWindow": 1048576 },
       "reasoning": { "variant": "max", "piThinkingLevel": "xhigh", "providerEffort": "max" },
       "serving": { "variant": "standard", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["implementer", "repair"],
       "fallbackProfileIds": ["zai_glm_5_2", "openrouter_kimi_k3"]
     },
@@ -37,7 +37,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": true, "contextWindow": 1048576 },
       "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
       "serving": { "variant": "fast_router", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["implementer", "repair"],
       "fallbackProfileIds": ["fireworks_glm_5_2_max", "zai_glm_5_2"]
     },
@@ -50,9 +50,48 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": true, "reasoning": true, "contextWindow": 1048576 },
       "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
       "serving": { "variant": "openrouter", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["planner", "reviewer"],
-      "fallbackProfileIds": ["zai_glm_5_2", "fireworks_glm_5_2_max"]
+      "fallbackProfileIds": ["fireworks_kimi_k3", "zai_glm_5_2", "fireworks_glm_5_2_max"]
+    },
+    {
+      "id": "fireworks_kimi_k3",
+      "provider": "fireworks",
+      "model": "accounts/fireworks/models/kimi-k3",
+      "familyId": "moonshotai/kimi-k3",
+      "credential": { "primaryEnv": "FIREWORKS_API_KEY", "environment": ["FIREWORKS_API_KEY"] },
+      "capabilities": { "tools": true, "structuredOutput": true, "images": true, "reasoning": true, "contextWindow": 1048576 },
+      "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
+      "serving": { "variant": "standard", "serviceTier": "standard" },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 0, "source": "https://pi.dev/models/fireworks/accounts-fireworks-models-kimi-k3" },
+      "eligibleRoles": ["planner", "reviewer"],
+      "fallbackProfileIds": ["openrouter_kimi_k3", "fireworks_kimi_k3_fast", "zai_glm_5_2"]
+    },
+    {
+      "id": "fireworks_kimi_k3_fast",
+      "provider": "fireworks",
+      "model": "accounts/fireworks/routers/kimi-k3-fast",
+      "familyId": "moonshotai/kimi-k3",
+      "credential": { "primaryEnv": "FIREWORKS_API_KEY", "environment": ["FIREWORKS_API_KEY"] },
+      "capabilities": { "tools": true, "structuredOutput": true, "images": true, "reasoning": true, "contextWindow": 1048576 },
+      "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
+      "serving": { "variant": "fast_router", "serviceTier": "standard" },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": 4.5, "output": 22.5, "cacheRead": 0.45, "cacheWrite": 0, "source": "https://pi.dev/models/fireworks/accounts-fireworks-routers-kimi-k3-fast" },
+      "eligibleRoles": ["implementer", "repair"],
+      "fallbackProfileIds": ["fireworks_kimi_k3", "openrouter_kimi_k3", "fireworks_glm_5_2_fast"]
+    },
+    {
+      "id": "fireworks_deepseek_v4_flash",
+      "provider": "fireworks",
+      "model": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "familyId": "deepseek/deepseek-v4-flash",
+      "credential": { "primaryEnv": "FIREWORKS_API_KEY", "environment": ["FIREWORKS_API_KEY"] },
+      "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": true, "contextWindow": 1000000 },
+      "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
+      "serving": { "variant": "standard", "serviceTier": "standard" },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": 0.14, "output": 0.28, "cacheRead": 0.028, "cacheWrite": 0, "source": "https://pi.dev/models/fireworks/accounts-fireworks-models-deepseek-v4-flash" },
+      "eligibleRoles": ["implementer", "repair"],
+      "fallbackProfileIds": ["fireworks_kimi_k3_fast", "fireworks_glm_5_2_fast", "fireworks_kimi_k3"]
     },
     {
       "id": "cerebras_gpt_oss_120b",
@@ -63,7 +102,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": false, "contextWindow": 128000 },
       "reasoning": { "variant": "none", "piThinkingLevel": "off", "providerEffort": null },
       "serving": { "variant": "cerebras", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["researcher"],
       "fallbackProfileIds": ["cerebras_glm_4_7", "cerebras_gemma_4_31b", "fireworks_glm_5_2_fast"]
     },
@@ -76,7 +115,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": false, "contextWindow": 131072 },
       "reasoning": { "variant": "none", "piThinkingLevel": "off", "providerEffort": null },
       "serving": { "variant": "cerebras", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["researcher"],
       "fallbackProfileIds": ["cerebras_gpt_oss_120b", "cerebras_gemma_4_31b", "fireworks_glm_5_2_fast"]
     },
@@ -89,7 +128,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": false, "reasoning": false, "contextWindow": 128000 },
       "reasoning": { "variant": "none", "piThinkingLevel": "off", "providerEffort": null },
       "serving": { "variant": "cerebras", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["researcher"],
       "fallbackProfileIds": ["cerebras_gpt_oss_120b", "cerebras_glm_4_7", "fireworks_glm_5_2_fast"]
     },
@@ -102,7 +141,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": true, "reasoning": true, "contextWindow": 1000000 },
       "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
       "serving": { "variant": "openrouter", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["reviewer", "evaluator"],
       "fallbackProfileIds": ["openrouter_claude_fable_5", "openrouter_kimi_k3"]
     },
@@ -115,7 +154,7 @@
       "capabilities": { "tools": true, "structuredOutput": true, "images": true, "reasoning": true, "contextWindow": 1000000 },
       "reasoning": { "variant": "high", "piThinkingLevel": "high", "providerEffort": "high" },
       "serving": { "variant": "openrouter", "serviceTier": "standard" },
-      "pricing": { "asOf": "2026-07-20", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
+      "pricing": { "asOf": "2026-08-03", "unit": "usd_per_million_tokens", "input": null, "output": null, "cacheRead": null, "cacheWrite": null, "source": null },
       "eligibleRoles": ["evaluator"],
       "fallbackProfileIds": ["openrouter_claude_sonnet_5"]
     }

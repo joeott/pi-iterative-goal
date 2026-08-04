@@ -702,8 +702,8 @@ import path from "node:path";
     resolveModelRoute,
   } = await import("../dist/domain/models.js");
 
-  eq(ALLOWED_MODELS.length, 9, "model allowlist contains the exact tracked nine-profile roster");
-  eq(MODEL_ROSTER.profiles.length, 9);
+  eq(ALLOWED_MODELS.length, 12, "model allowlist contains the exact tracked twelve-profile roster");
+  eq(MODEL_ROSTER.profiles.length, 12);
   ok(/^[a-f0-9]{64}$/.test(MODEL_ROSTER.catalogHash));
   deepStrictEqual(DEFAULT_PRIMARY_MODEL, { provider: "zai", model: "glm-5.2" });
   deepStrictEqual(DEFAULT_FALLBACK_MODELS, [

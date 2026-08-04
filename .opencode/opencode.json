@@ -63,6 +63,39 @@
           "options": {
             "reasoningEffort": "high"
           }
+        },
+        "accounts/fireworks/models/kimi-k3": {
+          "name": "fireworks_kimi_k3",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        },
+        "accounts/fireworks/routers/kimi-k3-fast": {
+          "name": "fireworks_kimi_k3_fast",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        },
+        "accounts/fireworks/models/deepseek-v4-flash-0731": {
+          "name": "fireworks_deepseek_v4_flash",
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
         }
       }
     },

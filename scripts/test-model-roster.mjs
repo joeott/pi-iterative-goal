@@ -25,9 +25,9 @@ import {
   responseModelMatchesRoute,
 } from "../dist/domain/models.js";
 
-eq(MODEL_PROFILE_IDS.length, 9);
-eq(MODEL_ROSTER.profiles.length, 9);
-eq(ALLOWED_MODELS.length, 9);
+eq(MODEL_PROFILE_IDS.length, 12);
+eq(MODEL_ROSTER.profiles.length, 12);
+eq(ALLOWED_MODELS.length, 12);
 deepStrictEqual(MODEL_ROSTER.profiles.map(({ id }) => id), [...MODEL_PROFILE_IDS]);
 ok(/^[a-f0-9]{64}$/.test(MODEL_ROSTER.catalogHash));
 const { catalogHash: _catalogHash, ...hashInput } = MODEL_ROSTER;
@@ -179,9 +179,9 @@ const credentialExpansionPath = writeFixture("credential-expansion.json", (fixtu
 });
 throws(() => loadModelRoster(credentialExpansionPath), /exact pinned zai environment variables/);
 
-const tenthPath = writeFixture("tenth.json", (fixture) => {
-  fixture.profiles.push({ ...fixture.profiles.at(-1), id: "unlisted_tenth_profile" });
+const thirteenthPath = writeFixture("thirteenth.json", (fixture) => {
+  fixture.profiles.push({ ...fixture.profiles.at(-1), id: "unlisted_thirteenth_profile" });
 });
-throws(() => loadModelRoster(tenthPath), /exactly 9 profiles/);
+throws(() => loadModelRoster(thirteenthPath), /exactly 12 profiles/);
 
-console.log("✓ Model roster: exact nine-profile catalog, fixed routes, prices, hash, and resolvers are valid");
+console.log("✓ Model roster: exact twelve-profile catalog, fixed routes, prices, hash, and resolvers are valid");
