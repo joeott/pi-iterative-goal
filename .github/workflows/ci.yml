@@ -32,7 +32,11 @@ jobs:
           node-version: 24.16.0
           cache: npm
       - name: Install trusted Linux sandbox
-        run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
+        run: |
+          sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
+          # ubuntu-24.04 restricts unprivileged user namespaces via AppArmor;
+          # the bwrap loopback probe (RTM_NEWADDR) needs this relaxed.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Pin npm
         run: npm install --global npm@11.13.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
