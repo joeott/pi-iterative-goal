@@ -3174,7 +3174,8 @@ const c1 = await (async () => {
   fs.mkdirSync(path.join(withSettings, ".pi"), { recursive: true });
   fs.writeFileSync(path.join(withSettings, ".pi", "settings.json"), JSON.stringify({ iterativeGoal: { swarm: { enabled: true, defaultConcurrency: 99 } } }));
   eq(loadSwarmConfig(withSettings).enabled, true);
-  eq(loadSwarmConfig(withSettings).defaultConcurrency, 8);
+  const { resolveAgentMemoryBudget } = await import("../dist/agents/memory-budget.js");
+  eq(loadSwarmConfig(withSettings).defaultConcurrency, Math.min(8, resolveAgentMemoryBudget().maxConcurrency));
 
   // No backend → single-agent fallback with the full task list rendered.
   const repo = c1.makeGitRepo("pi-ig-c1-fallback-");
