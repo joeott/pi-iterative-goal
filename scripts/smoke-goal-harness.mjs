@@ -5036,7 +5036,7 @@ const c3 = await (async () => {
     JSON.stringify({ iterativeGoal: { scheduler: { enabled: true, concurrency: 99, driftThreshold: -1, replanIntervalMs: -5, alpha: 999 } } }));
   const tunedConfig = loadSchedulerConfig(tuned);
   eq(tunedConfig.enabled, true);
-  eq(tunedConfig.concurrency, 8, "concurrency clamps to the swarm hard cap");
+  eq(tunedConfig.concurrency, Math.min(8, (await import("../dist/agents/memory-budget.js")).resolveAgentMemoryBudget().maxConcurrency), "concurrency clamps to the swarm hard cap");
   eq(tunedConfig.driftThreshold, 0.05);
   eq(tunedConfig.replanIntervalMs, 0);
   eq(tunedConfig.alpha, 100);
