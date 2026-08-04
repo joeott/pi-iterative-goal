@@ -1196,7 +1196,11 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
   // bwrap's `--new-session` keeps the namespace init and every payload
   // descendant in that group as a second lifetime boundary; `--unshare-all`
   // also supplies a PID namespace whose init reaps/terminates stragglers.
-  const args = ["--die-with-parent", "--unshare-all", "--cap-drop", "ALL", "--tmpfs", "/"];
+  const args = ["--die-with-parent", "--unshare-all", "--cap-drop", "ALL", "--tmpfs", "/", "--tmpfs", "/tmp"];
+  // Mount the fresh /tmp BEFORE creating bind parents and binding the
+  // validation/cache roots: a later --tmpfs /tmp would shadow any roots
+  // living under /tmp (e.g. os.tmpdir() on CI runners) and --chdir would
+  // fail inside the namespace.
   for (const directory of mountParentDirectories(mountTargets)) args.push("--dir", directory);
   for (const candidate of readPaths) args.push("--ro-bind", candidate, candidate);
   args.push("--bind", options.validationRoot, options.validationRoot);
@@ -1204,7 +1208,7 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
   args.push("--dir", "/dev", "--ro-bind", "/dev/null", "/dev/null", "--ro-bind", "/dev/zero", "/dev/zero");
   if (fs.existsSync("/dev/random")) args.push("--ro-bind", "/dev/random", "/dev/random");
   if (fs.existsSync("/dev/urandom")) args.push("--ro-bind", "/dev/urandom", "/dev/urandom");
-  args.push("--proc", "/proc", "--tmpfs", "/tmp", "--clearenv");
+  args.push("--proc", "/proc", "--clearenv");
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) args.push("--setenv", key, value);
   }
