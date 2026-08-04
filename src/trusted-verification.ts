@@ -1215,7 +1215,9 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
   for (const candidate of readPaths) args.push("--ro-bind", candidate, candidate);
   args.push("--bind", options.validationRoot, options.validationRoot);
   args.push("--bind", options.cacheRoot, options.cacheRoot);
-  args.push("--dir", "/dev", "--ro-bind", "/dev/null", "/dev/null", "--ro-bind", "/dev/zero", "/dev/zero");
+  // /dev/null (and /dev/zero, harmlessly) must be writable: stdio:"ignore"
+  // child spawns open /dev/null O_RDWR, which EACCES-fails on an ro-bind.
+  args.push("--dir", "/dev", "--bind", "/dev/null", "/dev/null", "--bind", "/dev/zero", "/dev/zero");
   if (fs.existsSync("/dev/random")) args.push("--ro-bind", "/dev/random", "/dev/random");
   if (fs.existsSync("/dev/urandom")) args.push("--ro-bind", "/dev/urandom", "/dev/urandom");
   args.push("--proc", "/proc", "--clearenv");
