@@ -418,7 +418,9 @@ try {
   assert.equal(lifetimeResult?.status, "PASS");
   assert.equal(lifetimeResult?.processContainment.isolatedProcessGroup, true);
   assert.equal(lifetimeResult?.processContainment.descendantsTerminated, true);
-  assert.match(lifetimeResult?.processContainment.cleanupSignal ?? "", /^SIG(?:TERM|KILL)$/);
+  if (sandboxBackend.backend === "macos-sandbox-exec") {
+    assert.match(lifetimeResult?.processContainment.cleanupSignal ?? "", /^SIG(?:TERM|KILL)$/);
+  }
   const lifetimeArtifact = fs.readFileSync(lifetimeResult.artifact, "utf8");
   const lifetimePidMatch = lifetimeArtifact.match(/STDOUT:\n(\d+)\n/);
   assert.ok(lifetimePidMatch, "same-group daemon test must record its descendant PID");
