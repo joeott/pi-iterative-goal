@@ -99,7 +99,19 @@ const stateManager = {
 const config = loadTrustedVerificationConfig(repositoryRoot);
 if (!config.enabled) throw new Error("committed trusted-verification policy is not enabled at HEAD");
 const receipt = runTrustedVerification({ cwd: repositoryRoot, state, stateManager, config });
-if (!receipt?.ok) throw new Error("trusted verification did not certify HEAD");
+if (!receipt?.ok) {
+  const summary = {
+    ok: receipt?.ok,
+    trackedTreeClean: receipt?.trackedTreeClean,
+    sourceSha: receipt?.sourceSha,
+    sourceShaAfter: receipt?.sourceShaAfter,
+    validationSha: receipt?.validationSha,
+    validationShaAfter: receipt?.validationShaAfter,
+    results: receipt?.results?.map((result) => ({ id: result.id, status: result.status, detail: String(result.detail ?? "").slice(0, 200) })),
+  };
+  console.error("trusted verification receipt summary:", JSON.stringify(summary, null, 2));
+  throw new Error("trusted verification did not certify HEAD");
+}
 const verifiedReceipt = readTrustedVerificationReceipt(repositoryRoot, state, stateManager);
 if (!verifiedReceipt) throw new Error("fresh trusted verification receipt failed independent read-back validation");
 const receiptPath = path.join(runDirectory, "cycles", "1", "validate", "trusted-verification-receipt.json");
