@@ -405,7 +405,13 @@ try {
   for (const match of descendantArtifact.matchAll(/DESCENDANT_(?:GROUP|DETACHED)_PID=(\d+)/g)) {
     const pid = Number.parseInt(match[1], 10);
     observedDescendantPids += 1;
-    assert.equal(processAlive(pid), false, `sandbox descendant ${pid} must not outlive its check`);
+    // linux-bwrap reports namespace-INNER pids; host-side liveness is
+    // meaningless for them (collides with real host processes). The
+    // descendantsTerminated + pid-namespace census assertions above are the
+    // authoritative bound there.
+    if (sandboxBackend.backend === "macos-sandbox-exec") {
+      assert.equal(processAlive(pid), false, `sandbox descendant ${pid} must not outlive its check`);
+    }
   }
   assert.ok(observedDescendantPids >= 1, "daemon containment test must observe at least one spawned descendant");
   const lifetimeResult = receipt.results.find((result) => result.id === "descendant-lifetime");
@@ -417,7 +423,9 @@ try {
   const lifetimePidMatch = lifetimeArtifact.match(/STDOUT:\n(\d+)\n/);
   assert.ok(lifetimePidMatch, "same-group daemon test must record its descendant PID");
   const lifetimePid = Number.parseInt(lifetimePidMatch[1], 10);
-  assert.equal(processAlive(lifetimePid), false, `same-group descendant ${lifetimePid} must not outlive its check`);
+  if (sandboxBackend.backend === "macos-sandbox-exec") {
+    assert.equal(processAlive(lifetimePid), false, `same-group descendant ${lifetimePid} must not outlive its check`);
+  }
   const fastExitResult = receipt.results.find((result) => result.id === "fast-exit");
   assert.equal(fastExitResult?.status, "PASS");
   assert.equal(fastExitResult?.timedOut, false);
