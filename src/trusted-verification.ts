@@ -1213,7 +1213,7 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
     if (value !== undefined) args.push("--setenv", key, value);
   }
   args.push("--chdir", options.cwd, resolvedExecutable, ...options.argv);
-  return spawnContainedProcess(options.selection.executable, args, {
+  const debugOutcome = spawnContainedProcess(options.selection.executable, args, {
     cwd: options.cwd,
     shell: false,
     encoding: "utf8",
@@ -1221,6 +1221,8 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
     maxBuffer: 5 * 1024 * 1024,
     env: {},
   }, path.dirname(options.validationRoot));
+  (debugOutcome as { debugBwrapArgv?: string[] }).debugBwrapArgv = args;
+  return debugOutcome;
 }
 
 function backendExecutable(platform: NodeJS.Platform): SandboxBackendSelection | null {
@@ -1319,7 +1321,7 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       ok,
       reason: ok
         ? "capability probe passed"
-        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}; identity matches: ${outcome.processContainment.identityMatchesObserved}; escaped descendants: ${escapedPids.join(",") || "none"}; unrelated sibling survived: ${unrelatedSurvived}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)}`,
+        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}; identity matches: ${outcome.processContainment.identityMatchesObserved}; escaped descendants: ${escapedPids.join(",") || "none"}; unrelated sibling survived: ${unrelatedSurvived}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)} | argv: ${JSON.stringify((outcome as { debugBwrapArgv?: string[] }).debugBwrapArgv ?? []).slice(0, 2000)}`,
     };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
