@@ -49,32 +49,6 @@ jobs:
           CMUX_AGENT_OLD_SPACE_MIB: "1536"
           CMUX_SWARM_MAX_CONCURRENCY: "4"
           CMUX_MEMORY_AVAILABLE_MIB: "49152"
-      - name: Debug bwrap child spawn (temporary)
-        run: |
-          set -x
-          SCRATCH=$(mktemp -d /tmp/pi-ig-dbg-XXXXXX); mkdir -p $SCRATCH/allowed $SCRATCH/cache
-          echo "=== replica: exact probe args (dev/null as --bind)"
-          bwrap --die-with-parent --unshare-all --cap-drop ALL --tmpfs / --tmpfs /tmp \
-            --dir /usr --dir /etc --dir /opt --dir /tmp --dir /etc/ssl --dir $SCRATCH \
-            --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin \
-            --ro-bind /usr /usr --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
-            --ro-bind /opt/hostedtoolcache/node/24.16.0/x64 /opt/hostedtoolcache/node/24.16.0/x64 \
-            --bind $SCRATCH/allowed $SCRATCH/allowed --bind $SCRATCH/cache $SCRATCH/cache \
-            --dir /dev --bind /dev/null /dev/null --bind /dev/zero /dev/zero \
-            --ro-bind /dev/random /dev/random --ro-bind /dev/urandom /dev/urandom \
-            --proc /proc --clearenv --setenv HOME $SCRATCH/allowed --setenv TMPDIR $SCRATCH/allowed --setenv PATH /usr/bin:/bin \
-            --chdir $SCRATCH/allowed /opt/hostedtoolcache/node/24.16.0/x64/bin/node -e "const fs=require('node:fs'),{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setTimeout(()=>{},100)'],{stdio:'ignore'});c.on('error',e=>console.log('CHILD ERR',e.code));c.on('spawn',()=>console.log('CHILD OK'));" || true
-          echo "=== variant: /dev/null + /dev/zero via --dev-bind"
-          bwrap --die-with-parent --unshare-all --cap-drop ALL --tmpfs / --tmpfs /tmp \
-            --dir /usr --dir /etc --dir /opt --dir /tmp --dir /etc/ssl --dir $SCRATCH \
-            --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin \
-            --ro-bind /usr /usr --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
-            --ro-bind /opt/hostedtoolcache/node/24.16.0/x64 /opt/hostedtoolcache/node/24.16.0/x64 \
-            --bind $SCRATCH/allowed $SCRATCH/allowed --bind $SCRATCH/cache $SCRATCH/cache \
-            --dir /dev --dev-bind /dev/null /dev/null --dev-bind /dev/zero /dev/zero \
-            --ro-bind /dev/random /dev/random --ro-bind /dev/urandom /dev/urandom \
-            --proc /proc --clearenv --setenv HOME $SCRATCH/allowed --setenv TMPDIR $SCRATCH/allowed --setenv PATH /usr/bin:/bin \
-            --chdir $SCRATCH/allowed /opt/hostedtoolcache/node/24.16.0/x64/bin/node -e "const fs=require('node:fs'),{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setTimeout(()=>{},100)'],{stdio:'ignore'});c.on('error',e=>console.log('CHILD ERR',e.code));c.on('spawn',()=>console.log('CHILD OK'));" || true
       - name: Require real Linux trusted-sandbox execution
         run: npm run test:trusted-security -- --require-backend
       - name: Certify the exact event head with the committed policy

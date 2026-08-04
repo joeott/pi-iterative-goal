@@ -1215,11 +1215,12 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
   for (const candidate of readPaths) args.push("--ro-bind", candidate, candidate);
   args.push("--bind", options.validationRoot, options.validationRoot);
   args.push("--bind", options.cacheRoot, options.cacheRoot);
-  // /dev/null (and /dev/zero, harmlessly) must be writable: stdio:"ignore"
-  // child spawns open /dev/null O_RDWR, which EACCES-fails on an ro-bind.
-  args.push("--dir", "/dev", "--bind", "/dev/null", "/dev/null", "--bind", "/dev/zero", "/dev/zero");
-  if (fs.existsSync("/dev/random")) args.push("--ro-bind", "/dev/random", "/dev/random");
-  if (fs.existsSync("/dev/urandom")) args.push("--ro-bind", "/dev/urandom", "/dev/urandom");
+  // Device nodes need --dev-bind: a plain --bind mounts the node without
+  // device semantics and O_RDWR opens (stdio:"ignore" child spawns) fail
+  // EACCES inside the namespace (verified by CI bisect).
+  args.push("--dir", "/dev", "--dev-bind", "/dev/null", "/dev/null", "--dev-bind", "/dev/zero", "/dev/zero");
+  if (fs.existsSync("/dev/random")) args.push("--dev-bind", "/dev/random", "/dev/random");
+  if (fs.existsSync("/dev/urandom")) args.push("--dev-bind", "/dev/urandom", "/dev/urandom");
   args.push("--proc", "/proc", "--clearenv");
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) args.push("--setenv", key, value);
