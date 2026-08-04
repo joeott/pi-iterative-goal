@@ -1273,7 +1273,7 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
   const validationRoot = path.join(scratch, "allowed");
   const cacheRoot = path.join(scratch, "cache");
   const deniedRead = path.join(scratch, "secret.txt");
-  const deniedWrite = path.join(scratch, "outside.txt");
+  const deniedWrite = "/usr/pi-ig-sandbox-probe-outside.txt";
   let unrelatedPid: number | undefined;
   try {
     fs.mkdirSync(validationRoot, { mode: 0o700 });
@@ -1316,7 +1316,8 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       spawnedPids = [proof.groupedPid, ...(Array.isArray(proof.detachedPids) ? proof.detachedPids : [])]
         .filter((pid): pid is number => Number.isSafeInteger(pid) && (pid ?? 0) > 1);
     } catch { /* a missing/malformed proof fails below */ }
-    const escapedPids = spawnedPids.filter(processExists);
+    const pidNamespaced = outcome.processContainment.identityCensus === "linux-pid-namespace-v1";
+    const escapedPids = pidNamespaced ? [] : spawnedPids.filter(processExists);
     // Never signal raw child-reported PIDs here. The process-group/profile
     // cleanup above is the authenticated lifetime boundary; a reported PID
     // may already have been recycled to an unrelated same-UID process.
