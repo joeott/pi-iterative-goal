@@ -1984,6 +1984,11 @@ process.exit(2);
 {
   const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
   const handoffPath = "/Users/joe/Downloads/third-party-prod-security-review-handoff-2026-06-29.md";
+  if (!fs.existsSync(handoffPath)) {
+    // The fixture is a machine-local production security document (ARNs,
+    // account topology) that must not be published; CI skips this test.
+    console.log("✓ Test 27: skipped (machine-local prod security handoff fixture absent)");
+  } else {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ig-prod-review-"));
   const result = spawnSync(process.execPath, [
     path.join(repoRoot, "scripts", "prod-security-review-readonly.mjs"),
@@ -2109,6 +2114,7 @@ process.exit(2);
   eq(secondBaseline.drift.changed, false);
 
   console.log("✓ Test 27: Production security review runner parses the handoff, signs evidence, supports bounded continuous read-only mode, and classifies findings only against an available baseline");
+  }
 }
 
 // ── Test 28: GLM 5.2 is the first-class harness default ─────────────
