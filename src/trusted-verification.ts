@@ -1286,7 +1286,7 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       "try { fs.writeFileSync(process.argv[2], 'escape'); } catch { denied++; }",
       "const sleeper=['-e','setTimeout(()=>{},60000)'];",
       "const grouped=spawn(process.execPath,sleeper,{stdio:'ignore'});",
-      "grouped.once('error',()=>process.exit(94)); grouped.unref();",
+      "grouped.once('error',(e)=>{try{fs.writeFileSync(process.argv[3],JSON.stringify({spawnError:String(e&&(e.message||e))}))}catch{}process.exit(94)}); grouped.unref();",
       "const detachedPids=[];",
       "for(let i=0;i<12;i++){const child=spawn(process.execPath,sleeper,{detached:true,stdio:'ignore'});child.once('error',()=>{});child.unref();if(Number.isSafeInteger(child.pid))detachedPids.push(child.pid)}",
       "setTimeout(()=>{fs.writeFileSync(process.argv[3],JSON.stringify({denied,groupedPid:grouped.pid,detachedPids}));process.exit(denied===2?0:91)},150);",
@@ -1302,8 +1302,10 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       timeout: 10_000,
     });
     let spawnedPids: number[] = [];
+    let proofRaw = "";
     try {
-      const proof = JSON.parse(fs.readFileSync(path.join(validationRoot, "allowed.txt"), "utf8")) as {
+      proofRaw = fs.readFileSync(path.join(validationRoot, "allowed.txt"), "utf8");
+      const proof = JSON.parse(proofRaw) as {
         denied?: number;
         groupedPid?: number;
         detachedPids?: number[];
@@ -1331,7 +1333,7 @@ function sandboxCapabilityProbe(selection: SandboxBackendSelection): { ok: boole
       ok,
       reason: ok
         ? "capability probe passed"
-        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}; identity matches: ${outcome.processContainment.identityMatchesObserved}; escaped descendants: ${escapedPids.join(",") || "none"}; unrelated sibling survived: ${unrelatedSurvived}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)} | argv: ${JSON.stringify((outcome as { debugBwrapArgv?: string[] }).debugBwrapArgv ?? []).slice(0, 2000)}`,
+        : `capability probe failed (${outcome.status === null ? outcome.error?.message ?? outcome.signal ?? "no exit status" : `exit ${outcome.status}`}; identity matches: ${outcome.processContainment.identityMatchesObserved}; escaped descendants: ${escapedPids.join(",") || "none"}; unrelated sibling survived: ${unrelatedSurvived}): ${String(outcome.stderr || outcome.stdout || "no output").trim().slice(0, 500)} | proof: ${proofRaw.slice(0, 300) || "none"} | argv: ${JSON.stringify((outcome as { debugBwrapArgv?: string[] }).debugBwrapArgv ?? []).slice(0, 2000)}`,
     };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
