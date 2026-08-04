@@ -1202,6 +1202,16 @@ function runSandboxedProcess(options: SandboxedProcessOptions): SandboxedProcess
   // living under /tmp (e.g. os.tmpdir() on CI runners) and --chdir would
   // fail inside the namespace.
   for (const directory of mountParentDirectories(mountTargets)) args.push("--dir", directory);
+  // Usr-merge compat: on modern distros /lib, /lib64, /bin, /sbin are
+  // symlinks into /usr. existingPaths() drops them (the /usr subtrees are
+  // ro-bound instead), but the kernel still resolves the ELF interpreter
+  // by its literal path (e.g. /lib64/ld-linux-x86-64.so.2) — without the
+  // compat symlinks execvp fails with ENOENT inside the namespace.
+  for (const [link, target] of [["/lib", "usr/lib"], ["/lib64", "usr/lib64"], ["/bin", "usr/bin"], ["/sbin", "usr/sbin"]] as const) {
+    try {
+      if (fs.lstatSync(link).isSymbolicLink()) args.push("--symlink", target, link);
+    } catch { /* host path absent — nothing to bridge */ }
+  }
   for (const candidate of readPaths) args.push("--ro-bind", candidate, candidate);
   args.push("--bind", options.validationRoot, options.validationRoot);
   args.push("--bind", options.cacheRoot, options.cacheRoot);
