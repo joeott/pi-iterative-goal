@@ -41,14 +41,6 @@ jobs:
         run: npm install --global npm@11.13.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run validate
-        env:
-          # Pin the cmux memory contract so budget-derived expectations are
-          # deterministic (runners lack the 16 GiB reserve + 3 GiB/worker the
-          # local budget path assumes).
-          CMUX_MEMORY_PLAN_VERSION: "1"
-          CMUX_AGENT_OLD_SPACE_MIB: "1536"
-          CMUX_SWARM_MAX_CONCURRENCY: "4"
-          CMUX_MEMORY_AVAILABLE_MIB: "49152"
       - name: Require real Linux trusted-sandbox execution
         run: npm run test:trusted-security -- --require-backend
       - name: Certify the exact event head with the committed policy

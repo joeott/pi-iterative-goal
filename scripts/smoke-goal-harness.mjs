@@ -44,6 +44,17 @@
 
 import { ok, strictEqual as eq, deepStrictEqual, throws } from "node:assert";
 import { spawnSync } from "node:child_process";
+// Pin a deterministic cmux memory budget for budget-sensitive tests
+// (concurrency clamps, overlap/perf assertions). Host free RAM varies —
+// CI runners and the bwrap sandbox cannot satisfy the 16 GiB reserve +
+// 3 GiB/worker local budget — and resolveAgentMemoryBudget prefers the
+// cmux contract when present. Tests that assert budget-CLAMP behavior
+// derive their expectations from the same resolver.
+process.env.CMUX_MEMORY_PLAN_VERSION ??= "1";
+process.env.CMUX_AGENT_OLD_SPACE_MIB ??= "1536";
+process.env.CMUX_SWARM_MAX_CONCURRENCY ??= "4";
+process.env.CMUX_MEMORY_AVAILABLE_MIB ??= "49152";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -3268,11 +3279,19 @@ const c1 = await (async () => {
   ok(singleResults.every((result) => result.ok));
   const totalTurns = parallelResults.reduce((sum, result) => sum + result.usage.turns, 0);
   eq(totalTurns, corpus.length);
-  ok(parallelMs < singleMs, "parallel fan-out beats sequential dispatch on the smoke corpus");
   const speedup = singleMs / Math.max(1, parallelMs);
   // Recorded dispatch-wall-time baseline (unit benchmark; see NOTE above).
   console.log(`  benchmark swarm_vs_single corpus=${corpus.length} latency_ms=${latencyMs} single_ms=${singleMs} parallel_ms=${parallelMs} speedup=${speedup.toFixed(2)}x total_turns=${totalTurns}`);
-  ok(speedup > 1.5, "recorded baseline shows a material dispatch-path advantage");
+  const { resolveAgentMemoryBudget: budgetForPerf } = await import("../dist/agents/memory-budget.js");
+  if (budgetForPerf().maxConcurrency < 2) {
+    // Pool.map clamps through effectiveSwarmConcurrency; with a single-worker
+    // budget there is no overlap to measure, so the perf assertions are
+    // meaningless (RAM-constrained hosts, sandboxed CI).
+    console.log("  (perf assertions skipped: memory budget clamps concurrency to 1)");
+  } else {
+    ok(parallelMs < singleMs, "parallel fan-out beats sequential dispatch on the smoke corpus");
+    ok(speedup > 1.5, "recorded baseline shows a material dispatch-path advantage");
+  }
 
   console.log("✓ Test 45: C1 dispatch-wall-time unit benchmark recorded (map vs sequential)");
 }
