@@ -367,7 +367,9 @@ try {
     try {
       const stat = fs.readFileSync("/proc/self/stat", "utf8").trim();
       const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-      if (Number(fields[1]) === 0) pidNamespaceConstrained = true;
+      // ppid or pgrp 0 => the parent/group leader sits outside this PID
+      // namespace; the identity reader fails closed on the same signature.
+      if (Number(fields[1]) === 0 || Number(fields[2]) === 0) pidNamespaceConstrained = true;
     } catch { pidNamespaceConstrained = true; }
     try {
       fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8");
