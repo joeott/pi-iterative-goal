@@ -74,6 +74,7 @@ function fakePi() {
     },
     sendUserMessage() {},
     appendEntry() {},
+    registerProvider() {},
     async setModel() { return true; },
     async exec(command, args, options = {}) {
       const result = spawnSync(command, args, {
@@ -147,6 +148,7 @@ await check("source-inventory", async () => {
     "goal_record_blocker",
     "goal_request_capability_repair",
     "goal_checkpoint",
+    "goal_launch",
   ];
   const srcFiles = [
     "src/ui/goal-commands.ts",
