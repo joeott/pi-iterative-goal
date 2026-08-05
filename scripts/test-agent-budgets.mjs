@@ -367,7 +367,10 @@ try {
     try {
       const stat = fs.readFileSync("/proc/self/stat", "utf8").trim();
       const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-      pidNamespaceConstrained = Number(fields[1]) === 0;
+      if (Number(fields[1]) === 0) pidNamespaceConstrained = true;
+    } catch { pidNamespaceConstrained = true; }
+    try {
+      fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8");
     } catch { pidNamespaceConstrained = true; }
     if (pidNamespaceConstrained) {
       console.log("  (Linux identity reader assertions skipped: PID-namespace-constrained /proc)");
