@@ -1896,8 +1896,7 @@ import path from "node:path";
   fs.mkdirSync(fakeBin, { recursive: true });
   const commandLog = path.join(tmp, "aws-commands.jsonl");
   const fakeAws = path.join(fakeBin, "aws");
-  fs.writeFileSync(fakeAws, `#!/usr/bin/env node
-const fs = require("node:fs");
+  fs.writeFileSync(path.join(fakeBin, "aws.cjs"), `const fs = require("node:fs");
 const args = process.argv.slice(2);
 const log = process.env.PI_FAKE_AWS_LOG;
 if (log) fs.appendFileSync(log, JSON.stringify({ args }) + "\\n");
@@ -1932,6 +1931,11 @@ if (args[0] === "secretsmanager" && (args[1] === "create-secret" || args[1] === 
 }
 process.stderr.write("unexpected fake aws command: " + args.join(" "));
 process.exit(2);
+`);
+  fs.writeFileSync(fakeAws, `#!/bin/sh
+# Extensionless node entry points get ambiguous module detection under
+# node 24 (ESM loader) in some sandbox/tmp layouts; keep the payload CJS.
+exec node "$(dirname "$0")/aws.cjs" "$@"
 `);
   fs.chmodSync(fakeAws, 0o755);
 
