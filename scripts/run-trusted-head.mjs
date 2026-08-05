@@ -107,7 +107,19 @@ if (!receipt?.ok) {
     sourceShaAfter: receipt?.sourceShaAfter,
     validationSha: receipt?.validationSha,
     validationShaAfter: receipt?.validationShaAfter,
-    results: receipt?.results?.map((result) => ({ id: result.id, status: result.status, detail: String(result.detail ?? "").slice(0, 200) })),
+    results: receipt?.results?.map((result) => ({
+      id: result.id,
+      status: result.status,
+      detail: String(result.detail ?? "").slice(0, 200),
+      artifact: result.artifact,
+      artifactTail: (() => {
+        try {
+          return fs.readFileSync(result.artifact, "utf8").slice(-1500);
+        } catch {
+          return null;
+        }
+      })(),
+    })),
   };
   console.error("trusted verification receipt summary:", JSON.stringify(summary, null, 2));
   throw new Error("trusted verification did not certify HEAD");
