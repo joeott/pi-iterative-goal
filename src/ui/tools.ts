@@ -706,6 +706,48 @@ export function registerGoalCoreTools(
   });
 
   pi.registerTool({
+    name: "goal_launch", label: "Goal Launch",
+    description:
+      "Launch an autonomous iterative goal loop with a drafted goal and completion criterion. " +
+      "Equivalent to the /goal-start command. Use after drafting a well-formed goal contract " +
+      "(for example from a source document the user pointed at) so the loop starts without the " +
+      "user retyping it. The loop then runs research → plan → implement → validate cycles under " +
+      "evaluator verdicts until the completion criterion is met.",
+    parameters: Type.Object({
+      goal: Type.String({
+        description: "The goal statement. Do not include a '#criterion:' section here.",
+        minLength: 1,
+      }),
+      criterion: Type.Optional(Type.String({
+        description:
+          "Explicit, verifiable completion criteria (checks the harness can execute and attest: " +
+          "commands, exit codes, artifact existence). Defaults to the standard criterion when omitted.",
+      })),
+    }),
+    async execute(_toolCallId, params) {
+      const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
+      const goal = oneLine(params.goal).replace(/#criterion:.*/i, "").trim();
+      if (!goal) {
+        const details: Record<string, unknown> = { rejected: true, reason: "empty_goal" };
+        return {
+          content: [{ type: "text" as const, text: "goal_launch rejected: goal is empty." }],
+          details,
+        };
+      }
+      const criterion = oneLine(params.criterion ?? "") ||
+        "All explicit completion criteria are satisfied, validation passes, and state is reproducible.";
+      pi.sendUserMessage(`/goal-start ${goal} #criterion: ${criterion}`, { deliverAs: "followUp" });
+      options.log?.(`Goal launch queued: goal="${goal}"`);
+      const details: Record<string, unknown> = { rejected: false, queued: true, goal, criterion };
+      return {
+        content: [{ type: "text" as const,
+          text: `Queued /goal-start with the drafted goal (${goal.length} chars) and completion criterion. The iterative goal loop will start when this turn finishes.` }],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "cyber_checkpoint", label: "Cyber Checkpoint",
     description: "Force a DLP-aware cyber state checkpoint.",
     parameters: Type.Object({}),

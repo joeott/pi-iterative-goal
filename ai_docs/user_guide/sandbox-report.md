@@ -1,6 +1,6 @@
 # pi-iterative-goal User Guide Sandbox Report
 
-Generated: 2026-06-22T17:36:59.409Z
+Generated: 2026-08-05T01:12:45.053Z
 
 ## Safety Boundary
 
@@ -33,7 +33,7 @@ Status: PASS
 
 ```json
 {
-  "stdoutTail": "✓ Test 4: Typed path scopes reject fuzzy allowlist matches\n✓ Test 5: Validation script executes argv checks, records exit codes, and fails closed\n✓ Test 6: Harness meta includes runId + phaseAttemptId nonce\n✓ Test 7: /goal-status --json structure includes lock + evaluator state\n✓ Test 8: Resume prompt carries nonce + tool contract\n✓ Test 9: agent_end synthesis handles plain-string and structured assistant output\n✓ Test 10: goal-status latestArtifact shape is parseable\n✓ Test 11: AWS CLI config, safety classification, and broker policy evidence behave as expected\n✓ Test 12: Resume prompt exposes AWS tool guidance when enabled\n✓ Test 13: Git finalization config and prompt guidance behave as expected\n✓ Test 14: Model allowlist restricts stale/unapproved models\n✓ Test 15: Central policy, broker, and provider manifest contracts validate effects\n✓ Test 16: Isolated writer worktree captures patch without touching main worktree\n✓ Test 17: Event replay reconstructs new run state and rejects hash-chain tampering\n✓ Test 18: New-run replay corruption does not silently reconstruct from stale cache\n✓ Test 19: ReleaseAuthorization is invalidated by a new HEAD\n✓ Test 20: Structured PR body generation includes evidence matrix and authorization\n\nAll tests passed. ✓\n"
+  "stdoutTail": "✓ workspace base SHA is immutable and verified\n✓ verified commit SHAs replay and exact attached-ref CAS promotion\n✓ same-SHA source branch switch is fail-closed\n✓ mutable integration-branch tampering cannot bypass ledgered chain proof\n✓ live/ambiguous integration worktree is preserved and refused\n✓ atomic integration lease refuses and preserves concurrent owner\n✓ scoped recovery reclaims a provably dead integration lease\n✓ exact dead-owner lease nonce permits safe fresh-worktree recovery\n\nWorkspace hardening smoke passed. ✓\n✓ lifecycle session_start/reload is attempt- and prompt-idempotent\n✓ repeated synthetic capture failure durably pauses and /goal-resume recovers\n✓ monitor traces rich run state and marks the 24-minute supervisor wake on tick four\n✓ private tmux monitor start/stop is idempotent, exact-owned, and never contacts default tmux\n\nLong-session lifecycle tests passed. ✓\n✓ hard agent budgets enforce turns/tokens/time, reject unpriced USD limits, preserve identity, and classify telemetry\nworker-containment: PASS (scoped custom tools, exact model, selected credential, tracked snapshots, no shell)\nmemory-budget: PASS (cmux contract, safe NODE_OPTIONS, pressure concurrency)\n"
 }
 ```
 
@@ -83,7 +83,8 @@ Guide command/tool inventory matches source registrations.
     "goal_report_phase_result",
     "goal_record_blocker",
     "goal_request_capability_repair",
-    "goal_checkpoint"
+    "goal_checkpoint",
+    "goal_launch"
   ]
 }
 ```
@@ -97,20 +98,32 @@ Loaded dist extension and ran goal_shell in a disposable git repo.
 ```json
 {
   "registeredTools": [
+    "cyber_checkpoint",
+    "cyber_record_blocker",
+    "cyber_report_phase_result",
+    "cyber_request_approval",
     "goal_aws_cli",
     "goal_checkpoint",
     "goal_git",
+    "goal_launch",
+    "goal_post_shards",
     "goal_record_blocker",
+    "goal_repo_context",
     "goal_report_phase_result",
     "goal_request_capability_repair",
     "goal_shell",
-    "goal_subagent"
+    "goal_subagent",
+    "goal_update_task_plan"
   ],
   "registeredCommands": [
+    "goal-approve",
     "goal-audit",
     "goal-authorize-release",
     "goal-dashboard",
+    "goal-deny",
     "goal-finalize",
+    "goal-log-purge",
+    "goal-models",
     "goal-pause",
     "goal-repair-capabilities",
     "goal-replay",
@@ -118,9 +131,16 @@ Loaded dist extension and ran goal_shell in a disposable git repo.
     "goal-resume",
     "goal-start",
     "goal-status",
-    "goal-trace"
+    "goal-swarm-cancel",
+    "goal-telemetry-status",
+    "goal-trace",
+    "harness-dashboard",
+    "harness-doctor",
+    "harness-mode",
+    "security-review-start",
+    "security-review-status"
   ],
-  "tempRepo": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-guide-shell-EOHFn6",
+  "tempRepo": "/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-guide-shell-CjMdcs",
   "output": "## No commits yet on main\n?? README.md\n"
 }
 ```
