@@ -13,24 +13,11 @@ const DEFAULT_CONTROL_AWS_ACCOUNT = "371292405073";
 const DEFAULT_PROJECT_AWS_PROFILE = "api-admin";
 const DEFAULT_PROJECT_AWS_ACCOUNT = "138881449763";
 const PROVIDER_KEYS = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
-  "GEMINI_API_KEY",
-  "MISTRAL_API_KEY",
-  "XAI_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "GROQ_API_KEY",
-  "PINECONE_API_KEY",
-  "LANGCHAIN_API_KEY",
-  "LANGSMITH_API_KEY",
+  "FIREWORKS_API_KEY",
+  "CEREBRAS_API_KEY",
   "ZAI_API_KEY",
   "Z_AI_API_KEY",
-  "ZAI_API_BASE_URL",
-  "Z_AI_API_BASE_URL",
-  "ZAI_DEFAULT_MODEL",
-  "ZAI_DEFAULT_VISION_MODEL",
-  "GLM_API_KEY",
 ];
 
 const args = new Set(process.argv.slice(2));
@@ -62,6 +49,7 @@ const expectedProjectAwsAccount = argValue("--expected-project-aws-account")
 const externalSourcesEnabled = process.env.PI_PROVIDER_ENV_DISABLE_DEFAULT_SOURCES !== "1";
 const sources = {
   harnessEnv: path.join(ROOT, ".env"),
+  openCodeAuth: path.join(os.homedir(), ".local", "share", "opencode", "auth.json"),
   piModels: "/Users/joe/.pi/agent/models.json",
   piAuth: "/Users/joe/.pi/agent/auth.json",
   projectsEnv: "/Users/joe/Projects/.env",
@@ -71,40 +59,35 @@ const sources = {
 
 const values = {};
 const sourceHits = [];
+const sourceRejections = [];
 
+if (externalSourcesEnabled) {
+  // The machine-wide OpenCode policy has a live-authenticated, exact Kimi K3
+  // OpenRouter credential. Prefer that authority over stale project/Pi copies;
+  // all later sources remain fallback-only through setValue().
+  loadOpenCodeAuth();
+}
 loadEnvFile(sources.harnessEnv, PROVIDER_KEYS);
 if (externalSourcesEnabled) {
   loadPiModels();
   loadPiAuth();
   loadEnvFile(sources.projectsEnv, [
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
-    "GEMINI_API_KEY",
-    "MISTRAL_API_KEY",
-    "XAI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GROQ_API_KEY",
-    "PINECONE_API_KEY",
-    "LANGCHAIN_API_KEY",
-    "LANGSMITH_API_KEY",
+    "FIREWORKS_API_KEY",
+    "CEREBRAS_API_KEY",
   ]);
   loadEnvFile(sources.unifyLocalEnv, [
     "ZAI_API_KEY",
-    "ZAI_API_BASE_URL",
-    "ZAI_DEFAULT_MODEL",
-    "ZAI_DEFAULT_VISION_MODEL",
+    "Z_AI_API_KEY",
   ]);
   loadEnvFile(sources.zaiEnv, [
     "ZAI_API_KEY",
-    "ZAI_API_BASE_URL",
-    "ZAI_DEFAULT_MODEL",
-    "ZAI_DEFAULT_VISION_MODEL",
+    "Z_AI_API_KEY",
   ]);
 }
 
-if (!values.ZAI_DEFAULT_MODEL) values.ZAI_DEFAULT_MODEL = "glm-5.2";
-if (!values.ZAI_API_BASE_URL) values.ZAI_API_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+if (!values.ZAI_API_KEY && values.Z_AI_API_KEY) values.ZAI_API_KEY = values.Z_AI_API_KEY;
+delete values.Z_AI_API_KEY;
 values.PI_AWS_SECRET_SCOPE = awsScope;
 values.PI_AWS_CONTROL_PROFILE = controlAwsProfile;
 values.PI_AWS_CONTROL_ACCOUNT_ID = expectedControlAwsAccount;
@@ -118,6 +101,8 @@ console.log(`  dry_run: ${String(dryRun)}`);
 console.log("  secrets_printed: false");
 console.log(`  sources_with_mapped_keys: ${sourceHits.length}`);
 for (const source of sourceHits) console.log(`    - ${source}`);
+console.log(`  rejected_sources: ${sourceRejections.length}`);
+for (const rejection of sourceRejections) console.log(`    - ${rejection.source}: ${rejection.reason}`);
 console.log(`  keys: ${orderedKeys.join(", ") || "none"}`);
 console.log("  aws_accounts:");
 console.log(`    control: profile=${controlAwsProfile} expected_account=${expectedControlAwsAccount} role=payments/provider-billing`);
@@ -189,26 +174,51 @@ function loadPiModels() {
   const models = JSON.parse(fs.readFileSync(sources.piModels, "utf8"));
   const providers = models.providers ?? {};
   const map = {
-    anthropic: "ANTHROPIC_API_KEY",
-    google: "GEMINI_API_KEY",
-    openai: "OPENAI_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
-    xai: "XAI_API_KEY",
+    fireworks: "FIREWORKS_API_KEY",
+    cerebras: "CEREBRAS_API_KEY",
     zai: "ZAI_API_KEY",
-    mistral: "MISTRAL_API_KEY",
-    deepseek: "DEEPSEEK_API_KEY",
-    groq: "GROQ_API_KEY",
   };
   for (const [provider, key] of Object.entries(map)) {
     setValue(key, providers[provider]?.apiKey, sources.piModels);
   }
-  if (providers.zai?.baseUrl) setValue("ZAI_API_BASE_URL", providers.zai.baseUrl, sources.piModels);
 }
 
 function loadPiAuth() {
   if (!fs.existsSync(sources.piAuth)) return;
   const auth = JSON.parse(fs.readFileSync(sources.piAuth, "utf8"));
   if (auth.openrouter?.key) setValue("OPENROUTER_API_KEY", auth.openrouter.key, sources.piAuth);
+}
+
+function loadOpenCodeAuth() {
+  if (!fs.existsSync(sources.openCodeAuth)) return;
+  let stat;
+  try {
+    stat = fs.lstatSync(sources.openCodeAuth);
+  } catch {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "could not inspect auth store" });
+    return;
+  }
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store is not a regular non-symlink file" });
+    return;
+  }
+  if (currentUid !== null && stat.uid !== currentUid) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store owner does not match current uid" });
+    return;
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store permissions expose group/other access" });
+    return;
+  }
+  try {
+    const auth = JSON.parse(fs.readFileSync(sources.openCodeAuth, "utf8"));
+    const key = auth?.["openrouter-kimi"]?.key;
+    if (typeof key === "string") setValue("OPENROUTER_API_KEY", key, sources.openCodeAuth);
+  } catch {
+    sourceRejections.push({ source: sources.openCodeAuth, reason: "auth store is not valid JSON" });
+  }
 }
 
 function loadEnvFile(filePath, allowedKeys) {
@@ -253,7 +263,7 @@ function getAwsIdentity(profile) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.status !== 0) return { ok: false, account: null, reason: result.stderr.trim().split(/\r?\n/).at(-1) ?? "sts failed" };
+  if (result.status !== 0) return { ok: false, account: null, reason: (result.stderr.trim().split(/\r?\n/).slice(-6).join(" | ")) || (result.error ? String(result.error) : "sts failed") };
   try {
     const parsed = JSON.parse(result.stdout);
     return { ok: true, account: parsed.Account, reason: null };
@@ -279,7 +289,7 @@ function putSecret(name, envValues, awsRegion, profile) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    if (result.status !== 0) return { ok: false, reason: result.stderr.trim().split(/\r?\n/).at(-1) ?? "aws cli failed" };
+    if (result.status !== 0) return { ok: false, reason: (result.stderr.trim().split(/\r?\n/).slice(-6).join(" | ")) || (result.error ? String(result.error) : "aws cli failed") };
     return { ok: true, reason: null };
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

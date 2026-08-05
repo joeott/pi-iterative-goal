@@ -309,7 +309,7 @@ export function registerGoalGitTool(
             if (!state.releaseAuthorization || state.releaseAuthorization.id !== releaseAuthorizationId) {
               throw new Error("PR creation requires a matching ReleaseAuthorization from the pre-PR release gate.");
             }
-            const releaseGate = await runLocalReleaseGate(state, stateManager);
+            const releaseGate = await runLocalReleaseGate(state, stateManager, cwd);
             if (!releaseGate.ok) {
               throw new Error(`Pre-PR release gate failed: ${releaseGate.reasons.join("; ")}`);
             }

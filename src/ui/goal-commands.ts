@@ -2,14 +2,20 @@ import { type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadAwsCliConfig } from "../aws-cli.js";
-import { updateStatusBar, updateWidget, clearStatusBar } from "../dashboard.js";
+import { type PhaseIndicatorHandle } from "./phase-indicator.js";
 import { loadFinalizationPolicy } from "../git.js";
 import { renderPhasePrompt, renderResumePrompt } from "../phases.js";
 import { type StateManagerAPI } from "../state.js";
 import { type CapabilitySnapshot, type IterativeGoalState, type PhaseArtifact } from "../types.js";
 import { detectSubagentBackend } from "../capabilities.js";
-import { checkModelHealth, preflightAllModels, startPhaseAttempt } from "../kernel/workflow-engine.js";
+import { cancelRunSubagent, shutdownRunAgentPools } from "../agents/run-pool.js";
+import {
+  loadConfiguredModel,
+  preflightAllModels,
+  startPhaseAttempt,
+} from "../kernel/workflow-engine.js";
 import { getChangedFiles, getDiffStat } from "../workspace/change-set.js";
+import { loadTrustedVerificationConfig, trustedVerificationConfigHash } from "../trusted-verification.js";
 
 export interface GoalCommandServices {
   buildRuntimeCapabilitySnapshot(
@@ -23,6 +29,7 @@ export function registerGoalRuntimeCommands(
   pi: ExtensionAPI,
   stateManager: StateManagerAPI,
   services: GoalCommandServices,
+  phaseIndicator: PhaseIndicatorHandle,
 ): void {
   pi.registerCommand("goal-start", {
     description: "Start an autonomous iterative goal loop",
@@ -43,10 +50,22 @@ export function registerGoalRuntimeCommands(
         stateManager.cancelQueuedPhases(existing.runId);
         stateManager.releaseLock(existing.runId, existing.lock.activePhaseId ?? "");
       }
+      // A replacement run cannot overlap detached workers from any prior
+      // state, including paused/blocked runs. Admission resumes only after
+      // exact TERM→KILL teardown has settled.
+      if (existing) await shutdownRunAgentPools();
 
-      const state = stateManager.createRun(goal, criterion, {
-        awsCli: loadAwsCliConfig(ctx.cwd),
-      });
+      const trustedVerification = loadTrustedVerificationConfig(ctx.cwd);
+      const state = stateManager.createRun(
+        goal,
+        criterion,
+        { awsCli: loadAwsCliConfig(ctx.cwd) },
+        {
+          required: trustedVerification.enabled,
+          checksHash: trustedVerification.enabled ? trustedVerificationConfigHash(trustedVerification) : null,
+          pinnedAt: new Date().toISOString(),
+        },
+      );
       refreshFinalizationPolicy(state, ctx.cwd);
       const modelHealth = await preflightAllModels(ctx,
         state.config.primaryModel,
@@ -59,11 +78,13 @@ export function registerGoalRuntimeCommands(
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
 
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
-
       const backends = detectSubagentBackend(pi, snapshot);
-      await startPhaseAttempt(state, stateManager, "research", snapshot, pi, ctx);
+      const startResult = await startPhaseAttempt(state, stateManager, "research", snapshot, pi, ctx);
+      if (!startResult.started) {
+        ctx.ui.notify(`Iterative goal did not start: ${startResult.reason}. No phase prompt was sent.`, "warning");
+        services.log(`Goal start stopped before prompt: ${startResult.reason}`);
+        return;
+      }
 
       const prompt = renderPhasePrompt("research", state, snapshot, backends);
       pi.sendUserMessage(prompt);
@@ -80,8 +101,6 @@ export function registerGoalRuntimeCommands(
           ? JSON.stringify({ active: false }, null, 2) : "No active iterative goal. Start with /goal-start.", "info");
         return;
       }
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
 
       if (args.includes("--json")) {
         ctx.ui.notify(JSON.stringify(renderStatusJson(state, stateManager), null, 2), "info");
@@ -98,7 +117,6 @@ export function registerGoalRuntimeCommands(
       const state = stateManager.getState();
       if (!state || state.status !== "running") { ctx.ui.notify("No active goal to pause.", "warning"); return; }
       stateManager.setStatus("paused_by_user");
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Goal paused at cycle ${state.cycle}. Use /goal-resume.`, "info");
       services.log("Paused by user");
     },
@@ -110,12 +128,16 @@ export function registerGoalRuntimeCommands(
       const state = stateManager.getState();
       if (!state || state.status !== "paused_by_user") { ctx.ui.notify("No paused goal.", "warning"); return; }
       stateManager.setStatus("running");
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
 
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
-      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      const startResult = await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      if (!startResult.started) {
+        ctx.ui.notify(`Goal resume stopped before prompting: ${startResult.reason}.`, "warning");
+        services.log(`Goal resume stopped before prompt: ${startResult.reason}`);
+        return;
+      }
       const prompt = renderResumePrompt(state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
       ctx.ui.notify(`Resuming: cycle ${state.cycle}, phase ${state.phase}`, "info");
@@ -132,13 +154,19 @@ export function registerGoalRuntimeCommands(
       if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
       const resolved = stateManager.resolveApproval(token, "approved");
       if (!resolved) { ctx.ui.notify(`No pending approval found for token: ${token}`, "warning"); return; }
+      if (resolved.status !== "approved") {
+        ctx.ui.notify(`Approval token expired before it could be approved: ${token}`, "warning");
+        services.log(`Approval expired: ${token}`);
+        return;
+      }
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
-      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      // Approval resumes the exact paused phase attempt to which the token was
+      // bound. Starting a fresh attempt here would either widen the approval
+      // across attempts or make an exact capability unusable.
       const prompt = renderResumePrompt(state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Approval accepted for: ${resolved.requestedAction}`, "info");
       services.log(`Approval accepted: ${token}`);
     },
@@ -162,9 +190,29 @@ export function registerGoalRuntimeCommands(
         recoveryAction: "Record policy_denied and replan without the denied action.",
         resolved: false,
       });
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
       ctx.ui.notify(`Approval denied for: ${resolved.requestedAction}`, "warning");
       services.log(`Approval denied: ${token}`);
+    },
+  });
+
+  pi.registerCommand("goal-swarm-cancel", {
+    description: "Cancel an in-flight subagent task; its write scope releases only after process close",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const taskId = args.trim();
+      if (!taskId) { ctx.ui.notify("Usage: /goal-swarm-cancel <taskId>", "warning"); return; }
+      const state = stateManager.getState();
+      if (!state) { ctx.ui.notify("No active goal.", "info"); return; }
+      const status = await cancelRunSubagent(state.runId, taskId);
+      if (status === "running") {
+        ctx.ui.notify(`Subagent task ${taskId} was running; SIGTERM sent, with exact SIGKILL escalation if needed. Its write scope stays held until process close.`, "info");
+      } else if (status === "queued") {
+        ctx.ui.notify(`Subagent task ${taskId} was queued; it will never be executed (cancelled before admission).`, "info");
+      } else if (status === "unknown") {
+        ctx.ui.notify(`No in-flight subagent task found with id: ${taskId}`, "warning");
+      } else {
+        ctx.ui.notify(`No swarm pool found for this run (task ${taskId} not cancelled).`, "warning");
+      }
+      services.log(`Swarm cancel requested: task=${taskId}, status=${status ?? "no-pool"}`);
     },
   });
 
@@ -183,15 +231,36 @@ export function registerGoalRuntimeCommands(
       }
       ctx.ui.notify(issues.length === 0 ? "Capabilities good." : `Issues:\n${issues.map(i => `  - ${i}`).join("\n")}`, issues.length === 0 ? "info" : "warning");
 
-      for (const fb of state.config.fallbackModels) {
-        const health = await checkModelHealth(ctx, fb.provider, fb.model);
-        state.config.modelHealth[`${fb.provider}/${fb.model}`] = health;
-        if (health.lastStatus === "available") {
-          const model = ctx.modelRegistry.find(fb.provider, fb.model);
-          if (model) { await pi.setModel(model); ctx.ui.notify(`Switched to: ${fb.provider}/${fb.model}`, "info"); break; }
+      state.config.modelHealth = await preflightAllModels(
+        ctx,
+        state.config.primaryModel,
+        state.config.fallbackModels,
+      );
+      stateManager.persistAll();
+
+      if (state.status === "provider_unavailable") {
+        stateManager.setStatus("running");
+        const backends = detectSubagentBackend(pi, snapshot);
+        const startResult = await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+        if (!startResult.started) {
+          ctx.ui.notify(`Provider repair did not recover a loadable exact model: ${startResult.reason}.`, "warning");
+          return;
+        }
+        pi.sendUserMessage(renderResumePrompt(state, snapshot, backends), { deliverAs: "followUp" });
+        ctx.ui.notify(`Provider repair loaded ${startResult.model.provider}/${startResult.model.model}; resuming.`, "info");
+        return;
+      }
+
+      for (const candidate of [state.config.primaryModel, ...state.config.fallbackModels]) {
+        const health = state.config.modelHealth[`${candidate.provider}/${candidate.model}`];
+        if (health?.lastStatus !== "available") continue;
+        const loaded = await loadConfiguredModel(ctx, pi, candidate.provider, candidate.model);
+        if (loaded.loaded) {
+          ctx.ui.notify(`Verified exact model: ${loaded.route.piSelection}`, "info");
+          return;
         }
       }
-      updateStatusBar(ctx, state); updateWidget(ctx, state);
+      ctx.ui.notify("No configured exact model passed capability repair.", "warning");
     },
   });
 
@@ -230,7 +299,10 @@ export function registerGoalRuntimeCommands(
 
       archiveActiveRun();
       stateManager.clear();
-      clearStatusBar(ctx);
+      // Run boundary: tear down the run's pool and its cross-call
+      // write-scope registry with the run (C1-ADV-003).
+      await shutdownRunAgentPools();
+      phaseIndicator.clearSurfaces(ctx);
       ctx.ui.notify("Iterative goal reset.", "info");
       services.log("Reset by user");
     },
@@ -272,6 +344,7 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
   return {
     active: true, runId: state.runId, goal: state.goal, goalCriterion: state.goalCriterion,
     status: state.status, cycle: state.cycle, phase: state.phase,
+    swarm: renderSwarmSummary(state.swarm),
     lock: {
       activeRunId: state.lock.activeRunId, activePhaseId: state.lock.activePhaseId,
       phaseStatus: state.lock.phaseStatus, phaseStartedAt: state.lock.phaseStartedAt,
@@ -364,6 +437,20 @@ function renderStatusJson(state: IterativeGoalState, stateManager: StateManagerA
   };
 }
 
+function renderSwarmSummary(swarm: IterativeGoalState["swarm"]): Record<string, unknown> {
+  const tasks = swarm?.tasks ?? [];
+  // failed folds cancelled — consistent with the phase-indicator swarm line;
+  // cancelled is reported separately here as a per-status detail (C1-ADV-017).
+  return {
+    backend: swarm?.backend ?? null,
+    total: tasks.length,
+    running: tasks.filter((task) => task.status === "running").length,
+    completed: tasks.filter((task) => task.status === "completed").length,
+    failed: tasks.filter((task) => task.status === "failed" || task.status === "cancelled").length,
+    cancelled: tasks.filter((task) => task.status === "cancelled").length,
+  };
+}
+
 function renderStatusText(state: IterativeGoalState): string[] {
   const lines = [
     `Iterative Goal Status:`,
@@ -380,6 +467,13 @@ function renderStatusText(state: IterativeGoalState): string[] {
     `  Attestations: ${state.attestations.length}`,
     `  Pending approvals: ${state.approvals.pending.length}`,
   ];
+  const swarmSummary = renderSwarmSummary(state.swarm);
+  if ((swarmSummary.total as number) > 0) {
+    lines.push(
+      `  Swarm: ${swarmSummary.completed}/${swarmSummary.total} done · ${swarmSummary.running} running · ${swarmSummary.failed} failed` +
+      (state.swarm.backend ? ` · backend ${state.swarm.backend}` : ""),
+    );
+  }
   if (state.config.awsCli.enabled) {
     lines.push(
       `  AWS: profile=${state.config.awsCli.preflight?.resolvedProfile ?? "unresolved"} region=${state.config.awsCli.preflight?.resolvedRegion ?? state.config.awsCli.defaultRegion}`,

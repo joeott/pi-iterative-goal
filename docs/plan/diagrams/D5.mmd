@@ -1,0 +1,11 @@
+stateDiagram-v2
+    [*] --> posted : shard_posted
+    posted --> claimed : shard_claimed
+    claimed --> running : subagent_started
+    running --> completed : shard_completed
+    running --> failed : shard_failed
+    failed --> claimed : repair loop
+    completed --> merge_proposed : merge_proposed
+    merge_proposed --> merge_verified : gates pass
+    merge_proposed --> failed : gate rejects
+    merge_verified --> [*]

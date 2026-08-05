@@ -6,6 +6,7 @@
 
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import type { ShardState } from "./domain/shard.js";
 
 // ── Phase definitions ───────────────────────────────────────────────
 
@@ -188,6 +189,59 @@ export type SubagentBackend =
   | { kind: "command"; commandName: string }
   | { kind: "none" };
 
+// ── Swarm / subagent run state (Campaign 1) ──────────────────────────
+
+export type SubagentExecutionMode = "single" | "parallel" | "chain";
+
+export type SubagentTaskStatus = "running" | "completed" | "failed" | "cancelled";
+
+export interface SubagentUsageCounters {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  turns: number;
+}
+
+export interface SubagentTaskRecord {
+  taskId: string;
+  batchId: string;
+  /** Run the task was dispatched under; record methods ignore mismatched runs. */
+  runId: string;
+  role: string;
+  mode: SubagentExecutionMode;
+  /** Backend that actually executed the task ("pi-subprocess" is the only engine today). */
+  backend: string;
+  /** Detection result, carried separately — never asserted as the executed backend. */
+  detectedBackend: string;
+  /** Exact, allowlisted model-route profile resolved before ledger admission. */
+  routeId: string;
+  provider: string;
+  requestedModel: string;
+  familyId: string;
+  servingVariant: string;
+  reasoningEffort: string | null;
+  serviceTier: string | null;
+  /** Non-null only when orchestration selected this route as a fallback. */
+  fallbackReason: string | null;
+  workspace: "read_only_snapshot" | "isolated_worktree";
+  allowedPaths: string[];
+  status: SubagentTaskStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  usage: SubagentUsageCounters | null;
+  error: string | null;
+}
+
+export interface SwarmState {
+  /** Executed backend (null until first swarm use). */
+  backend: string | null;
+  /** detectSubagentBackend() result recorded at pool construction. */
+  detectedBackend: string | null;
+  tasks: SubagentTaskRecord[];
+}
+
 // ── Evaluator verdict ────────────────────────────────────────────────
 
 export interface EvaluatorVerdict {
@@ -329,6 +383,8 @@ export interface IterativeGoalState {
   sanitizer: CyberSanitizationState;
   sandbox: CyberSandboxState;
   signing: CyberSigningState;
+  /** Security-critical verifier policy captured before the first model phase. */
+  trustedVerification: TrustedVerificationPolicyState;
   attestations: ActionAttestation[];
   unifyCasProfile: CyberUnifyCasProfile;
   lock: RunLock;
@@ -336,6 +392,15 @@ export interface IterativeGoalState {
   evaluatorState: EvaluatorState | null;
   finalizationPolicy: FinalizationPolicy;
   releaseAuthorization: ReleaseAuthorization | null;
+  swarm: SwarmState;
+  /** Campaign 2 sharder: pending typed plan + committed shard plans (§6.1–6.3). */
+  shards: ShardState;
+}
+
+export interface TrustedVerificationPolicyState {
+  required: boolean;
+  checksHash: string | null;
+  pinnedAt: string;
 }
 
 // ── Durable task planning ───────────────────────────────────────────
@@ -431,6 +496,11 @@ export interface CyberSigningState {
 
 export interface ApprovalRequest {
   token: string;
+  /** Run/cycle/phase-attempt/cwd scope minted by the harness; optional only for old-state migration. */
+  runId?: string;
+  cycle?: number;
+  phaseAttemptId?: string;
+  cwd?: string;
   requestedAction: string;
   blastRadiusAssessment: string;
   justification: string;
@@ -443,6 +513,9 @@ export interface ApprovalRequest {
   expiresAt: string | null;
   status: "pending" | "approved" | "denied" | "expired";
   resolvedAt: string | null;
+  /** Single-use consumption marker. */
+  usedAt?: string | null;
+  usedForCommand?: string | null;
 }
 
 export interface ApprovalState {

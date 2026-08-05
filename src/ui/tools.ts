@@ -1,10 +1,14 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import * as crypto from "node:crypto";
+import * as path from "node:path";
 import { createErrorRecord } from "../errors.js";
-import { findFirstHealthyFallback } from "../kernel/workflow-engine.js";
+import { findFirstHealthyFallback, loadConfiguredModel } from "../kernel/workflow-engine.js";
 import { type StateManagerAPI } from "../state.js";
+import { PlanSpecSchema, type PlanSpec, type PlanTask } from "../domain/plan.js";
+import { normalizeRepoPath, type PathScope } from "../domain/path-scope.js";
 import {
   type IterativeGoalState,
   type Phase,
@@ -62,6 +66,12 @@ function rejectStale(
     },
   });
   return `STALE OUTPUT REJECTED: ${reason}. Active run=${state.runId}, activePhase=${state.lock.activePhaseId}. Your message is from a previous turn and has been ignored.`;
+}
+
+/** The id charset rule shared by goal_update_task_plan item ids and typed-plan ids (C2-OUS-009 parity). */
+function normalizeIdToken(value: unknown, fallback: string): string {
+  const rawId = typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return rawId.replace(/[^A-Za-z0-9_.:-]/g, "-").slice(0, 80) || fallback;
 }
 
 export function registerGoalCoreTools(
@@ -139,7 +149,7 @@ export function registerGoalCoreTools(
     ],
     parameters: PhaseResultParams,
 
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return recordPhaseResult(params as unknown as Record<string, unknown>, "goal_report_phase_result");
     },
   });
@@ -262,14 +272,29 @@ export function registerGoalCoreTools(
       exact_aws_actions: Type.Optional(Type.Array(Type.String())),
       data_access_scope: Type.Optional(Type.String()),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const state = stateManager.getState();
       if (!state) {
         return { content: [{ type: "text" as const, text: "No active run; approval request ignored." }], details: { rejected: true } };
       }
+      if (!state.lock.activePhaseId) {
+        return { content: [{ type: "text" as const, text: "No active phase attempt; approval request rejected." }], details: { rejected: true } };
+      }
       const token = `APPROVAL_${state.runId}_${state.cycle}_${crypto.randomBytes(4).toString("hex")}`;
+      const now = Date.now();
+      const maximumExpiry = now + 10 * 60_000;
+      const requestedExpiry = typeof params.expires_at === "string" ? Date.parse(params.expires_at) : NaN;
+      // The untrusted requester may shorten a token lifetime, never extend it.
+      const expiryMs = Number.isFinite(requestedExpiry)
+        ? Math.min(requestedExpiry, maximumExpiry)
+        : maximumExpiry;
+      const expiresAt = new Date(expiryMs).toISOString();
       const request = {
         token,
+        runId: state.runId,
+        cycle: state.cycle,
+        phaseAttemptId: state.lock.activePhaseId,
+        cwd: path.resolve(ctx.cwd),
         requestedAction: String(params.requested_action),
         blastRadiusAssessment: String(params.blast_radius_assessment),
         justification: String(params.justification),
@@ -279,9 +304,11 @@ export function registerGoalCoreTools(
         exactAwsActions: (params.exact_aws_actions as string[] | undefined) ?? [],
         dataAccessScope: typeof params.data_access_scope === "string" ? params.data_access_scope : null,
         requestedAt: new Date().toISOString(),
-        expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
+        expiresAt,
         status: "pending" as const,
         resolvedAt: null,
+        usedAt: null,
+        usedForCommand: null,
       };
       stateManager.requestApproval(request);
       return {
@@ -335,10 +362,7 @@ export function registerGoalCoreTools(
       const seenIds = new Set<string>();
       let dlp = s.dlp;
       let sanitizer = s.sanitizer;
-      const normalizeId = (value: unknown, idx: number): string => {
-        const rawId = typeof value === "string" && value.trim() ? value.trim() : `task-${idx + 1}`;
-        return rawId.replace(/[^A-Za-z0-9_.:-]/g, "-").slice(0, 80) || `task-${idx + 1}`;
-      };
+      const normalizeId = (value: unknown, idx: number): string => normalizeIdToken(value, `task-${idx + 1}`);
       for (const [idx, item] of rawItems.entries()) {
         const id = normalizeId((item as any).id, idx);
         if (seenIds.has(id)) {
@@ -402,6 +426,188 @@ export function registerGoalCoreTools(
     },
   });
 
+  // Campaign 2 (§6.1): typed-plan ingress for the sharder. The model posts
+  // its plan as PlanSpecSchema JSON during the plan phase; the sharder hook
+  // evaluates it at the plan→implement transition and commits shard_posted.
+  // The free-text plan artifact and goal_update_task_plan checklist remain
+  // the primary path — this is additive.
+  pi.registerTool({
+    name: "goal_post_shards",
+    label: "Post Shard Plan",
+    description: "Post this cycle's typed plan as PlanSpecSchema JSON (from the plan prompt's Typed Plan Contract). The sharder evaluates it at the plan→implement transition. Must include runId and phaseAttemptId from [HARNESS_META].",
+    promptSnippet: "Post the typed PlanSpec JSON for shard evaluation",
+    promptGuidelines: [
+      "Call goal_post_shards during the plan phase with the PlanSpecSchema JSON described by the Typed Plan Contract. Include runId and phaseAttemptId from [HARNESS_META].",
+    ],
+    parameters: Type.Object({
+      runId: Type.String({ description: "MUST match [HARNESS_META] runId" }),
+      phaseAttemptId: Type.String({ description: "MUST match [HARNESS_META] phaseAttemptId" }),
+      plan: PlanSpecSchema,
+    }),
+
+    async execute(_toolCallId, params): Promise<any> {
+      const state = stateManager.getState();
+      const rejectReason = checkStaleWriteGuard(state, params as any, "goal_post_shards");
+      if (rejectReason) {
+        return {
+          content: [{ type: "text" as const,
+            text: rejectStale(stateManager, state, rejectReason, params as any) }],
+          details: { rejected: true, reason: rejectReason },
+        };
+      }
+
+      const s = state!;
+      if (s.phase !== "plan") {
+        return {
+          content: [{ type: "text" as const,
+            text: `SHARD PLAN REJECTED: goal_post_shards is only valid during the plan phase (current: ${s.phase}).` }],
+          details: { rejected: true, reason: "wrong_phase", phase: s.phase },
+        };
+      }
+
+      // Lenient normalization of untrusted model output into the strict
+      // PlanSpec contract: string scopes become typed scopes, optional
+      // arrays default, checks default to required, and ids (plan.id,
+      // task.id, dependsOn) get the same charset rule as goal_update_task_plan
+      // item ids (C2-OUS-009) — applied BEFORE validation so dependsOn
+      // references normalize onto their task ids.
+      const rawPlan = params.plan as any;
+      const rawTasks: any[] = Array.isArray(rawPlan?.tasks) ? rawPlan.tasks : [];
+      const candidate = {
+        id: normalizeIdToken(rawPlan?.id, "plan-1"),
+        version: typeof rawPlan?.version === "number" ? rawPlan.version : 1,
+        createdAt: typeof rawPlan?.createdAt === "string" ? rawPlan.createdAt : new Date().toISOString(),
+        tasks: rawTasks.map((task, taskIndex) => {
+          const scopes = (Array.isArray(task?.allowedPaths) ? task.allowedPaths : []).map((scope: unknown) => {
+            if (typeof scope === "string") {
+              return scope.includes("*")
+                ? { kind: "glob", pattern: scope }
+                : { kind: "exact", path: scope };
+            }
+            return scope;
+          });
+          return {
+            id: normalizeIdToken(task?.id, `task-${taskIndex + 1}`),
+            title: typeof task?.title === "string" ? task.title : "",
+            dependsOn: (Array.isArray(task?.dependsOn) ? task.dependsOn : [])
+              .map((dependency: unknown) => normalizeIdToken(dependency, ""))
+              .filter((dependency: string) => dependency.length > 0),
+            satisfies: Array.isArray(task?.satisfies) ? task.satisfies : [],
+            allowedPaths: scopes,
+            requiredCapabilities: Array.isArray(task?.requiredCapabilities) ? task.requiredCapabilities : [],
+            checks: (Array.isArray(task?.checks) ? task.checks : []).map((check: any) => ({ required: true, ...check })),
+            rollback: typeof task?.rollback === "string" ? task.rollback : "",
+            risk: typeof task?.risk === "string" ? task.risk : "medium",
+          };
+        }),
+      };
+
+      if (!Value.Check(PlanSpecSchema, candidate)) {
+        const issues = [...Value.Errors(PlanSpecSchema, candidate)]
+          .slice(0, 5)
+          .map((issue) => `${issue.instancePath || "/"}: ${issue.message}`);
+        return {
+          content: [{ type: "text" as const,
+            text: `SHARD PLAN REJECTED: plan does not match PlanSpecSchema. ${issues.join("; ")}` }],
+          details: { rejected: true, reason: "schema_validation", issues },
+        };
+      }
+      const plan = candidate as PlanSpec;
+
+      const taskIds = new Set<string>();
+      for (const task of plan.tasks) {
+        if (taskIds.has(task.id)) {
+          return {
+            content: [{ type: "text" as const, text: `SHARD PLAN REJECTED: duplicate task id '${task.id}'.` }],
+            details: { rejected: true, reason: "duplicate_task_id", id: task.id },
+          };
+        }
+        taskIds.add(task.id);
+      }
+      for (const task of plan.tasks) {
+        const missing = task.dependsOn.filter((dependency) => !taskIds.has(dependency));
+        if (missing.length > 0) {
+          return {
+            content: [{ type: "text" as const,
+              text: `SHARD PLAN REJECTED: task '${task.id}' depends on unknown task(s): ${missing.join(", ")}.` }],
+            details: { rejected: true, reason: "unknown_dependency", id: task.id, missing },
+          };
+        }
+      }
+
+      // Allowlist paths must normalize (same machinery that verifies diffs);
+      // un-normalizable paths are rejected, not silently dropped.
+      const badPaths: string[] = [];
+      // Scrub ALL free-text string fields through the same DLP/IPI path as
+      // goal_update_task_plan (C2-ADV-005); ids are charset-validated instead
+      // (normalizeIdToken above), paths are charset-validated below.
+      const scrubText = (text: string, source: string, limit: number): string =>
+        scrubPhaseSummary(s, text, source).text.slice(0, limit);
+      const normalizedTasks: PlanTask[] = plan.tasks.map((task) => {
+        const allowedPaths: PathScope[] = [];
+        for (const scope of task.allowedPaths) {
+          const raw = scope.kind === "exact" ? scope.path : scope.pattern;
+          try {
+            const normalized = normalizeRepoPath(raw);
+            allowedPaths.push(scope.kind === "exact"
+              ? { kind: "exact", path: normalized }
+              : { kind: "glob", pattern: normalized });
+          } catch {
+            badPaths.push(raw);
+          }
+        }
+        return {
+          ...task,
+          title: scrubText(task.title, "goal_post_shards.title", 240),
+          rollback: scrubText(task.rollback, "goal_post_shards.rollback", 1000),
+          checks: task.checks.map((check) => ({
+            ...check,
+            name: scrubText(check.name, "goal_post_shards.check.name", 240),
+            command: check.command
+              ? {
+                ...check.command,
+                executable: scrubText(check.command.executable, "goal_post_shards.check.executable", 240),
+                argv: check.command.argv.map((arg) => scrubText(arg, "goal_post_shards.check.argv", 240)),
+              }
+              : undefined,
+          })),
+          allowedPaths,
+        };
+      });
+      if (badPaths.length > 0) {
+        return {
+          content: [{ type: "text" as const,
+            text: `SHARD PLAN REJECTED: allowlist paths are not repository-relative: ${badPaths.join(", ")}.` }],
+          details: { rejected: true, reason: "invalid_paths", paths: badPaths },
+        };
+      }
+
+      const normalizedPlan: PlanSpec = { ...plan, tasks: normalizedTasks };
+      stateManager.setPendingShardPlan({
+        plan: normalizedPlan,
+        cycle: s.cycle,
+        postedAt: new Date().toISOString(),
+        phaseAttemptId: String(params.phaseAttemptId),
+      });
+
+      const allowlistFiles = new Set(
+        normalizedTasks.flatMap((task) => task.allowedPaths.map((scope) =>
+          scope.kind === "exact" ? scope.path : scope.pattern)),
+      );
+      return {
+        content: [{ type: "text" as const,
+          text: `Typed plan posted: ${normalizedPlan.tasks.length} task(s), ${allowlistFiles.size} allowlist path(s). The sharder evaluates it at the plan→implement transition.` }],
+        details: {
+          rejected: false,
+          planId: normalizedPlan.id,
+          version: normalizedPlan.version,
+          tasks: normalizedPlan.tasks.length,
+          allowlistPaths: allowlistFiles.size,
+        },
+      };
+    },
+  });
+
   pi.registerTool({
     name: "goal_request_capability_repair", label: "Request Capability Repair",
     description: "Request that a missing capability be restored.",
@@ -424,37 +630,61 @@ export function registerGoalCoreTools(
       }
 
       if (params.kind === "model_incompatible" && state && state.config.fallbackModels.length > 0) {
-        const fallback = findFirstHealthyFallback(state);
-        if (fallback) {
-          const model = ctx.modelRegistry.find(fallback.provider, fallback.model);
-          if (model) {
-            await pi.setModel(model);
+        const currentAttempt = state.phaseAttempts.at(-1);
+        const from = currentAttempt
+          ? { provider: currentAttempt.modelProvider, model: currentAttempt.modelModel }
+          : state.config.primaryModel;
+        const attempted: Array<{ provider: string; model: string }> = [from];
 
-            const currentAttempt = state.phaseAttempts.at(-1);
-            if (currentAttempt) {
-              currentAttempt.fallbackChain.push({
-                provider: fallback.provider, model: fallback.model, reason: "model_incompatible",
-              });
-            }
+        while (true) {
+          const fallback = findFirstHealthyFallback(state, attempted);
+          if (!fallback) break;
+          attempted.push(fallback);
+          const loaded = await loadConfiguredModel(ctx, pi, fallback.provider, fallback.model);
+          if (!loaded.loaded) continue;
 
-            stateManager.recordPhaseEvent({
-              runId: state.runId, cycle: state.cycle, phase: state.phase,
-              phaseAttemptId: currentAttempt?.phaseAttemptId ?? "",
-              attempt: currentAttempt?.attempt ?? 1,
-              kind: "model_fallback", timestamp: new Date().toISOString(),
-              details: {
-                from: `${state.config.primaryModel.provider}/${state.config.primaryModel.model}`,
-                to: `${fallback.provider}/${fallback.model}`, reason: "model_incompatible",
-              },
-            });
-
-            return {
-              content: [{ type: "text" as const,
-                text: `Switched to fallback: ${fallback.provider}/${fallback.model}. Retry the phase.` }],
-              details: {},
-            };
+          if (currentAttempt) {
+            currentAttempt.fallbackChain.push({ ...from, reason: "model_incompatible" });
+            currentAttempt.modelProvider = loaded.route.provider;
+            currentAttempt.modelModel = loaded.route.model;
           }
+
+          stateManager.recordPhaseEvent({
+            runId: state.runId, cycle: state.cycle, phase: state.phase,
+            phaseAttemptId: currentAttempt?.phaseAttemptId ?? "",
+            attempt: currentAttempt?.attempt ?? 1,
+            kind: "model_fallback", timestamp: new Date().toISOString(),
+            details: {
+              from: `${from.provider}/${from.model}`,
+              to: loaded.route.piSelection,
+              profileId: loaded.route.profileId,
+              reason: "model_incompatible",
+            },
+          });
+          stateManager.persistAll();
+
+          return {
+            content: [{ type: "text" as const,
+              text: `Switched to exact fallback: ${loaded.route.piSelection}. Retry the phase.` }],
+            details: { profileId: loaded.route.profileId },
+          };
         }
+
+        if (state.lock.activePhaseId) stateManager.releaseLock(state.runId, state.lock.activePhaseId);
+        state.lock.phaseStatus = "paused";
+        stateManager.recordError({
+          timestamp: new Date().toISOString(), phase: state.phase, cycle: state.cycle,
+          kind: "provider_tool_route_incompatible",
+          rawText: `No exact fallback model could be loaded for: ${params.what}`,
+          recoveryAction: "Repair provider configuration and run /goal-repair-capabilities.",
+          resolved: false,
+        });
+        stateManager.setStatus("provider_unavailable");
+        return {
+          content: [{ type: "text" as const,
+            text: "No configured exact fallback could be loaded. The run is suspended as provider_unavailable." }],
+          details: { rejected: true, status: "provider_unavailable" },
+        };
       }
 
       return {

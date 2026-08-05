@@ -1,8 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { detectSubagentBackend } from "../capabilities.js";
-import { updateStatusBar, updateWidget } from "../dashboard.js";
 import { createErrorRecord } from "../errors.js";
-import { runExternalEvaluator } from "../evaluator.js";
+import { findUnfinishedWork, runExternalEvaluator } from "../evaluator.js";
 import {
   renderCompactionSummary,
   renderPhasePrompt,
@@ -16,8 +15,17 @@ import {
   type PhaseArtifact,
 } from "../types.js";
 import { verifyImplementationAgainstPlan } from "../workspace/change-set.js";
+import { loadMergeBackConfig, recoverWorktrees, runMergeBackHook } from "../workspace/worktrees.js";
+import { shutdownRunAgentPools } from "../agents/run-pool.js";
+import { runSharderHook } from "./sharder.js";
+import { type ShardExecutionReport, runSchedulerHook } from "./scheduler.js";
 import { synthesizePhaseResultSafe } from "./output-synthesis.js";
 import { startPhaseAttempt } from "./workflow-engine.js";
+import {
+  loadTrustedVerificationConfig,
+  runTrustedVerification,
+  trustedVerificationPolicyMatches,
+} from "../trusted-verification.js";
 
 export interface LifecycleServices {
   buildRuntimeCapabilitySnapshot(
@@ -32,6 +40,11 @@ export function registerGoalLifecycle(
   stateManager: StateManagerAPI,
   services: LifecycleServices,
 ): void {
+  // Pi may emit session_start more than once in one extension runtime during
+  // session replacement. Treat a start as an edge, not a level: without a
+  // matching shutdown, a duplicate event must not mint another phase attempt.
+  let sessionStarted = false;
+
   pi.on("agent_end", async (event, ctx) => {
     const state = stateManager.getState();
     if (!state || state.status !== "running") return;
@@ -95,7 +108,12 @@ export function registerGoalLifecycle(
       const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
       stateManager.setCapabilities(snapshot);
       const backends = detectSubagentBackend(pi, snapshot);
-      await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      const startResult = await startPhaseAttempt(state, stateManager, state.phase, snapshot, pi, ctx);
+      if (!startResult.started) {
+        ctx.ui.notify(`Iterative goal could not restart ${state.phase}: ${startResult.reason}.`, "warning");
+        services.log(`Retry of ${state.phase} stopped before prompt: ${startResult.reason}`);
+        return;
+      }
       const prompt = renderPhasePrompt(state.phase, state, snapshot, backends);
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
       services.log(`Retrying ${state.phase} after synthetic capture failure`);
@@ -109,10 +127,11 @@ export function registerGoalLifecycle(
         state.phase,
         state.cycle,
       ));
-      state.lock.phaseStatus = "paused";
-      stateManager.persistAll();
-      updateStatusBar(ctx, state);
-      updateWidget(ctx, state);
+      // This is a recoverable, operator-resumable pause. Persist the run-level
+      // status as well as the lock so /goal-resume and restart agree about the
+      // next legal action. Previously only phaseStatus changed, leaving the run
+      // "running": restart auto-resumed it while /goal-resume rejected it.
+      stateManager.setStatus("paused_by_user");
       ctx.ui.notify(`Iterative goal paused in ${state.phase}: synthetic output capture failure persisted after retry.`, "warning");
       services.log(`Pausing ${state.phase} after repeated synthetic capture failure`);
       return;
@@ -151,23 +170,78 @@ export function registerGoalLifecycle(
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    services.log(`session_start: reason=${(_event as any).reason}`);
+    const reason = _event.reason;
+    services.log(`session_start: reason=${reason}`);
+
+    if (sessionStarted) {
+      services.log(`session_start: duplicate reason=${reason} ignored`);
+      return;
+    }
+    sessionStarted = true;
+
+    // C4-ADV-004: scoped worktree crash recovery on every session start —
+    // harness-prefixed registrations from dead runs are reclaimed (surviving
+    // directories included) before anything can wedge on them. Recovery is
+    // an observer here: its own failure must never block a restore.
+    try {
+      const recovery = recoverWorktrees(ctx.cwd);
+      if (recovery.pruned.length > 0 || recovery.reclaimed.length > 0) {
+        services.log(`worktree recovery: ${recovery.pruned.length} pruned, ${recovery.reclaimed.length} reclaimed (${recovery.skippedForeign.length} foreign left alone)`);
+      }
+    } catch (err) {
+      services.log(`worktree recovery skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const restored = stateManager.restore(ctx);
     if (restored) {
       services.log(`Restored: runId=${restored.runId}, cycle=${restored.cycle}, status=${restored.status}`);
 
-      updateStatusBar(ctx, restored);
-      updateWidget(ctx, restored);
-
       if (restored.status === "running") {
+        const interrupted = restored.phaseAttempts.find(
+          (attempt) => attempt.phaseAttemptId === restored.lock.activePhaseId && attempt.status === "running",
+        );
+
+        // /reload tears down and recreates the extension runtime but does not
+        // replace the Pi session. The current prompt/queue remains owned by
+        // that session, so starting another attempt here duplicates work and
+        // produces two valid nonces for one phase. Rehydrate state only.
+        if (reason === "reload" && interrupted) {
+          services.log(`session_start: reload rehydrated active attempt ${restored.lock.activePhaseId ?? "none"}; no duplicate resume`);
+          return;
+        }
+
         ctx.ui.notify(`Resuming iterative goal: cycle ${restored.cycle}, phase ${restored.phase}`, "info");
+
+        // A true session replacement or process startup cannot continue an
+        // in-flight assistant turn. Close the interrupted attempt before
+        // issuing the fresh resume nonce so the ledger never contains two
+        // simultaneously-running attempts for the same phase.
+        if (interrupted) {
+          stateManager.completePhaseAttempt(interrupted.phaseAttemptId, "cancelled");
+          stateManager.recordPhaseEvent({
+            runId: restored.runId,
+            cycle: restored.cycle,
+            phase: restored.phase,
+            phaseAttemptId: interrupted.phaseAttemptId,
+            attempt: interrupted.attempt,
+            kind: "phase_cancelled",
+            timestamp: new Date().toISOString(),
+            details: { reason: `session_${reason}` },
+          });
+          restored.lock.phaseStatus = "paused";
+          stateManager.persistAll();
+        }
 
         const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, restored);
         stateManager.setCapabilities(snapshot);
         const backends = detectSubagentBackend(pi, snapshot);
 
-        await startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi, ctx);
+        const startResult = await startPhaseAttempt(restored, stateManager, restored.phase, snapshot, pi, ctx);
+        if (!startResult.started) {
+          ctx.ui.notify(`Iterative goal resume stopped before prompting: ${startResult.reason}.`, "warning");
+          services.log(`Session resume stopped before prompt: ${startResult.reason}`);
+          return;
+        }
 
         const prompt = renderResumePrompt(restored, snapshot, backends);
         pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -176,6 +250,8 @@ export function registerGoalLifecycle(
   });
 
   pi.on("session_shutdown", async () => {
+    sessionStarted = false;
+    await shutdownRunAgentPools();
     const state = stateManager.getState();
     if (state) {
       state.lock.phaseStatus = "paused";
@@ -203,6 +279,18 @@ async function handleValidateTransition(
 ): Promise<void> {
   services.log(`Running external evaluator for cycle ${state.cycle}`);
 
+  try {
+    const trustedVerification = loadTrustedVerificationConfig(ctx.cwd);
+    if (state.trustedVerification?.required && !trustedVerificationPolicyMatches(state.trustedVerification, trustedVerification)) {
+      services.log("Trusted verification failed closed: pinned verifier policy was disabled or changed after goal start");
+    } else if (trustedVerification.enabled) {
+      const receipt = runTrustedVerification({ cwd: ctx.cwd, state, stateManager, config: trustedVerification });
+      services.log(`Trusted verification: ${receipt?.ok ? "PASS" : "FAIL"} sha=${receipt?.sourceSha.slice(0, 12) ?? "none"}`);
+    }
+  } catch (err) {
+    services.log(`Trusted verification failed closed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   stateManager.recordPhaseEvent({
     runId: state.runId, cycle: state.cycle, phase: state.phase,
     phaseAttemptId, attempt: state.phaseAttempts.length,
@@ -219,14 +307,11 @@ async function handleValidateTransition(
     details: { goal_met: verdict.goal_met, confidence: verdict.confidence },
   });
 
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
-
   if (verdict.goal_met === true) {
     stateManager.markSucceeded();
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
+    // Run boundary: tear down the run's swarm pool with the run (C1-ADV-003).
+    await shutdownRunAgentPools();
     pi.sendMessage({
       customType: "iterative-goal-complete",
       content: [
@@ -246,8 +331,8 @@ async function handleValidateTransition(
   if (verdict.next_cycle_directive.focus === "external_blocked_complete") {
     stateManager.markCompletedBlocked();
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
+    // Run boundary: tear down the run's swarm pool with the run (C1-ADV-003).
+    await shutdownRunAgentPools();
 
     const patchPath = stateManager.getArtifactPath(state.cycle, "validate", "final.patch");
     try {
@@ -277,8 +362,6 @@ async function handleValidateTransition(
     stateManager.setStatus("pending_approval");
     state.lock.phaseStatus = "paused";
     stateManager.releaseLock(state.runId, phaseAttemptId);
-    updateStatusBar(ctx, state);
-    updateWidget(ctx, state);
     ctx.ui.notify("Iterative goal suspended pending operator approval.", "warning");
     services.log(`PENDING_APPROVAL after cycle ${state.cycle}`);
     return;
@@ -296,9 +379,6 @@ async function handleValidateTransition(
     details: { from: "validate", reason: "goal_met=false" },
   });
 
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
-
   const nextPhase: Phase =
     verdict.next_cycle_directive.focus === "capability_repair" ? "research"
       : (verdict.next_cycle_directive.focus as Phase);
@@ -308,7 +388,12 @@ async function handleValidateTransition(
   stateManager.setCapabilities(snapshot);
   const backends = detectSubagentBackend(pi, snapshot);
 
-  await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  const startResult = await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  if (!startResult.started) {
+    ctx.ui.notify(`Next cycle stopped before prompting: ${startResult.reason}.`, "warning");
+    services.log(`Next cycle ${state.cycle} ${nextPhase} stopped before prompt: ${startResult.reason}`);
+    return;
+  }
 
   const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
   pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -324,6 +409,74 @@ async function advanceToNextPhase(
   phaseAttemptId: string,
 ): Promise<void> {
   const nextPhase = stateNextPhase(state.phase);
+
+  // C2 sharder attach seam (§6.1): at the exact plan→implement transition,
+  // evaluate the typed plan posted via goal_post_shards and commit
+  // shard_posted. Flag-gated inside runSharderHook (default OFF — the
+  // free-text plan + checklist path is untouched); a sharder failure must
+  // never wedge the loop motor, so it degrades to single-slice.
+  if (state.phase === "plan" && nextPhase === "implement") {
+    try {
+      runSharderHook({ stateManager, cwd: ctx.cwd, log: services.log, phaseAttemptId });
+    } catch (err) {
+      services.log(`Sharder hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      // Degradation observability (C2-ADV-006): the decline is visible, not silent.
+      ctx.ui.notify("Iterative goal sharder failed; implement phase continues single-slice.", "warning");
+    }
+
+    // C3 scheduler attach seam (§6.4–6.5, C3-ADV-001): same transition,
+    // immediately after the sharder — when the sharder just committed a
+    // fan_out plan (or one is already ledgered for this cycle), schedule and
+    // execute it through dispatchAgentTask. Flag-gated inside
+    // runSchedulerHook (default OFF — returns before touching anything, so
+    // flag-off behavior is byte-identical); a scheduler failure degrades to
+    // the single-slice implement prompt, never wedges the loop motor.
+    let schedulerReport: ShardExecutionReport | null = null;
+    try {
+      schedulerReport = await runSchedulerHook({ stateManager, cwd: ctx.cwd, log: services.log });
+    } catch (err) {
+      services.log(`Scheduler hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      ctx.ui.notify("Iterative goal scheduler failed; implement phase continues single-slice.", "warning");
+    }
+
+    // C4 merge-back attach seam (§6.6): same transition, immediately after
+    // the scheduler — the completed shards' captured patches merge onto the
+    // integration branch in HEFT order through the three-part merge gate.
+    // Flag-gated inside runMergeBackHook (default OFF — returns before
+    // touching anything, so flag-off behavior is byte-identical); a merge
+    // failure degrades to the single-slice implement prompt, never wedges
+    // the loop motor.
+    try {
+      // The snapshot closure reads the REAL flag value (C4-OUS-007) and the
+      // merge layer passes the shard being verified so the recorded evidence
+      // is the post-verdict view (C4-OUS-006).
+      const mergeBackEnabled = loadMergeBackConfig(ctx.cwd).enabled;
+      await runMergeBackHook({
+        stateManager,
+        cwd: ctx.cwd,
+        schedulerReport,
+        mergeBackEnabled,
+        // Gate part 3 evidence snapshot (§6.6): the evaluator's extended
+        // unfinished-work gate, shared so merge-time evidence and the
+        // validate-phase gate read the same predicate.
+        snapshotUnfinishedWork: (excludeShardId) => {
+          const current = stateManager.getState();
+          if (!current) return { pendingTaskItems: 0, unverifiedShards: 0 };
+          const items = findUnfinishedWork(current, { mergeBackEnabled })
+            .filter((item) => !(item.kind === "shard" && item.id === excludeShardId));
+          return {
+            pendingTaskItems: items.filter((item) => item.kind === "task").length,
+            unverifiedShards: items.filter((item) => item.kind === "shard").length,
+          };
+        },
+        log: services.log,
+      });
+    } catch (err) {
+      services.log(`Merge-back hook failed (implement continues single-slice): ${err instanceof Error ? err.message : String(err)}`);
+      ctx.ui.notify("Iterative goal merge-back failed; implement phase continues single-slice.", "warning");
+    }
+  }
+
   state.lock.phaseStatus = "transition_pending";
   stateManager.setPhase(nextPhase);
   stateManager.persistAll();
@@ -335,14 +488,16 @@ async function advanceToNextPhase(
     details: { from: state.phase },
   });
 
-  updateStatusBar(ctx, state);
-  updateWidget(ctx, state);
-
   const snapshot = await services.buildRuntimeCapabilitySnapshot(ctx, state);
   stateManager.setCapabilities(snapshot);
   const backends = detectSubagentBackend(pi, snapshot);
 
-  await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  const startResult = await startPhaseAttempt(state, stateManager, nextPhase, snapshot, pi, ctx);
+  if (!startResult.started) {
+    ctx.ui.notify(`Phase transition stopped before prompting: ${startResult.reason}.`, "warning");
+    services.log(`Phase transition ${state.phase} → ${nextPhase} stopped before prompt: ${startResult.reason}`);
+    return;
+  }
 
   const prompt = renderPhasePrompt(nextPhase, state, snapshot, backends);
   pi.sendUserMessage(prompt, { deliverAs: "followUp" });

@@ -1,0 +1,82 @@
+[
+  {
+    "id": "C2-ADV-001",
+    "severity": "medium",
+    "category": "math-correctness",
+    "requirementIds": ["C2"],
+    "message": "Jacobi rotation budget miscalibrated (rotations counted as sweeps); Fiedler prior silently degraded from n>=~15.",
+    "location": "src/kernel/sharder.ts:256",
+    "status": "resolved",
+    "resolution": "Budget is 12 true sweep-equivalents with early termination at 1e-12 max off-diagonal; Test 61 gates P30/P40/P50 closed-form lambda2 to <1e-9."
+  },
+  {
+    "id": "C2-ADV-002",
+    "severity": "medium",
+    "category": "availability",
+    "requirementIds": ["C2"],
+    "message": "No vertex cap: synchronous eigensolver inside agent_end could freeze the host on large allowlists.",
+    "location": "src/kernel/sharder.ts:180-215,251-300, src/kernel/lifecycle.ts:323",
+    "status": "resolved",
+    "resolution": "MAX_SHARD_VERTICES=200; larger plans decline single_slice with ledgered vertex_cap_exceeded reason. Test 62."
+  },
+  {
+    "id": "C2-ADV-003",
+    "severity": "medium",
+    "category": "stale-write",
+    "requirementIds": ["C2", "C3"],
+    "message": "Stale pending plan consumed across same-cycle plan-phase retries; phaseAttemptId stored but never checked.",
+    "location": "src/kernel/sharder.ts:692-696, src/domain/shard.ts:103, src/kernel/lifecycle.ts:312",
+    "status": "resolved",
+    "resolution": "phaseAttemptId threaded through SharderHookDeps; mismatch drops the proposal (clearPendingShardPlan) with debug log. Test 63."
+  },
+  {
+    "id": "C2-ADV-004",
+    "severity": "medium",
+    "category": "scope-integrity",
+    "requirementIds": ["C2", "C3", "C4"],
+    "message": "Shard write scopes could overlap across shards when a task's allowlist straddled the cut.",
+    "location": "src/kernel/sharder.ts:633-659",
+    "status": "resolved",
+    "resolution": "Shard allowedPaths rewritten to exact file sets + defensive pairwise pathsOverlap assertion declining fan_out with shard_scope_overlap reason. Test 64."
+  },
+  {
+    "id": "C2-ADV-005",
+    "severity": "low",
+    "category": "dlp",
+    "requirementIds": ["C2"],
+    "message": "DLP scrub covered only task.title; other free text persisted raw.",
+    "location": "src/ui/tools.ts:530",
+    "status": "resolved",
+    "resolution": "Title, rollback, checks[].name, checks[].command.executable/argv all scrubbed through processModelVisibleText (parity with goal_update_task_plan). Test 60."
+  },
+  {
+    "id": "C2-ADV-006",
+    "severity": "low",
+    "category": "observability",
+    "requirementIds": ["C2"],
+    "message": "Degradation paths near-silent (debug.log only; no-pending path zero trace).",
+    "location": "src/kernel/lifecycle.ts:324-326, src/kernel/sharder.ts:693-696",
+    "status": "resolved",
+    "resolution": "No-pending path debug-logs; sharder exception now also fires ctx.ui.notify warning."
+  },
+  {
+    "id": "C2-ADV-007",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C2"],
+    "message": "Test 57 density assertion read back the planted value.",
+    "location": "scripts/smoke-goal-harness.mjs:3808",
+    "status": "resolved",
+    "resolution": "Test 57 asserts independently computed truth: cutWeight 18, totalEdgeWeight 30, couplingDensity 0.6."
+  },
+  {
+    "id": "C2-ADV-008",
+    "severity": "low",
+    "category": "scanner-accuracy",
+    "requirementIds": ["C2"],
+    "message": "Regex import scanner matched comments and string literals.",
+    "location": "src/kernel/sharder.ts:101-107",
+    "status": "resolved",
+    "resolution": "maskCommentsAndStrings state machine blanks comments/strings before matching; references deduped by (from,to,specifier); residual limits documented."
+  }
+]

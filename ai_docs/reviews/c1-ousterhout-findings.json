@@ -1,0 +1,152 @@
+[
+  {
+    "id": "C1-OUS-001",
+    "severity": "blocker",
+    "category": "ledger-honesty",
+    "requirementIds": ["C1", "S4"],
+    "message": "Ledger recorded the detected backend, not the executed one; poisoned usage telemetry for C3 cost calibration.",
+    "location": "src/subagents.ts:487-508",
+    "status": "resolved",
+    "resolution": "Executed engine (pi-subprocess) recorded in backend fields; detection carried separately. Test 46 (tool-backend snapshot)."
+  },
+  {
+    "id": "C1-OUS-002",
+    "severity": "high",
+    "category": "contract-drift",
+    "requirementIds": ["C1"],
+    "message": "Schema enforcement rewrote the single-mode contract with flag off; prose answers dropped from tool content.",
+    "location": "src/subagents.ts:169, src/agents/pool.ts:136-143",
+    "status": "resolved",
+    "resolution": "Schema failure degrades to ok:true + degraded:true with prose preserved. Test 48."
+  },
+  {
+    "id": "C1-OUS-003",
+    "severity": "high",
+    "category": "information-leakage",
+    "requirementIds": ["C1"],
+    "message": "getActiveStateManager() process-wide singleton with hidden side effect in createStateManager.",
+    "location": "src/state.ts:177-186,1336, src/index.ts:140",
+    "status": "resolved",
+    "resolution": "index.ts:140 threads stateManager via the services seam; global, side effect, and comment deleted (grep-verified)."
+  },
+  {
+    "id": "C1-OUS-004",
+    "severity": "high",
+    "category": "change-amplification",
+    "requirementIds": ["C1", "C3"],
+    "message": "Dispatch primitive trapped in a closure; AgentPool.map duplicated, never called in production.",
+    "location": "src/subagents.ts:501,610",
+    "status": "resolved",
+    "resolution": "dispatchAgentTask() extracted to src/agents/run-pool.ts, shared by all modes and importable by C3; production-loop overlap proven by Test 49."
+  },
+  {
+    "id": "C1-OUS-005",
+    "severity": "medium",
+    "category": "module-depth",
+    "requirementIds": ["C1", "C3"],
+    "message": "subagents.ts became three modules; run→pool registry forced kernel→UI-tool import direction.",
+    "location": "src/subagents.ts:58-147",
+    "status": "resolved",
+    "resolution": "Registry moved to new src/agents/run-pool.ts (getRunAgentPool/peekRunAgentPool/shutdownRunAgentPools/cancelRunSubagent/RunAgentPoolEntry)."
+  },
+  {
+    "id": "C1-OUS-006",
+    "severity": "medium",
+    "category": "interface-fit",
+    "requirementIds": ["C1", "C3"],
+    "message": "checkShardability verdict coupled to tool-mode vocabulary; blind to dependsOn.",
+    "location": "src/subagents.ts:223-270",
+    "status": "resolved",
+    "resolution": "Split into findShardViolations(tasks): ShardViolation[] (mode-agnostic) + thin checkShardability mapper, same precedence."
+  },
+  {
+    "id": "C1-OUS-007",
+    "severity": "medium",
+    "category": "duplication",
+    "requirementIds": ["C1"],
+    "message": "Concurrency band 1/4/8 triple-encoded.",
+    "location": "src/agents/pool.ts:174, src/subagents.ts:84-87,492-499",
+    "status": "resolved",
+    "resolution": "DEFAULT_SWARM_CONCURRENCY=4 / MAX_SWARM_CONCURRENCY=8 single-sourced in pool.ts; referenced everywhere."
+  },
+  {
+    "id": "C1-OUS-008",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C1"],
+    "message": "Role list triple-encoded plus test fixture.",
+    "location": "src/agents/pool.ts:9-19, src/subagents.ts:265-278, src/agents/roles.ts:115-216",
+    "status": "resolved",
+    "resolution": "AGENT_ROLES canonical in roles.ts; AgentRole and AgentRoleEnum derive from it."
+  },
+  {
+    "id": "C1-OUS-009",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C1"],
+    "message": "Test 45 comment oversold dispatch wall-clock as the §5.3 gate evidence.",
+    "location": "scripts/smoke-goal-harness.mjs (Test 45)",
+    "status": "resolved",
+    "resolution": "Relabeled dispatch-wall-time-only; comment notes the enable-decision requires a real-corpus benchmark."
+  },
+  {
+    "id": "C1-OUS-010",
+    "severity": "low",
+    "category": "api-surface",
+    "requirementIds": ["C1"],
+    "message": "shutdownRunAgentPools had zero production callers; prune-on-access leak window.",
+    "location": "src/subagents.ts:135,113",
+    "status": "resolved",
+    "resolution": "Wired into lifecycle markSucceeded/markCompletedBlocked and /goal-reset; prune-on-access retained as secondary path."
+  },
+  {
+    "id": "C1-OUS-011",
+    "severity": "low",
+    "category": "misleading-success",
+    "requirementIds": ["C1"],
+    "message": "/goal-swarm-cancel unverified and over-claimed.",
+    "location": "src/ui/goal-commands.ts:167-180, src/subagents.ts:139-147",
+    "status": "resolved",
+    "resolution": "cancel reports running|queued|unknown; command reports accurately; Test 51."
+  },
+  {
+    "id": "C1-OUS-012",
+    "severity": "low",
+    "category": "consistency",
+    "requirementIds": ["C1"],
+    "message": "Two renderers disagreed on cancelled counting.",
+    "location": "src/ui/phase-indicator.ts:124, src/ui/goal-commands.ts:378-389",
+    "status": "resolved",
+    "resolution": "Both fold cancelled into failed; per-status detail preserved in /goal-status details."
+  },
+  {
+    "id": "C1-OUS-013",
+    "severity": "low",
+    "category": "ledger-accuracy",
+    "requirementIds": ["C1"],
+    "message": "One-task parallel ledgered as parallel.",
+    "location": "src/subagents.ts:601-606",
+    "status": "resolved",
+    "resolution": "Normalized to single before ledger recording."
+  },
+  {
+    "id": "C1-OUS-014",
+    "severity": "low",
+    "category": "prompt-hygiene",
+    "requirementIds": ["C1"],
+    "message": "Chain binding fed raw unbounded patch blocks into successor prompts; unresolved cross-call artifact ids silent.",
+    "location": "src/subagents.ts:783-801",
+    "status": "resolved",
+    "resolution": "Artifacts truncated at 4000 chars with note; details.unresolvedArtifacts surfaced. Tests 40/54."
+  },
+  {
+    "id": "C1-OUS-015",
+    "severity": "low",
+    "category": "spec-gap",
+    "requirementIds": ["C1", "S5.4"],
+    "message": "§5.4 lease semantics reduced to budget timeout; no maxAttempts retry contract.",
+    "location": "src/policy/engine.ts:236-244",
+    "status": "resolved",
+    "resolution": "Lease TTL aligned to budget timeout via leaseTtlMs; enforcement mechanism + maxAttempts deferral documented in run-pool.ts."
+  }
+]

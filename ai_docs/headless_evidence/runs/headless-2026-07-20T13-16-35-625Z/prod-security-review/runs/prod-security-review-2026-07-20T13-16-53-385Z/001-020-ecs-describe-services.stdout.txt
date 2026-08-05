@@ -1,0 +1,611 @@
+{
+    "services": [
+        {
+            "serviceArn": "arn:aws:ecs:us-east-1:371292405073:service/unify-ocr-nemotron-production/nemotron-ocr-production",
+            "serviceName": "nemotron-ocr-production",
+            "clusterArn": "arn:aws:ecs:us-east-1:371292405073:cluster/unify-ocr-nemotron-production",
+            "loadBalancers": [
+                {
+                    "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0",
+                    "containerName": "NemotronParseContainer",
+                    "containerPort": 8000
+                }
+            ],
+            "serviceRegistries": [],
+            "status": "ACTIVE",
+            "desiredCount": 4,
+            "runningCount": 4,
+            "pendingCount": 0,
+            "capacityProviderStrategy": [
+                {
+                    "capacityProvider": "UnifyOcrNemotronStack-CapacityProviderF92AC12E-Ps2fIU1shF3I",
+                    "weight": 1,
+                    "base": 0
+                }
+            ],
+            "taskDefinition": "arn:aws:ecs:us-east-1:371292405073:task-definition/UnifyOcrNemotronStackOcrWorkerTaskDefinition4FC7A5D2:40",
+            "deploymentConfiguration": {
+                "deploymentCircuitBreaker": {
+                    "enable": false,
+                    "rollback": false
+                },
+                "maximumPercent": 100,
+                "minimumHealthyPercent": 0,
+                "strategy": "ROLLING",
+                "bakeTimeInMinutes": 0
+            },
+            "deployments": [
+                {
+                    "id": "ecs-svc/5984661821502397962",
+                    "status": "PRIMARY",
+                    "taskDefinition": "arn:aws:ecs:us-east-1:371292405073:task-definition/UnifyOcrNemotronStackOcrWorkerTaskDefinition4FC7A5D2:40",
+                    "desiredCount": 4,
+                    "pendingCount": 0,
+                    "runningCount": 4,
+                    "failedTasks": 0,
+                    "createdAt": "2026-07-13T17:47:19.783000-05:00",
+                    "updatedAt": "2026-07-15T19:30:32.419000-05:00",
+                    "capacityProviderStrategy": [
+                        {
+                            "capacityProvider": "UnifyOcrNemotronStack-CapacityProviderF92AC12E-Ps2fIU1shF3I",
+                            "weight": 1,
+                            "base": 0
+                        }
+                    ],
+                    "networkConfiguration": {
+                        "awsvpcConfiguration": {
+                            "subnets": [
+                                "subnet-064ca6900be0c498b",
+                                "subnet-01f356c4f298c6532"
+                            ],
+                            "securityGroups": [
+                                "sg-0ee7ab7b3fb81dfa9"
+                            ],
+                            "assignPublicIp": "DISABLED"
+                        }
+                    },
+                    "rolloutState": "COMPLETED",
+                    "rolloutStateReason": "ECS deployment ecs-svc/5984661821502397962 completed."
+                }
+            ],
+            "roleArn": "arn:aws:iam::371292405073:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+            "events": [
+                {
+                    "id": "50a15745-2fb1-4944-93d1-f39d2a761584",
+                    "createdAt": "2026-07-20T05:13:04.892000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "7e0b6320-7276-4842-963c-23cc94baf8e5",
+                    "createdAt": "2026-07-19T23:12:46.986000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "8d251288-5a2f-49b4-8ccc-dfcd111c7457",
+                    "createdAt": "2026-07-19T17:12:45.614000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "67a535df-c900-4c51-b12d-25829c1940a8",
+                    "createdAt": "2026-07-19T11:12:14.163000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "4c49a5b8-858a-4ba9-9cc1-035bbfda9958",
+                    "createdAt": "2026-07-19T05:11:38.197000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "695f6f25-9ebe-4381-af2c-f778c67e71c5",
+                    "createdAt": "2026-07-18T23:11:18.912000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "40dc177f-16ec-4614-99a0-d396b4ab424c",
+                    "createdAt": "2026-07-18T17:11:05.440000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "633a0ac5-3405-45e7-a32c-07abd745d4b1",
+                    "createdAt": "2026-07-18T11:11:05.050000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "85f51afd-90c7-44f2-a40e-30c13b59f465",
+                    "createdAt": "2026-07-18T05:10:29.035000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "1e2240b2-6a76-4157-8580-eac5db2d0994",
+                    "createdAt": "2026-07-17T23:10:15.379000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "fed3461e-3028-4ffa-a2ba-1d136a2bb2e7",
+                    "createdAt": "2026-07-17T17:09:59.879000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "74d82a53-7e9a-40e2-a317-acf334fde7ef",
+                    "createdAt": "2026-07-17T11:09:46.919000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "9a8b6dc8-b076-4a7a-a8d3-24374cfd0ad8",
+                    "createdAt": "2026-07-17T08:17:47.719000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "1a63545c-8cd6-468c-84cc-51e1703362f3",
+                    "createdAt": "2026-07-17T02:50:33.395000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "ec1db281-2552-4cc8-a430-f8a07a3c0786",
+                    "createdAt": "2026-07-16T20:50:18.276000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "0d4c7d29-8a1e-43ae-bf58-6a667f76ec28",
+                    "createdAt": "2026-07-16T14:50:02.158000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "fa2dcf5f-b176-4032-9d4a-fadda648a5fb",
+                    "createdAt": "2026-07-16T08:49:57.188000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "67f4f50f-ac20-4ec2-8afb-d4f52edb484d",
+                    "createdAt": "2026-07-16T07:31:49.105000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "08ec6e1e-7303-46e8-b5ef-cfe1ef99dea4",
+                    "createdAt": "2026-07-16T01:31:06.751000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "df7c3751-b086-4f1c-9381-22a89457959c",
+                    "createdAt": "2026-07-15T19:30:32.425000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "0b053c71-9108-4752-9b42-9f5504f074c1",
+                    "createdAt": "2026-07-15T19:30:23.311000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 3 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "79a0c122-185c-4dda-a60f-e224d8546fc6",
+                    "createdAt": "2026-07-15T19:30:01.772000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "88726afa-324d-4938-b178-220a84d75bc0",
+                    "createdAt": "2026-07-15T19:23:07.735000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task f344219a80c64113905ad121c3134f11)."
+                },
+                {
+                    "id": "a59b6eb9-f0b9-4050-b1a7-c0ccfdb43173",
+                    "createdAt": "2026-07-15T19:23:02.736000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task d063ec5eae8d4530b3877491511217dc)."
+                },
+                {
+                    "id": "4fa4bca8-d8b3-4a0d-9580-b5a4d68f3e2a",
+                    "createdAt": "2026-07-15T19:22:52.773000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 2 tasks: (task c5004591ce564962ad038d8c3bef672e) (task c5daa22552f244f591733cb254a21c20)."
+                },
+                {
+                    "id": "dcce7e9c-0a8e-41db-b18b-b551683a99a9",
+                    "createdAt": "2026-07-15T19:21:44.379000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 4 tasks: (task c5daa22552f244f591733cb254a21c20) (task d063ec5eae8d4530b3877491511217dc) (task c5004591ce564962ad038d8c3bef672e) (task f344219a80c64113905ad121c3134f11)."
+                },
+                {
+                    "id": "9a0851f8-e22e-4544-9bcb-be5aa7d9820d",
+                    "createdAt": "2026-07-15T17:16:45.787000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "fa214112-9f77-44b6-8bdd-79c8faf3806b",
+                    "createdAt": "2026-07-15T17:16:45.706000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has begun draining connections on 4 tasks."
+                },
+                {
+                    "id": "4bcf9c1b-c0b0-4a25-9a9e-82a557813325",
+                    "createdAt": "2026-07-15T17:16:45.697000-05:00",
+                    "message": "(service nemotron-ocr-production) deregistered 4 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "2ba1394d-3589-4d23-99d2-0336d0fc5d88",
+                    "createdAt": "2026-07-15T17:16:36.036000-05:00",
+                    "message": "(service nemotron-ocr-production) has stopped 4 running tasks: (task 377883dff6f146acb0197de5d26c851a) (task 4b05f34c6b214fdf9a5da098d7d8569c) (task a09be495fab5431b8632d43ed6b71c52) (task 02ffd42792874f09b37d9de43e422213)."
+                },
+                {
+                    "id": "ee4528ef-c2ca-4b7c-b013-35a57a2fe985",
+                    "createdAt": "2026-07-15T16:45:50.178000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "0199c7d4-0f74-4e1c-a40c-ed007c6d596d",
+                    "createdAt": "2026-07-15T16:45:41.454000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 3 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "df664c44-86b6-42fc-847d-13a664abea51",
+                    "createdAt": "2026-07-15T16:38:53.099000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 2 tasks: (task 4b05f34c6b214fdf9a5da098d7d8569c) (task a09be495fab5431b8632d43ed6b71c52)."
+                },
+                {
+                    "id": "bfc083c1-7ae6-46de-ac5d-cd8302b5320f",
+                    "createdAt": "2026-07-15T16:38:23.074000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task 02ffd42792874f09b37d9de43e422213)."
+                },
+                {
+                    "id": "32313187-cc30-4770-875e-672cafc028c3",
+                    "createdAt": "2026-07-15T16:37:33.519000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 4b05f34c6b214fdf9a5da098d7d8569c) (task a09be495fab5431b8632d43ed6b71c52) (task 02ffd42792874f09b37d9de43e422213)."
+                },
+                {
+                    "id": "b24d9ddd-d9f2-4bcd-b0ca-1d240f7a28fb",
+                    "createdAt": "2026-07-15T15:19:58.027000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "f29bd32f-e5f4-4ad1-9211-dfd524983328",
+                    "createdAt": "2026-07-15T09:19:25.374000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "79c4d7df-2ae7-4c13-8746-9e74081234ae",
+                    "createdAt": "2026-07-15T04:09:21.485000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "58db6b92-c5f4-44e8-a681-80d7133d4d63",
+                    "createdAt": "2026-07-14T22:09:08.788000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "99423324-b733-4250-ba16-2524fc3e5efc",
+                    "createdAt": "2026-07-14T22:09:08.767000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has begun draining connections on 3 tasks."
+                },
+                {
+                    "id": "46efbb72-424f-470b-8013-b579dc921121",
+                    "createdAt": "2026-07-14T22:09:08.762000-05:00",
+                    "message": "(service nemotron-ocr-production) deregistered 3 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "b6bda4b2-08bd-41b2-8b45-cd210d1bb4dc",
+                    "createdAt": "2026-07-14T22:08:58.953000-05:00",
+                    "message": "(service nemotron-ocr-production) has stopped 3 running tasks: (task 11ecfb33ed7f4cb4b5c53fbda2a7a1b4) (task 8d7d0fc7108a47fabd77f31a002caa16) (task 66f13130fa6d4e7eb419665c515532e9)."
+                },
+                {
+                    "id": "574125f3-5fb6-4ff6-aaca-cae6f074d1ed",
+                    "createdAt": "2026-07-14T21:53:09.513000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "96b03768-bd4c-43d9-a93d-a4366800b90d",
+                    "createdAt": "2026-07-14T21:52:59.863000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 3 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "a6373ce9-754e-4c4e-a7c8-6942ca34cc02",
+                    "createdAt": "2026-07-14T21:46:30.414000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task 66f13130fa6d4e7eb419665c515532e9)."
+                },
+                {
+                    "id": "e9b95740-f079-476d-bdad-d5e08ddca0bb",
+                    "createdAt": "2026-07-14T21:45:55.391000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task 377883dff6f146acb0197de5d26c851a)."
+                },
+                {
+                    "id": "ff75fdeb-a771-48ce-8f53-153a526a6ad0",
+                    "createdAt": "2026-07-14T21:45:45.226000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task 11ecfb33ed7f4cb4b5c53fbda2a7a1b4)."
+                },
+                {
+                    "id": "b3f56ad4-582a-4056-a97c-7978c69753c2",
+                    "createdAt": "2026-07-14T21:45:02.733000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 66f13130fa6d4e7eb419665c515532e9) (task 377883dff6f146acb0197de5d26c851a) (task 11ecfb33ed7f4cb4b5c53fbda2a7a1b4)."
+                },
+                {
+                    "id": "4e0332ab-5479-4425-863e-7a5f19866dfc",
+                    "createdAt": "2026-07-14T21:30:31.840000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "195ea417-dbe6-4855-8c00-6f4d43a436f0",
+                    "createdAt": "2026-07-14T21:30:22.247000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "034e1598-db64-429c-abed-744ee2d91ef5",
+                    "createdAt": "2026-07-14T21:22:10.274000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task 8d7d0fc7108a47fabd77f31a002caa16)."
+                },
+                {
+                    "id": "930497b6-51e6-4fc4-bfed-fa091e1a944a",
+                    "createdAt": "2026-07-14T21:22:07.973000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 1 tasks: (task 8d7d0fc7108a47fabd77f31a002caa16)."
+                },
+                {
+                    "id": "cf8b1ac5-0e0e-44cd-a386-11622b0bd9d5",
+                    "createdAt": "2026-07-14T20:03:20.910000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "eec5ca86-33a1-4bfb-a108-393388ede90c",
+                    "createdAt": "2026-07-14T20:02:49.900000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: EMPTY CAPACITY PROVIDER."
+                },
+                {
+                    "id": "d4035f1e-0755-49da-809f-a4f55aabb294",
+                    "createdAt": "2026-07-14T19:33:37.586000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 16 tasks: (task d9089c3805984bf9b83243517da6e4e7) (task b27beac6e15e4171b7cab1a43b74448a) (task b853edbf8d004f0096dd165117f32d5a) (task 25979e243ed04b9aa92d0743f4c44bec) (task 7373b26b88ae4ed4a3ad283a3e5f8662) (task 059015cf8df34aaf8712a8fa9ad691ef) (task d506c104baa9421a8afef7815b919e17) (task 267e02dae1cf4363a2451306e2de719d) (task ca65df5ff5c244e5ae7efd5ca0d7d750) (task 834cf74cef094ef3a4e01b6c8699e47a) (task d8924f9b20b4492d934118ee276383ab) (task b4ec3dbec3ab47ed8ac416271284471e) (task c864335126da4dedbbdfd2fdd8757722) (task eb8a4a39b8cc48d8a0f9ee77a47681d9) (task 435b59ba3109480283944905842700d7) (task 0eb2dcf79fcd4d1abfd826226a2f9002)."
+                },
+                {
+                    "id": "fc42bc9a-de48-4d58-843e-8a730f5c1db2",
+                    "createdAt": "2026-07-14T19:33:06.251000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: EMPTY CAPACITY PROVIDER."
+                },
+                {
+                    "id": "5a77edfa-1185-4ab7-912b-33bc90c4f4aa",
+                    "createdAt": "2026-07-14T19:03:34.871000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 16 tasks: (task 000c8e5bf65d443a84c3541bdd60139c) (task 85c9195de33b4a1daafe9ca601b7d38f) (task 79c836cb03cd4714bfa9dd5a66fcb67f) (task 9538b7a1d45c47cdb2ff035819b86b50) (task 9cc8b367217543c1a1c9a96221df12e9) (task 1fb812ca9c6441a2a79dd8eea6c03620) (task 7b7fde999f124029a974b3a1b3dcdbca) (task 84df881d7c634277b5de2ed2f937d561) (task 0207e8c9212347e5ae996140d85b36d1) (task e5c0d4aecf03451a9874fddc24f973cc) (task 841a6d8acc6546969e0ae8c692c0d25c) (task 61caaf1d1ecb4aa099d131843ed85fb6) (task 8efb11864eb04e018c09b3078422052f) (task 53439ede33ba41f2b21750e678361b83) (task 234b4e7771e14dbca33b6c925a28cc95) (task 77ef3013aa98442b934c3987bb479625)."
+                },
+                {
+                    "id": "f24a8038-d0e5-4e4c-aa2f-14df94f50d32",
+                    "createdAt": "2026-07-14T18:17:42.258000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "c0b0e52e-0f8f-436e-a5e7-c88de115f06d",
+                    "createdAt": "2026-07-14T16:11:03.623000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "dad8aeb8-4b97-449c-bffa-1dfdc5a2de96",
+                    "createdAt": "2026-07-14T10:10:59.870000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "4a352d47-ae09-46f3-b5d3-f07fd97469de",
+                    "createdAt": "2026-07-14T04:10:49.452000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "d9d0f43a-2f76-4ddf-b0e7-d95e2547f0d6",
+                    "createdAt": "2026-07-13T22:09:59.221000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "ef4ccf31-96b5-4b75-bf11-a314d82ff009",
+                    "createdAt": "2026-07-13T22:09:27.464000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "f079a763-24b7-41a0-bbd7-823f03e9ed10",
+                    "createdAt": "2026-07-13T21:46:51.942000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has begun draining connections on 1 tasks."
+                },
+                {
+                    "id": "e668d2c3-cdf0-4b17-b37f-2ef24f32f403",
+                    "createdAt": "2026-07-13T21:46:51.938000-05:00",
+                    "message": "(service nemotron-ocr-production) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "791400c1-372a-4a79-b745-5519283563fa",
+                    "createdAt": "2026-07-13T21:46:41.421000-05:00",
+                    "message": "(service nemotron-ocr-production) has stopped 1 running tasks: (task ee44fd041780492abb1c7a156cc6badd)."
+                },
+                {
+                    "id": "8c3e329e-d40a-4ae3-b8a9-da58ec5c25c2",
+                    "createdAt": "2026-07-13T21:40:13.081000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task e71abd18145b4054a563217ad5b32de0) (task 9d12235be4974710871984e94ea45098) (task 3f0cae7930b34dce9a1941ccbce8e969)."
+                },
+                {
+                    "id": "bd6f1b49-a259-4305-ad07-bf5cc5bc1c16",
+                    "createdAt": "2026-07-13T21:34:58.985000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "ac2454df-1099-4d71-8786-03cbbb706cab",
+                    "createdAt": "2026-07-13T21:05:46.903000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 1304729b5e87427eb82c851909765998) (task 5dad7ba8890842a782b85124e9d7d754) (task 70d9a678720b4674a7e06a68b522d629)."
+                },
+                {
+                    "id": "4ef68c74-dde2-4359-b442-5df225551777",
+                    "createdAt": "2026-07-13T21:00:47.171000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "c8ea24eb-75b9-4246-a954-352349c31d0b",
+                    "createdAt": "2026-07-13T20:31:42.683000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 6096126b482d47b8a4d4c7672b33a0b1) (task b3b5f25822b94d28820cda9dd95419d2) (task 0da088a3de5d414680fbd33d2522e9df)."
+                },
+                {
+                    "id": "84b1c5c3-df65-4f6d-b35c-9c4700e5caa0",
+                    "createdAt": "2026-07-13T20:26:28.654000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "78945f1d-9588-4349-a98c-2aeef3a05136",
+                    "createdAt": "2026-07-13T19:57:11.990000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 8336b9ff9eea4815935b04e5e8708058) (task b39604c634444242838a8da81db8fe05) (task 9c8d8641268f4ae495d94b1b01feb1c1)."
+                },
+                {
+                    "id": "a155a62a-8cf2-44e6-bc8e-578fc7fa7fa6",
+                    "createdAt": "2026-07-13T19:52:21.934000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "b4150ab5-aa97-4838-87da-3c7c077568f0",
+                    "createdAt": "2026-07-13T19:23:05.136000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task e4bc16f0d73e46aba83c4001db287853) (task 11b826c81b2149d8b5681d6849166312) (task c8564075bc734ca3910f69840e4ac35c)."
+                },
+                {
+                    "id": "f252d676-5357-4ef7-a451-00932fe36d97",
+                    "createdAt": "2026-07-13T19:18:06.655000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "155bed49-8f36-4cfc-b168-367412971cdd",
+                    "createdAt": "2026-07-13T18:48:56.344000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task 032bbde302a5474db577e7cc14c00b54) (task a8c2ee3f4a964a12bbdfb436a643089e) (task 588da8e0c2624ffdb7956e6556785162)."
+                },
+                {
+                    "id": "3032f543-56de-4117-a420-2f356da9dd96",
+                    "createdAt": "2026-07-13T18:48:25.537000-05:00",
+                    "message": "(service nemotron-ocr-production) was unable to place a task. Reason: TaskFailedToStart: AGENT."
+                },
+                {
+                    "id": "06dc5b5b-2ee1-4f19-9d3f-f86a738f3b9d",
+                    "createdAt": "2026-07-13T18:19:12.928000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 3 tasks: (task c94f9742519c49c1b076c69f9b791903) (task 50b68f6fedf14b21853e7a3f949a1ea4) (task 6ac2ba6d88ae43f2b81929f2e9ed0c12)."
+                },
+                {
+                    "id": "c3e986d2-eb7d-4efb-a67d-90e71c181261",
+                    "createdAt": "2026-07-13T17:55:46.319000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "931027b9-0fef-4c12-acb8-9408a717969c",
+                    "createdAt": "2026-07-13T17:55:46.318000-05:00",
+                    "message": "(service nemotron-ocr-production) (deployment ecs-svc/5984661821502397962) deployment completed."
+                },
+                {
+                    "id": "f58d90cf-c72c-4c72-824d-67faf8b6273c",
+                    "createdAt": "2026-07-13T17:55:05.978000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "bd17b786-55d1-4c40-b14d-b3a55ad0a027",
+                    "createdAt": "2026-07-13T17:53:45.253000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5984661821502397962) has started 1 tasks: (task ee44fd041780492abb1c7a156cc6badd)."
+                },
+                {
+                    "id": "67d401a3-733d-48a2-aafe-1c4e0571eb56",
+                    "createdAt": "2026-07-13T17:53:43.779000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 1 tasks: (task ee44fd041780492abb1c7a156cc6badd)."
+                },
+                {
+                    "id": "bedd1e1c-4cae-4b0c-a0cb-998c31685139",
+                    "createdAt": "2026-07-13T17:47:36.154000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5250749673557542137) has begun draining connections on 4 tasks."
+                },
+                {
+                    "id": "5d038768-7e8d-455c-9b84-54032c4d878b",
+                    "createdAt": "2026-07-13T17:47:36.149000-05:00",
+                    "message": "(service nemotron-ocr-production) deregistered 4 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "aeedfaa2-bf30-47f4-a16b-a961f6a6a633",
+                    "createdAt": "2026-07-13T17:47:26.890000-05:00",
+                    "message": "(service nemotron-ocr-production) has stopped 4 running tasks: (task e551c9bae9fc4254b724fddf1714ce80) (task f909812c971542cc90ccff28fe0f99dc) (task 12c3703ac7a14c68b1ee254e62760dbd) (task f93993ac76604a74a90c8072c40b19d8)."
+                },
+                {
+                    "id": "49546b70-6576-47da-be50-e0e8dd4e6063",
+                    "createdAt": "2026-07-13T16:17:20.958000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "d6f5050c-8116-42e6-9ec8-3b0907431204",
+                    "createdAt": "2026-07-13T16:17:12.530000-05:00",
+                    "message": "(service nemotron-ocr-production) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "6493c248-fbda-4b73-b804-0b7dbde93f69",
+                    "createdAt": "2026-07-13T16:15:50.574000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5250749673557542137) has started 1 tasks: (task f93993ac76604a74a90c8072c40b19d8)."
+                },
+                {
+                    "id": "7114878c-2df3-4b24-a8cc-c1cab9c2615b",
+                    "createdAt": "2026-07-13T16:15:45.807000-05:00",
+                    "message": "(service nemotron-ocr-production) has started 1 tasks: (task f93993ac76604a74a90c8072c40b19d8)."
+                },
+                {
+                    "id": "29f668eb-b89a-4114-afc0-c37183b7f70f",
+                    "createdAt": "2026-07-13T15:46:21.173000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "041460fa-c5cc-4081-9772-c68aacd7e690",
+                    "createdAt": "2026-07-13T15:46:21.146000-05:00",
+                    "message": "(service nemotron-ocr-production, taskSet ecs-svc/5250749673557542137) has begun draining connections on 1 tasks."
+                },
+                {
+                    "id": "e889266a-0834-4e3a-bb25-d97fc1f3c04a",
+                    "createdAt": "2026-07-13T15:46:21.141000-05:00",
+                    "message": "(service nemotron-ocr-production) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:371292405073:targetgroup/UnifyO-Valid-SMGGQFRNGU08/87fe44023a312ab0)"
+                },
+                {
+                    "id": "077d65f6-8ad5-4a8e-b386-c0eb228b914b",
+                    "createdAt": "2026-07-13T15:46:12.377000-05:00",
+                    "message": "(service nemotron-ocr-production) has stopped 1 running tasks: (task b94a8c186d024f19a0aecd4d836887fc)."
+                },
+                {
+                    "id": "69d12f7e-d6bb-45dc-9602-9572504b0a42",
+                    "createdAt": "2026-07-13T13:03:18.860000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "27450578-599e-4a26-a9ec-cd9588fc42c8",
+                    "createdAt": "2026-07-13T11:35:10.809000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "19d240ab-88a3-4d6e-bc24-e45fd0e16121",
+                    "createdAt": "2026-07-13T05:34:25.879000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "8b4c30b7-21a1-4130-bab0-0567802995d3",
+                    "createdAt": "2026-07-12T23:34:07.520000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                },
+                {
+                    "id": "a87bfddd-4c4e-4643-9669-a81c0ce85311",
+                    "createdAt": "2026-07-12T17:34:04.984000-05:00",
+                    "message": "(service nemotron-ocr-production) has reached a steady state."
+                }
+            ],
+            "createdAt": "2026-06-08T22:08:59.832000-05:00",
+            "currentServiceRevisions": [
+                {
+                    "arn": "arn:aws:ecs:us-east-1:371292405073:service-revision/unify-ocr-nemotron-production/nemotron-ocr-production/5984661821502397962",
+                    "requestedTaskCount": 4,
+                    "runningTaskCount": 4,
+                    "pendingTaskCount": 0
+                }
+            ],
+            "placementConstraints": [],
+            "placementStrategy": [],
+            "networkConfiguration": {
+                "awsvpcConfiguration": {
+                    "subnets": [
+                        "subnet-064ca6900be0c498b",
+                        "subnet-01f356c4f298c6532"
+                    ],
+                    "securityGroups": [
+                        "sg-0ee7ab7b3fb81dfa9"
+                    ],
+                    "assignPublicIp": "DISABLED"
+                }
+            },
+            "healthCheckGracePeriodSeconds": 60,
+            "schedulingStrategy": "REPLICA",
+            "deploymentController": {
+                "type": "ECS"
+            },
+            "createdBy": "arn:aws:iam::371292405073:role/cdk-hnb659fds-cfn-exec-role-371292405073-us-east-1",
+            "enableECSManagedTags": false,
+            "propagateTags": "NONE",
+            "enableExecuteCommand": false,
+            "availabilityZoneRebalancing": "DISABLED",
+            "resourceManagementType": "CUSTOMER"
+        }
+    ],
+    "failures": []
+}

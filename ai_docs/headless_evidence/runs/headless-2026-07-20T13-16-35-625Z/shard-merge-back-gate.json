@@ -1,0 +1,171 @@
+{
+  "id": "shard-merge-back-gate",
+  "status": "PASS",
+  "summary": "C4 merge-back: 2-shard fan-out merges through the three-part gate, conflict returns to claimed with failure evidence, scoped crash recovery incl. kill -9, ledgered patches re-drive after crash, judge independence is configuration, merge events hash-chain and replay",
+  "details": {
+    "deterministicFirst": {
+      "goalMet": false,
+      "judgeInvocations": 0,
+      "blockers": [
+        "Shard not merge_verified: [completed] shard-a (plan plan-c4-merge cycle 1)",
+        "Shard not merge_verified: [completed] shard-b (plan plan-c4-merge cycle 1)"
+      ]
+    },
+    "twoShardMerge": {
+      "planId": "plan-c4-merge",
+      "integrationBranch": "pi-ig/integration/ig-1784553429896-w5a88e",
+      "mergeOrder": [
+        "shard-b",
+        "shard-a"
+      ],
+      "verified": [
+        "shard-b",
+        "shard-a"
+      ],
+      "commits": [
+        {
+          "shardId": "shard-b",
+          "sha": "13abfe59d85998f3340e671256b09ff563cd4642"
+        },
+        {
+          "shardId": "shard-a",
+          "sha": "b718602f409ec396d3be7bd82b4c85c88c919da0"
+        }
+      ],
+      "gateEvidence": [
+        {
+          "shardId": "shard-b",
+          "gate": {
+            "allowlistOk": true,
+            "extraFiles": [],
+            "testsOk": true,
+            "testCommand": "npm test",
+            "unfinishedWork": {
+              "pendingTaskItems": 0,
+              "unverifiedShards": 1
+            }
+          }
+        },
+        {
+          "shardId": "shard-a",
+          "gate": {
+            "allowlistOk": true,
+            "extraFiles": [],
+            "testsOk": true,
+            "testCommand": "npm test",
+            "unfinishedWork": {
+              "pendingTaskItems": 0,
+              "unverifiedShards": 0
+            }
+          }
+        }
+      ]
+    },
+    "scopeGateAdversarial": {
+      "unicodeListed": [
+        "src/ünicode.ts"
+      ],
+      "mixed": {
+        "changedFiles": [
+          "src/alpha.mjs",
+          "src/ünicode.ts"
+        ],
+        "extraFiles": [
+          "src/ünicode.ts"
+        ],
+        "parseErrors": [],
+        "allowlistViolation": true
+      },
+      "garbageParseErrors": 1
+    },
+    "cleanRejections": [
+      {
+        "shardId": "shard-space",
+        "gate": "allowlist",
+        "reason": "patch rejected by the shard scope gate — files outside the shard write scope: src/space file.ts"
+      },
+      {
+        "shardId": "shard-null",
+        "gate": "capture",
+        "reason": "patch unavailable (capture failed or ledgered artifact missing) — refusing to merge-verify vanished work"
+      }
+    ],
+    "judgeIndependence": {
+      "configured": {
+        "judgeModel": "openrouter/anthropic/claude-sonnet-4.6",
+        "actorModel": "zai/glm-5.2",
+        "independent": true,
+        "rubricConfigured": true,
+        "violations": []
+      },
+      "aliased": [
+        "validate-phase judge model openrouter/z-ai/glm-5.2 is canonically identical to the implement-phase actor model zai/glm-5.2 — judge self-preference bias control (§7.3) requires a different model, not just a different provider prefix"
+      ],
+      "defaultFlags": [
+        "validate-phase judge model zai/glm-5.2 is canonically identical to the implement-phase actor model zai/glm-5.2 — judge self-preference bias control (§7.3) requires a different model, not just a different provider prefix",
+        "no grading rubric configured — rubric-based grading (§7.3) requires a non-empty iterativeGoal.judge.rubric"
+      ],
+      "branchConfinement": "both ways asserted"
+    },
+    "conflictFixture": {
+      "verified": [
+        "shard-c"
+      ],
+      "rejected": [
+        {
+          "shardId": "shard-d",
+          "gate": "apply",
+          "reason": "patch does not apply onto the integration branch (merge-time conflict): error: patch failed: src/bridge.mjs:1\nerror: src/bridge.mjs: patch does not apply"
+        }
+      ],
+      "repairClaim": {
+        "status": "claimed",
+        "error": "patch does not apply onto the integration branch (merge-time conflict): error: patch failed: src/bridge.mjs:1\nerror: src/bridge.mjs: patch does not apply"
+      },
+      "inCycleBlocker": "Shard not merge_verified: [rejected] shard-d (plan plan-c4-conflict cycle 2) — merge gate rejected this shard and it awaits repair: re-drive it manually or disable merge-back (no automatic re-dispatch in v1)"
+    },
+    "cascadeMonitorContract": {
+      "flagged": 1,
+      "healed": 0
+    },
+    "crashRecovery": {
+      "before": [
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-c4-merge-PR8MRI",
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-agent-c4-crash-shard-f96160a8",
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-agent-c4-dead-shard-10e779c4",
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/user-adhoc-25b810cb"
+      ],
+      "after": [
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-c4-merge-PR8MRI",
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/user-adhoc-25b810cb"
+      ],
+      "pruned": [
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-agent-c4-crash-shard-f96160a8"
+      ],
+      "reclaimed": [
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-agent-c4-dead-shard-10e779c4"
+      ],
+      "skippedForeign": [
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/pi-ig-c4-merge-PR8MRI",
+        "/private/var/folders/7w/4nb4hqg947b4lgfjp19mm2ww0000gn/T/user-adhoc-25b810cb"
+      ]
+    },
+    "crashAfterDispatch": {
+      "reconciled": "rejected",
+      "verified": [
+        "shard-1"
+      ]
+    },
+    "bootstrapHonesty": "repository test suite failed on the merged tree (npm test): bootstrap-required: 'npm test' needs 1 declared dependenc(y/ies), but the fresh integration worktree has no node_modules. Configure iterativ",
+    "hashChainReplay": {
+      "replayOk": true,
+      "tamperRejected": true
+    },
+    "rollback": {
+      "enabled": false,
+      "reason": "merge-back disabled by flag — patches surface as [ISOLATED_WORKTREE_PATCH] blocks for manual application (§8.7 rollback)"
+    }
+  },
+  "checkedAt": "2026-07-20T13:17:13.609Z",
+  "artifact": "/Users/joe/Projects/pi-iterative-goal/ai_docs/headless_evidence/runs/headless-2026-07-20T13-16-35-625Z/shard-merge-back-gate.json"
+}

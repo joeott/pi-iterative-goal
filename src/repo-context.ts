@@ -72,6 +72,8 @@ function truncateText(text: string, maxBytes: number): { text: string; bytes: nu
 function collectFiles(repoRoot: string, startPath: string, maxResults: number): string[] {
   const absoluteStart = startPath === "." ? fs.realpathSync(repoRoot) : resolveContainedPath(repoRoot, startPath);
   const files: string[] = [];
+  // SYNC REQUIREMENT (C2-OUS-007): this ignore set mirrors listRepoFiles in
+  // src/kernel/sharder.ts — change one, change both.
   const ignoredDirs = new Set([".git", "node_modules", "dist", ".pi"]);
 
   function walk(current: string): void {
@@ -147,8 +149,10 @@ function searchFallback(repoRoot: string, params: RepoContextParams, maxResults:
 function globLikeMatch(file: string, glob: string): boolean {
   const escaped = glob
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*\//g, "GLOBSTAR_SLASH")
     .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*");
+    .replace(/\*/g, "[^/]*")
+    .replace(/GLOBSTAR_SLASH/g, "(?:.*/)?");
   return new RegExp(`^${escaped}$`).test(file);
 }
 

@@ -7,6 +7,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as path from "node:path";
 import { Type } from "typebox";
 import { shouldBlockAwsShellCommand } from "./aws-cli.js";
 import { shouldBlockGitShellCommand } from "./git.js";
@@ -17,6 +18,7 @@ import { CapabilityBroker } from "./capabilities/broker.js";
 import { commandResource, PolicyEngine } from "./policy/engine.js";
 import { logDebug } from "./logging.js";
 import { attestAction, processModelVisibleText } from "./cyber-runtime.js";
+import { requiresOperatorApproval } from "./safety.js";
 
 function log(msg: string) {
   logDebug("goal_shell", msg);
@@ -32,13 +34,9 @@ const GoalShellParams = Type.Object({
       description: "Brief description of why this command is needed",
     }),
   ),
-  allowDestructive: Type.Optional(
-    Type.Boolean({
-      description:
-        "Set to true to allow potentially destructive commands (default: false)",
-      default: false,
-    }),
-  ),
+  approvalToken: Type.Optional(Type.String({
+    description: "Single-use operator approval token bound to this exact destructive command",
+  })),
 });
 
 export interface GoalShellDetails {
@@ -63,8 +61,8 @@ export function registerGoalShellTool(
     label: "Goal Shell",
     description: [
       "Run a shell command with safety allowlists. Use this instead of bash",
-      "when bash may be unavailable. Destructive commands require explicit",
-      "allowDestructive=true and operator approval.",
+      "when bash may be unavailable. Commands outside the narrow read-only allowlist require an exact,",
+      "unexpired, single-use operator approval token.",
     ].join(" "),
     promptSnippet: "Run allowlisted shell commands for the iterative goal loop",
     promptGuidelines: [
@@ -74,11 +72,15 @@ export function registerGoalShellTool(
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const command = params.command as string;
-      const cwd = (params.cwd as string | undefined) ?? ctx.cwd;
+      const requestedCwd = (params.cwd as string | undefined) ?? ctx.cwd;
+      // Pi accepts relative cwd values, but approval capabilities are bound to
+      // one canonical absolute spelling so aliases cannot widen their scope.
+      const cwd = path.resolve(ctx.cwd, requestedCwd);
       const purpose = params.purpose as string | undefined;
-      const allowDestructive = (params.allowDestructive as boolean) ?? false;
+      const approvalToken = params.approvalToken as string | undefined;
+      const privileged = requiresOperatorApproval(command);
 
-      log(`exec: ${command} (cwd=${cwd}, destructive=${allowDestructive})`);
+      log(`exec: ${command} (cwd=${cwd}, privileged=${privileged})`);
 
       const commandSpec = commandSpecFromShellWords(command);
       if (!commandSpec) {
@@ -156,13 +158,57 @@ export function registerGoalShellTool(
         resource: commandResource(commandSpec.executable, commandSpec.argv),
         input: {
           ...commandSpec,
-          allowDestructive,
+          // This preflight bit says only that the command has an approval
+          // path. The capability itself is consumed immediately below before
+          // broker execution.
+          allowDestructive: privileged,
           allowGitFinalization: getFinalizationPolicy?.()?.allowGitFinalization === true,
         },
         purpose: purpose ?? "goal_shell command",
-        risk: allowDestructive ? "write" : "read",
+        risk: privileged ? "write" : "read",
         dataClassification: "internal",
       } as const;
+      const preflight = policy.decide(actionRequest);
+      if (preflight.result !== "allow") {
+        return {
+          content: [{ type: "text" as const, text: `SAFETY BLOCK: ${preflight.reason}` }],
+          details: {
+            exitCode: null, killed: false, truncated: false, allowed: false,
+            command, cwd, purpose, safetyCheckResult: preflight.reason,
+          } satisfies GoalShellDetails,
+        };
+      }
+
+      // Consume only after every deterministic policy deny rule passes, but
+      // still before the broker can execute the effect. A rejected command
+      // must not burn a valid single-use operator capability.
+      let privilegedApproved = false;
+      if (privileged) {
+        if (!approvalToken || !stateManager) {
+          return {
+            content: [{ type: "text" as const, text: "SAFETY BLOCK: privileged command requires an operator-approved single-use token." }],
+            details: {
+              exitCode: null, killed: false, truncated: false, allowed: false,
+              command, cwd, purpose, safetyCheckResult: "operator_approval_required",
+            } satisfies GoalShellDetails,
+          };
+        }
+        const consumed = stateManager.consumeApproval(approvalToken, command, cwd);
+        if (!consumed.ok) {
+          return {
+            content: [{ type: "text" as const, text: `SAFETY BLOCK: ${consumed.reason}` }],
+            details: {
+              exitCode: null, killed: false, truncated: false, allowed: false,
+              command, cwd, purpose, safetyCheckResult: consumed.reason,
+            } satisfies GoalShellDetails,
+          };
+        }
+        privilegedApproved = true;
+      }
+
+      // Keep the post-consumption request explicit for future policy changes.
+      // Today it is byte-for-byte the preflight request for destructive work.
+      if (privilegedApproved !== privileged) throw new Error("privileged execution approval invariant failed");
       const action = await broker.invoke(actionRequest, async () => pi.exec(commandSpec.executable, commandSpec.argv, {
           cwd,
           signal: signal ?? undefined,

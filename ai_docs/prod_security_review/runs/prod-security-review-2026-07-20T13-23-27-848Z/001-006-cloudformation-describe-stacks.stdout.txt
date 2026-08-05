@@ -1,0 +1,176 @@
+{
+    "Stacks": [
+        {
+            "StackId": "arn:aws:cloudformation:us-east-1:371292405073:stack/UnifyOcrNemotronStack/1ed36380-63b0-11f1-97c0-0afff9958c19",
+            "StackName": "UnifyOcrNemotronStack",
+            "ChangeSetId": "arn:aws:cloudformation:us-east-1:371292405073:changeSet/cdk-deploy-change-set/d989eb28-c04e-41e0-a156-e09f342acaa7",
+            "Description": "Unify OCR Nemotron - no-NAT ECS EC2 GPU workers for SQS-driven OCR processing (Production)",
+            "Parameters": [
+                {
+                    "ParameterKey": "SsmParameterValueawsserviceecsoptimizedamiamazonlinux2023gpurecommendedimageidC96584B6F00A464EAD1953AFF4B05118Parameter",
+                    "ParameterValue": "/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id",
+                    "ResolvedValue": "ami-0d72b5af7567ef49a"
+                },
+                {
+                    "ParameterKey": "BootstrapVersion",
+                    "ParameterValue": "/cdk-bootstrap/hnb659fds/version",
+                    "ResolvedValue": "30"
+                }
+            ],
+            "CreationTime": "2026-06-09T03:05:51.196000+00:00",
+            "LastUpdatedTime": "2026-07-15T02:16:51.830000+00:00",
+            "RollbackConfiguration": {},
+            "StackStatus": "UPDATE_COMPLETE",
+            "DisableRollback": false,
+            "NotificationARNs": [],
+            "Capabilities": [
+                "CAPABILITY_IAM",
+                "CAPABILITY_NAMED_IAM",
+                "CAPABILITY_AUTO_EXPAND"
+            ],
+            "Outputs": [
+                {
+                    "OutputKey": "NemotronBServiceName",
+                    "OutputValue": "nemotron-ocr-b-production",
+                    "Description": "B-line Nemotron OCR ECS service name"
+                },
+                {
+                    "OutputKey": "NemotronInternalAlbDnsName",
+                    "OutputValue": "internal-unify-nemotron-production-570338425.us-east-1.elb.amazonaws.com",
+                    "Description": "Private internal ALB DNS for Nemotron Parse v2 health and OpenAI-compatible validation calls"
+                },
+                {
+                    "OutputKey": "NemotronRuntimeSubnetIds",
+                    "OutputValue": "subnet-064ca6900be0c498b,subnet-01f356c4f298c6532",
+                    "Description": "Explicit no-NAT runtime subnet ids used by Nemotron OCR"
+                },
+                {
+                    "OutputKey": "NemotronInternalAlbSecurityGroupId",
+                    "OutputValue": "sg-0685fe4e70225feca",
+                    "Description": "Security group for private Nemotron Parse v2 ALB"
+                },
+                {
+                    "OutputKey": "NemotronValidationQueueOnly",
+                    "OutputValue": "true",
+                    "Description": "Whether the worker polls only the isolated Nemotron validation queue"
+                },
+                {
+                    "OutputKey": "NemotronParseRepositoryUri",
+                    "OutputValue": "371292405073.dkr.ecr.us-east-1.amazonaws.com/unify/nemotron-parse",
+                    "Description": "Private ECR repository URI for mirrored Nemotron Parse 2 NIM images"
+                },
+                {
+                    "OutputKey": "NemotronEndpointOnlyMode",
+                    "OutputValue": "false",
+                    "Description": "Whether the OCR worker idles so the private ALB can validate the NIM sidecar without consuming SQS"
+                },
+                {
+                    "OutputKey": "NemotronValidationDlqUrl",
+                    "OutputValue": "https://sqs.us-east-1.amazonaws.com/371292405073/unify-nemotron-validation-dlq-production",
+                    "Description": "DLQ for isolated Nemotron Parse validation canaries"
+                },
+                {
+                    "OutputKey": "NemotronBInternalAlbDnsName",
+                    "OutputValue": "internal-unify-nemotron-b-production-1317849086.us-east-1.elb.amazonaws.com",
+                    "Description": "Private internal ALB DNS for B-line Nemotron Parse v2"
+                },
+                {
+                    "OutputKey": "NemotronEndpointSecurityGroupId",
+                    "OutputValue": "sg-08b5a1546c4d917c4",
+                    "Description": "Imported PrivateLink endpoint security group used by Nemotron OCR"
+                },
+                {
+                    "OutputKey": "NemotronClusterName",
+                    "OutputValue": "unify-ocr-nemotron-production",
+                    "Description": "Nemotron OCR ECS cluster name"
+                },
+                {
+                    "OutputKey": "NemotronActiveRuntimeQueueNames",
+                    "OutputValue": "nemotron-validation",
+                    "Description": "Active queue names polled by the Nemotron OCR worker"
+                },
+                {
+                    "OutputKey": "NemotronValidationQueueUrl",
+                    "OutputValue": "https://sqs.us-east-1.amazonaws.com/371292405073/unify-nemotron-validation-production",
+                    "Description": "Isolated SQS queue for bounded Nemotron Parse validation canaries"
+                },
+                {
+                    "OutputKey": "NemotronSecondLineEnabled",
+                    "OutputValue": "true",
+                    "Description": "Whether the independent B-line Nemotron OCR service/ASG is deployed"
+                },
+                {
+                    "OutputKey": "NemotronServiceName",
+                    "OutputValue": "nemotron-ocr-production",
+                    "Description": "Nemotron OCR ECS service name"
+                },
+                {
+                    "OutputKey": "NemotronMirrorBuildProjectName",
+                    "OutputValue": "unify-nemotron-parse-mirror-production",
+                    "Description": "CodeBuild project that mirrors connected Nemotron Parse 2 NIM image into private ECR"
+                }
+            ],
+            "RoleARN": "arn:aws:iam::371292405073:role/cdk-hnb659fds-cfn-exec-role-371292405073-us-east-1",
+            "Tags": [
+                {
+                    "Key": "DeprecationClass",
+                    "Value": "active-canonical"
+                },
+                {
+                    "Key": "DeploymentCohort",
+                    "Value": "cas-ocr-v2"
+                },
+                {
+                    "Key": "MigrationPath",
+                    "Value": "cas-native"
+                },
+                {
+                    "Key": "NetworkPosture",
+                    "Value": "no-nat"
+                },
+                {
+                    "Key": "RuntimePosture",
+                    "Value": "no-nat"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "Production"
+                },
+                {
+                    "Key": "Service",
+                    "Value": "Unify"
+                },
+                {
+                    "Key": "CasAlignment",
+                    "Value": "canonical-rds-s3"
+                },
+                {
+                    "Key": "OcrRuntime",
+                    "Value": "nemotron-parse-v2"
+                },
+                {
+                    "Key": "Domain",
+                    "Value": "OCR-Nemotron"
+                },
+                {
+                    "Key": "Provider",
+                    "Value": "nemotron_parse_2"
+                },
+                {
+                    "Key": "cost-center",
+                    "Value": "ocr-nemotron"
+                }
+            ],
+            "EnableTerminationProtection": false,
+            "DriftInformation": {
+                "StackDriftStatus": "NOT_CHECKED"
+            },
+            "LastOperations": [
+                {
+                    "OperationType": "UPDATE_STACK",
+                    "OperationId": "ec71cfcb-5f18-4d60-aefb-2b17b9d5255e"
+                }
+            ]
+        }
+    ]
+}

@@ -5,3 +5,9 @@ debug.log
 .env
 .env.*
 !.env.example
+
+# Pi runtime state is local. Admit only the tracked project /goal prompt.
+.pi/*
+!.pi/prompts/
+.pi/prompts/*
+!.pi/prompts/goal.md

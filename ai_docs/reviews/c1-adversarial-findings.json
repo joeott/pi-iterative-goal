@@ -1,0 +1,182 @@
+[
+  {
+    "id": "C1-ADV-001",
+    "severity": "high",
+    "category": "registry-integrity",
+    "requirementIds": ["C1"],
+    "message": "Duplicate caller-provided task ids corrupted the write-scope registry and ledger.",
+    "location": "src/subagents.ts:761, src/agents/pool.ts:91,131, src/state.ts:1022",
+    "status": "resolved",
+    "resolution": "findDuplicateTaskId() rejects dupes in-batch and against in-flight tasks (ledger running + pool.isTaskActive) with structured result:'duplicate-task-id'. Test 47."
+  },
+  {
+    "id": "C1-ADV-002",
+    "severity": "high",
+    "category": "ledger-honesty",
+    "requirementIds": ["C1", "S4"],
+    "message": "Ledger recorded the detected backend, not the executed one.",
+    "location": "src/subagents.ts:487-490,508, src/state.ts:1005-1015",
+    "status": "resolved",
+    "resolution": "task.backend/state.swarm.backend always record the executed engine (pi-subprocess); detection rides on task.detectedBackend/swarm.detectedBackend/details.detectedBackend. Test 46."
+  },
+  {
+    "id": "C1-ADV-003",
+    "severity": "high",
+    "category": "cross-run-pollution",
+    "requirementIds": ["C1"],
+    "message": "dispatchOne captured the shared state manager: old batch events wrote into new runs; prune-on-access SIGTERMed live in-flight writers.",
+    "location": "src/subagents.ts:118-122,395, src/ui/goal-commands.ts:233-247, src/state.ts:1005-1040",
+    "status": "resolved",
+    "resolution": "Records tagged with dispatch-time runId; recordSubagent* no-op with warning on mismatch; shutdownRunAgentPools wired into lifecycle markSucceeded/markCompletedBlocked and /goal-reset; pool acquired after the gate. Test 53."
+  },
+  {
+    "id": "C1-ADV-004",
+    "severity": "medium",
+    "category": "cancellation",
+    "requirementIds": ["C1", "S5.4"],
+    "message": "Cancelling a queued task didn't stop it; it executed and was then labeled cancelled.",
+    "location": "src/agents/pool.ts:185-190, src/subagents.ts:609-614",
+    "status": "resolved",
+    "resolution": "submit() refuses cancelled ids; cancel() on a queued id pre-empts admission; ledger records cancelled_before_admission and the task never executes. Test 50."
+  },
+  {
+    "id": "C1-ADV-005",
+    "severity": "medium",
+    "category": "misleading-success",
+    "requirementIds": ["C1"],
+    "message": "/goal-swarm-cancel reported success for nonexistent task ids; zero smoke coverage.",
+    "location": "src/subagents.ts:141-146, src/ui/goal-commands.ts:161-181",
+    "status": "resolved",
+    "resolution": "pool.cancel returns running|queued|unknown; command reports each case distinctly. Test 51."
+  },
+  {
+    "id": "C1-ADV-006",
+    "severity": "medium",
+    "category": "lease-expiry",
+    "requirementIds": ["C1", "S5.4"],
+    "message": "§5.4 lease expiry unenforced: CapabilityLease.expiresAt was dead metadata.",
+    "location": "src/policy/engine.ts:236-244, src/agents/pool.ts:110-113",
+    "status": "resolved",
+    "resolution": "policy engine honors input.leaseTtlMs; dispatch passes budget.timeoutMs so lease expiry == budget timeout; enforcement = pool SIGTERM + scope release, documented in run-pool.ts; maxAttempts retry deferred (documented)."
+  },
+  {
+    "id": "C1-ADV-007",
+    "severity": "medium",
+    "category": "contract-drift",
+    "requirementIds": ["C1"],
+    "message": "Scalar Scout schema failure discarded the actual findings (stderr preferred over outputText).",
+    "location": "src/agents/pool.ts:136,143-144, src/subagents.ts:~640",
+    "status": "resolved",
+    "resolution": "Schema-validation failure degrades to ok:true + degraded:true with outputText preserved and note in stderr; surfaced as details.degraded. Test 48."
+  },
+  {
+    "id": "C1-ADV-008",
+    "severity": "medium",
+    "category": "misleading-success",
+    "requirementIds": ["C1"],
+    "message": "Test 45 benchmarked AgentPool.map, not the shipped parallel loop; no overlap proof.",
+    "location": "scripts/smoke-goal-harness.mjs (Test 45), src/subagents.ts:607-614",
+    "status": "resolved",
+    "resolution": "Test 45 relabeled dispatch-wall-time-only; Test 49 proves production-loop overlap (2 spawns pending at concurrency:2 before any finish)."
+  },
+  {
+    "id": "C1-ADV-009",
+    "severity": "medium",
+    "category": "flag-bypass",
+    "requirementIds": ["C1"],
+    "message": "Feature flag read from caller-controlled params.cwd.",
+    "location": "src/subagents.ts:395,403",
+    "status": "resolved",
+    "resolution": "loadSwarmConfig reads ctx.cwd only. Test 52: crafted settings in passed cwd cannot enable swarm modes."
+  },
+  {
+    "id": "C1-ADV-010",
+    "severity": "medium",
+    "category": "crash-recovery",
+    "requirementIds": ["C1"],
+    "message": "Crash left tasks running forever in state and on the swarm line.",
+    "location": "src/state.ts:348-358",
+    "status": "resolved",
+    "resolution": "restore() sweeps orphaned running tasks to failed/error:'process_restart' via hash-chained subagent_finished events; replay stays pure. Test 53."
+  },
+  {
+    "id": "C1-ADV-011",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C1"],
+    "message": "Parallel mode re-implemented AgentPool.map inline; map dead in production.",
+    "location": "src/subagents.ts:607-614",
+    "status": "resolved",
+    "resolution": "dispatchAgentTask() extracted to src/agents/run-pool.ts and shared by all modes; parallel keeps an inline loop because each task must gate through the broker (documented); overlap proven by Test 49."
+  },
+  {
+    "id": "C1-ADV-012",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C1"],
+    "message": "Test 40 chain artifact assertion was header-only.",
+    "location": "scripts/smoke-goal-harness.mjs (Test 40)",
+    "status": "resolved",
+    "resolution": "Test 40 now asserts predecessor content (claims payload) in the successor prompt."
+  },
+  {
+    "id": "C1-ADV-013",
+    "severity": "low",
+    "category": "robustness",
+    "requirementIds": ["C1"],
+    "message": "loadSwarmConfig crashed on a settings file containing literal null.",
+    "location": "src/subagents.ts:78-82",
+    "status": "resolved",
+    "resolution": "null guards added in parseProjectSettings."
+  },
+  {
+    "id": "C1-ADV-014",
+    "severity": "low",
+    "category": "contract-drift",
+    "requirementIds": ["C1"],
+    "message": "params.agent silently ignored; fallback backendKind drifted from 'none'.",
+    "location": "src/subagents.ts:752-780,466-473",
+    "status": "resolved",
+    "resolution": "Scalar fallback honors params.agent; backendKind:'none' restored on the no-backend path."
+  },
+  {
+    "id": "C1-ADV-015",
+    "severity": "low",
+    "category": "registry-integrity",
+    "requirementIds": ["C1"],
+    "message": "Pool entry reused without checking cwd.",
+    "location": "src/subagents.ts:124-125",
+    "status": "resolved",
+    "resolution": "Registry keyed by runId+cwd."
+  },
+  {
+    "id": "C1-ADV-016",
+    "severity": "low",
+    "category": "ledger-accuracy",
+    "requirementIds": ["C1"],
+    "message": "One-task parallel batch ledgered as mode parallel.",
+    "location": "src/subagents.ts:559,606",
+    "status": "resolved",
+    "resolution": "One-task parallel/chain normalized to single before any ledger write."
+  },
+  {
+    "id": "C1-ADV-017",
+    "severity": "low",
+    "category": "consistency",
+    "requirementIds": ["C1"],
+    "message": "phase-indicator folded cancelled into failed while /goal-status counted separately.",
+    "location": "src/ui/phase-indicator.ts:121, src/ui/goal-commands.ts:378-388",
+    "status": "resolved",
+    "resolution": "/goal-status folds cancelled into failed (matches indicator); per-status counts kept in details."
+  },
+  {
+    "id": "C1-ADV-018",
+    "severity": "low",
+    "category": "observability",
+    "requirementIds": ["C1", "S6"],
+    "message": "Stateless runId shared one pool across run boundaries with no ledger trace.",
+    "location": "src/subagents.ts:395",
+    "status": "resolved",
+    "resolution": "Stateless calls use a per-call pool shut down in finally — pre-C1 behavior preserved."
+  }
+]

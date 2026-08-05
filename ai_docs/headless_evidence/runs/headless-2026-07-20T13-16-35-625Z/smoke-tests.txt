@@ -1,0 +1,104 @@
+startedAt=2026-07-20T13:16:36.866Z
+finishedAt=2026-07-20T13:16:47.470Z
+command=npm run test
+cwd=/Users/joe/Projects/pi-iterative-goal
+status=0
+signal=
+
+STDOUT:
+
+> pi-iterative-goal@0.1.0 test
+> npm run build && node scripts/smoke-goal-harness.mjs
+
+
+> pi-iterative-goal@0.1.0 build
+> tsc
+
+✓ Test 1: Module imports cleanly, PhaseEventKind includes stale_phase_output_ignored
+✓ Test 2: v1 state migrated to v2 without crash
+✓ Test 3: Stale-write guard rejects mismatched runId, phaseAttemptId, and non-running states
+✓ Test 4: Typed path scopes reject fuzzy allowlist matches
+✓ Test 5: Validation script executes argv checks, records exit codes, and fails closed
+✓ Test 6: Harness meta includes runId + phaseAttemptId nonce
+✓ Test 7: /goal-status --json structure includes lock + evaluator state
+✓ Test 8: Resume prompt carries nonce + tool contract
+✓ Test 9: agent_end synthesis handles plain-string and structured assistant output
+✓ Test 10: goal-status latestArtifact shape is parseable
+✓ Test 11: AWS CLI config, safety classification, and broker policy evidence behave as expected
+✓ Test 12: Resume prompt exposes AWS tool guidance when enabled
+✓ Test 13: Git finalization config and prompt guidance behave as expected
+✓ Test 14: Model allowlist restricts stale/unapproved models
+✓ Test 15: Central policy, broker, and provider manifest contracts validate effects
+✓ Test 16: Isolated writer worktree captures patch without touching main worktree
+✓ Test 17: Event replay reconstructs new run state and rejects hash-chain tampering
+✓ Test 18: New-run replay corruption does not silently reconstruct from stale cache
+✓ Test 19: ReleaseAuthorization is invalidated by a new HEAD
+✓ Test 20: Structured PR body generation includes evidence matrix and authorization
+✓ Test 21: Cyber runtime redaction, IPI wrapping, signing, attestation verification, and CAS route policy work
+✓ Test 22: Durable task plan persists, renders, and blocks evaluator completion while active
+✓ Test 23: Project instruction discovery persists, replays, and renders into prompts
+✓ Test 24: Repo context tool reads, searches, redacts, wraps, and attests evidence
+✓ Test 25: Z.ai GLM 5.2 provider metadata and probe behavior are valid
+✓ Test 26: Provider env materializer gates Secrets Manager writes to the approved control account without printing secrets
+✓ Test 27: Production security review runner parses the handoff, signs evidence, and supports bounded continuous read-only mode
+✓ Test 28: Direct Z.ai GLM-5.2 registers early and is the harness default model
+✓ Test 29: Harness startup dashboard, doctor, mode, and security-review commands register
+✓ Test 30: phase_changed reaches status bar, header, and widget within one 1 Hz tick
+✓ Test 31: {elapsed} advances every second through a 60 s event-silent phase
+✓ Test 32: evaluator_state_updated + task_plan_updated reach chrome; progress is phase/task based
+✓ Test 33: paused run emits zero render calls across ten ticks
+✓ Test 34: phase-indicator.ts is the sole writer of the iterative-goal surface ID and the only setInterval user
+✓ Test 35: registerPhaseIndicator wires session lifecycle, exposes tickOnce(), and tears down the live interval
+✓ Test 36: warm in-process session restart repaints a restored paused run with zero new events
+✓ Test 37: modal dashboard re-reads state in invalidate() and renders Progress: {pct}%
+✓ Test 38: C1 role profiles carry §5.2 budgets, workspaces, and typed output schemas
+✓ Test 39: C1 shardability gate rejects overlapping parallel writers, naming the holding task
+✓ Test 40: C1 shardability demotes shared-context batches to chain and unverifiable batches to single
+✓ Test 41: C1 cross-call write-scope registry rejects collisions and survives call boundaries
+✓ Test 42: C1 subagent_started/finished events carry usage and replay restores in-flight swarm state
+✓ Test 43: C1 swarm status line is additive and renders only with subagent activity
+✓ Test 44: C1 fallback contract intact and swarm modes land flag-off by default
+  benchmark swarm_vs_single corpus=4 latency_ms=25 single_ms=107 parallel_ms=28 speedup=3.82x total_turns=4
+✓ Test 45: C1 dispatch-wall-time unit benchmark recorded (map vs sequential)
+✓ Test 46: C1 ledger records the executed backend; detection is carried separately
+✓ Test 47: C1 duplicate task ids are rejected in-batch and cross-call; registry stays intact
+✓ Test 48: C1 schema-validation failure degrades to ok with prose preserved
+✓ Test 49: C1 production parallel loop overlaps execution up to the concurrency band
+✓ Test 50: C1 queued cancellation pre-empts admission; the task never executes
+✓ Test 51: C1 /goal-swarm-cancel reports unknown ids truthfully and cancels running tasks
+✓ Test 52: C1 swarm flag cannot be enabled via a crafted params.cwd
+✓ Test 53: C1 crash reconciliation fails orphaned running tasks with process_restart
+✓ Test 54: C1 chain binding truncates oversized artifacts and surfaces unresolved ids
+✓ Test 55: C2 worked example reproduces the 3/3 cut at weight 1 with the KL pass executed and confirmed
+✓ Test 56: C2 KL refinement converts a suboptimal prior (cut 5→1); median split enforces balance tolerance
+✓ Test 57: C2 coupling-density check declines fan-out; implement stays single-slice
+✓ Test 58: C2 shard_posted hash-chains, replays, restores, and fails closed on tamper
+✓ Test 59: C2 sharder lands flag-off: no shard_posted, checklist path untouched, transition unchanged
+✓ Test 60: C2 goal_post_shards validates/guards typed plans; plan prompt emits the additive typed contract
+✓ Test 61: C2 Jacobi holds the closed-form P30/P40/P50 Fiedler values to <1e-9 across the operating range
+✓ Test 62: C2 vertex cap declines 201-file plans with a ledgered reason; 200 files still partition
+✓ Test 63: C2 attempt-1 proposal dropped at attempt-2's transition; matching attempt consumes
+✓ Test 64: C2 wide-glob task yields exact-file, pairwise-disjoint shard write scopes
+✓ Test 65: C2 shard_plan_proposed replays into pendingPlan; guards consume it after restart
+✓ Test 66: C3 ranks read persisted usage distributions; no telemetry refuses hard-coded costs (both asserted)
+✓ Test 67: C3 fixture DAG scheduled critical-path-first with exact upward ranks and EFT waits
+✓ Test 68: C3 drift beyond threshold re-ranks unstarted steps only; cadence-bounded, threshold-honest
+✓ Test 69: C3 contract-net fan-out is bounded by the pool cap; awards are targeted and singular
+✓ Test 70: C3 error-cascade monitor flags unverified failed-output fan-out, heals on verification
+✓ Test 71: C3 claim ledger hash-chains, replays, restores, fails closed; indicator renders shards 1/4
+✓ Test 72: C3 executor claims critical-path-first via dispatchAgentTask; flag-off keeps posted order
+✓ Test 73: C3 hook executes a ledgered fan_out plan at the real transition; flag-off is byte-identical
+✓ Test 74: C3 thin/unrelated telemetry and empty candidates all fall back with stated reasons
+✓ Test 75: C3 cascade monitor ignores other cycles/plans; matching scope still flags
+✓ Test 76: C3 contract-only edges feed rank hand-off costs but never gate execution readiness
+✓ Test 77: C3 non-finite/negative usage counters are skipped; cost model and ranks unaffected
+✓ Test 78: C3 restore reconciliation fails orphaned claimed shards with process_restart
+✓ Test 79: C3 shard failure triggers a cadence-guarded re-plan; dependents stay blocked
+✓ Test 80: C4 merge-back flag-off is a ledger-silent no-op (§8.7 rollback)
+✓ Test 81: C4 claim-rank HEFT order, patch-scoped staging, injected clock on verifiedAt
+✓ Test 82: C4 conflict rejection returns shard-d to claimed with taskId:null; branch keeps only verified work
+
+All tests passed. ✓
+
+
+STDERR:

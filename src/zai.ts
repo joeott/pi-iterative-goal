@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { EXACT_MODEL_IDENTITY_API } from "./worker-extension.js";
 
 export const ZAI_PROVIDER = "zai";
 export const ZAI_GLM_5_2_MODEL = "glm-5.2";
@@ -16,6 +17,7 @@ export interface ZaiProbeResult {
   ok: boolean;
   status: number | null;
   model: string;
+  responseModel: string | null;
   baseUrl: string;
   latencyMs: number;
   text: string;
@@ -30,14 +32,19 @@ export function loadZaiLocalEnv(cwd: string, explicitPaths: string[] = []): Load
     const parsed = parseDotEnv(fs.readFileSync(envPath, "utf8"));
     const loadedKeys: string[] = [];
     for (const [key, value] of Object.entries(parsed)) {
-      if (!/^Z_?AI_/i.test(key) && !/^GLM_/i.test(key)) continue;
+      // Local files may supply credentials, never route/model overrides. The
+      // exact endpoint and metadata are code/roster owned.
+      if (key !== "ZAI_API_KEY" && key !== "Z_AI_API_KEY") continue;
       if (isPlaceholderSecret(key, value)) continue;
       if (process.env[key] === undefined) {
         process.env[key] = value;
         loadedKeys.push(key);
       }
     }
-    if (loadedKeys.length > 0) loaded.push({ path: envPath, loadedKeys });
+    // Report every explicit/discovered file that was inspected, even when it
+    // contained only placeholders or forbidden route overrides. This keeps
+    // diagnostics truthful without exposing values.
+    loaded.push({ path: envPath, loadedKeys });
   }
   return loaded;
 }
@@ -54,14 +61,17 @@ function isPlaceholderSecret(key: string, value: string): boolean {
 }
 
 export function registerZaiGlm52Provider(ctx: ExtensionContext | ExtensionCommandContext): LoadedEnvFile[] {
-  const loaded = loadZaiLocalEnv(ctx.cwd);
+  // Runtime launchers inject only approved credential variables. Re-scanning
+  // repository/ancestor/home env files here would let ambient configuration
+  // replace the tracked exact route after models.json loads.
+  const loaded: LoadedEnvFile[] = [];
   const apiKey = process.env.ZAI_API_KEY || process.env.Z_AI_API_KEY;
-  const baseUrl = normalizeBaseUrl(process.env.ZAI_API_BASE_URL || process.env.Z_AI_API_BASE_URL || ZAI_CODING_BASE_URL);
+  const baseUrl = ZAI_CODING_BASE_URL;
   const registerProvider = (ctx.modelRegistry as any).registerProvider;
   if (typeof registerProvider === "function") {
     registerProvider.call(ctx.modelRegistry, ZAI_PROVIDER, {
       name: "Z.ai",
-      api: "openai-completions",
+      api: EXACT_MODEL_IDENTITY_API,
       baseUrl,
       apiKey,
       authHeader: true,
@@ -72,12 +82,13 @@ export function registerZaiGlm52Provider(ctx: ExtensionContext | ExtensionComman
 }
 
 export function registerZaiGlm52ProviderWithPi(pi: ExtensionAPI, cwd = process.cwd()): LoadedEnvFile[] {
-  const loaded = loadZaiLocalEnv(cwd);
+  void cwd;
+  const loaded: LoadedEnvFile[] = [];
   const apiKey = process.env.ZAI_API_KEY || process.env.Z_AI_API_KEY;
-  const baseUrl = normalizeBaseUrl(process.env.ZAI_API_BASE_URL || process.env.Z_AI_API_BASE_URL || ZAI_CODING_BASE_URL);
+  const baseUrl = ZAI_CODING_BASE_URL;
   pi.registerProvider(ZAI_PROVIDER, {
     name: "Z.ai",
-    api: "openai-completions",
+    api: EXACT_MODEL_IDENTITY_API,
     baseUrl,
     apiKey,
     authHeader: true,
@@ -87,11 +98,14 @@ export function registerZaiGlm52ProviderWithPi(pi: ExtensionAPI, cwd = process.c
 }
 
 export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
+  // Keep the optional argument for API compatibility, but never honor a
+  // caller-supplied endpoint in the exact production model definition.
+  void baseUrl;
   return {
     id: ZAI_GLM_5_2_MODEL,
     name: "GLM-5.2",
-    api: "openai-completions",
-    baseUrl: normalizeBaseUrl(baseUrl),
+    api: EXACT_MODEL_IDENTITY_API,
+    baseUrl: ZAI_CODING_BASE_URL,
     reasoning: true,
     input: ["text"] as ("text" | "image")[],
     cost: {
@@ -101,7 +115,7 @@ export function zaiGlm52Model(baseUrl = ZAI_CODING_BASE_URL) {
       cacheWrite: 0,
     },
     contextWindow: 1_000_000,
-    maxTokens: 131_072,
+    maxTokens: 32_768,
     compat: {
       supportsDeveloperRole: false,
       thinkingFormat: "zai",
@@ -119,13 +133,14 @@ export async function probeZaiGlm52(params: {
 }): Promise<ZaiProbeResult> {
   const envFiles = loadZaiLocalEnv(params.cwd, params.explicitEnvFiles ?? []);
   const apiKey = process.env.ZAI_API_KEY || process.env.Z_AI_API_KEY;
-  const baseUrl = normalizeBaseUrl(process.env.ZAI_API_BASE_URL || process.env.Z_AI_API_BASE_URL || ZAI_CODING_BASE_URL);
+  const baseUrl = ZAI_CODING_BASE_URL;
   const started = Date.now();
   if (!apiKey) {
     return {
       ok: false,
       status: null,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel: null,
       baseUrl,
       latencyMs: Date.now() - started,
       text: "",
@@ -157,20 +172,32 @@ export async function probeZaiGlm52(params: {
     });
     const body = await response.text();
     let text = body.slice(0, 500);
+    let responseModel: string | null = null;
     try {
       const parsed = JSON.parse(body);
       text = parsed?.choices?.[0]?.message?.content ?? text;
+      responseModel = typeof parsed?.model === "string" ? parsed.model : null;
     } catch {
       // Keep raw snippet.
     }
+    const identityError = responseModel === null
+      ? "response_model_identity_missing"
+      : responseModel === ZAI_GLM_5_2_MODEL
+        ? null
+        : "response_model_identity_mismatch";
     return {
-      ok: response.ok && (/\bOK\b/i.test(text) || statusLooksResponsive(response.status, text)),
+      ok: response.ok && identityError === null && (/\bOK\b/i.test(text) || statusLooksResponsive(response.status, text)),
       status: response.status,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel,
       baseUrl,
       latencyMs: Date.now() - started,
       text,
-      error: response.ok ? null : `HTTP ${response.status}: ${text.slice(0, 200)}`,
+      error: !response.ok
+        ? `HTTP ${response.status}: ${text.slice(0, 200)}`
+        : identityError === null
+          ? null
+          : `Exact Z.ai response identity failed closed: ${identityError}`,
       envFiles,
     };
   } catch (err) {
@@ -178,6 +205,7 @@ export async function probeZaiGlm52(params: {
       ok: false,
       status: null,
       model: ZAI_GLM_5_2_MODEL,
+      responseModel: null,
       baseUrl,
       latencyMs: Date.now() - started,
       text: "",
@@ -228,8 +256,4 @@ function parseDotEnv(content: string): Record<string, string> {
     parsed[key] = value;
   }
   return parsed;
-}
-
-function normalizeBaseUrl(raw: string): string {
-  return raw.replace(/\/chat\/completions\/?$/, "").replace(/\/+$/, "");
 }

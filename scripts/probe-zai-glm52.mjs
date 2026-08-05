@@ -33,6 +33,7 @@ console.log("probe_zai_glm52");
 console.log(`  ok: ${String(result.ok)}`);
 console.log(`  status: ${result.status ?? "none"}`);
 console.log(`  model: ${result.model}`);
+console.log(`  response_model: ${result.responseModel ?? "missing"}`);
 console.log(`  base_url: ${result.baseUrl}`);
 console.log(`  latency_ms: ${result.latencyMs}`);
 console.log(`  env_files_loaded: ${result.envFiles.length}`);

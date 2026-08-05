@@ -1,0 +1,72 @@
+[
+  {
+    "id": "C0-ADV-001",
+    "severity": "medium",
+    "category": "stale-write",
+    "requirementIds": ["C0", "A1"],
+    "message": "Warm in-process session restart (Pi session_start reasons new/resume/fork/reload) left status bar and widget blank for restored non-running runs: restore() replays without appending, so version never bumped, and the ticker's lastVersion persisted across sessions in the same process.",
+    "location": "src/ui/phase-indicator.ts:284-293, src/state.ts:1168",
+    "status": "resolved",
+    "resolution": "Ticker is recreated inside every session_start handler (fresh lastVersion=-1) so the initial push repaints on warm restarts. Smoke Test 36 covers pause + second session_start({reason:resume}) repaint with unchanged version."
+  },
+  {
+    "id": "C0-ADV-002",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C0"],
+    "message": "Test 35 called handle.stop() before invoking the session_shutdown handler, so the handler's clearInterval ran with interval===null; teardown was existence-tested, not behavior-tested.",
+    "location": "scripts/smoke-goal-harness.mjs:2386-2387",
+    "status": "resolved",
+    "resolution": "Test 35 now invokes session_shutdown while the interval is live, then asserts zero interval-driven renders after a 1.2s wait."
+  },
+  {
+    "id": "C0-ADV-003",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C0", "A6"],
+    "message": "Test 34 sole-writer regex matched only double-quoted literal setStatus/setWidget calls; single quotes, template literals, or identifier-bound surface IDs evaded it.",
+    "location": "scripts/smoke-goal-harness.mjs:2334",
+    "status": "resolved",
+    "resolution": "Regex now covers all quote styles; added a bare-string grep across src/** with explicit whitelist (phase-indicator.ts writer; state.ts/logging.ts/goal-commands.ts .pi path segments)."
+  },
+  {
+    "id": "C0-ADV-004",
+    "severity": "low",
+    "category": "info",
+    "requirementIds": ["C0", "A1"],
+    "message": "Framework behavior verified: setExtensionHeader re-invokes the factory on every call, so the per-tick same-factory re-push genuinely re-renders the header. Residual corner: a setHeader call during early initialization is silently dropped and only self-heals while a run is active.",
+    "location": "src/harness-ui.ts:302",
+    "status": "resolved",
+    "resolution": "No fix required; verified against pi-coding-agent interactive-mode.js setExtensionHeader."
+  },
+  {
+    "id": "C0-ADV-005",
+    "severity": "low",
+    "category": "spec-deviation",
+    "requirementIds": ["C0"],
+    "message": "Widget line 2 rendered an extra status icon not present in sec04 §4.3's fixed format table.",
+    "location": "src/ui/phase-indicator.ts:156",
+    "status": "resolved",
+    "resolution": "Status icon dropped; widget line 2 is now exactly `C{cycle} {icon} {phase} · {status}`."
+  },
+  {
+    "id": "C0-ADV-006",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C0", "A5"],
+    "message": "A5's rendered percent was asserted for the calculateProgress formula but not for its placement; no smoke test asserted the modal dashboard output contains 'Progress: N%'.",
+    "location": "src/dashboard.ts:88-93",
+    "status": "resolved",
+    "resolution": "DashboardComponent exported; Test 37 asserts the rendered modal line shows Progress: 0% then 75% after setPhase(validate)+invalidate()."
+  },
+  {
+    "id": "C0-ADV-007",
+    "severity": "low",
+    "category": "info",
+    "requirementIds": ["C0"],
+    "message": "Spec-text nit: sec04 §4.2 says goal-reset empty state follows a status_changed event, but stateManager.clear() appends no event; the imperative clearPhaseSurfaces path is the actual mechanism.",
+    "location": "docs/plan/pi-iterative-goal-deployment-plan_sec04.md",
+    "status": "resolved",
+    "resolution": "Spec wording inaccuracy recorded; code behavior correct."
+  }
+]

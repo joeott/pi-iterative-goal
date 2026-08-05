@@ -1,0 +1,203 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "instructions": [
+    "goal.md",
+    "northstar.md",
+    "state.md",
+    "learnings.md"
+  ],
+  "model": "zai/glm-5.2",
+  "small_model": "cerebras/gpt-oss-120b",
+  "enabled_providers": [
+    "zai",
+    "fireworks",
+    "openrouter",
+    "cerebras"
+  ],
+  "provider": {
+    "zai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "pi-iterative-goal zai",
+      "options": {
+        "baseURL": "https://api.z.ai/api/coding/paas/v4",
+        "apiKey": "{env:ZAI_API_KEY}"
+      },
+      "models": {
+        "glm-5.2": {
+          "name": "zai_glm_5_2",
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          }
+        }
+      }
+    },
+    "fireworks": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "pi-iterative-goal fireworks",
+      "options": {
+        "baseURL": "https://api.fireworks.ai/inference/v1",
+        "apiKey": "{env:FIREWORKS_API_KEY}"
+      },
+      "models": {
+        "accounts/fireworks/models/glm-5p2": {
+          "name": "fireworks_glm_5_2_max",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "max"
+          }
+        },
+        "accounts/fireworks/routers/glm-5p2-fast": {
+          "name": "fireworks_glm_5_2_fast",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        },
+        "accounts/fireworks/models/kimi-k3": {
+          "name": "fireworks_kimi_k3",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        },
+        "accounts/fireworks/routers/kimi-k3-fast": {
+          "name": "fireworks_kimi_k3_fast",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        },
+        "accounts/fireworks/models/deepseek-v4-flash-0731": {
+          "name": "fireworks_deepseek_v4_flash",
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high"
+          }
+        }
+      }
+    },
+    "openrouter": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "pi-iterative-goal openrouter",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {
+        "moonshotai/kimi-k3": {
+          "name": "openrouter_kimi_k3",
+          "reasoning": true,
+          "limit": {
+            "context": 1048576,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high",
+            "provider": {
+              "allow_fallbacks": false
+            }
+          }
+        },
+        "anthropic/claude-sonnet-5": {
+          "name": "openrouter_claude_sonnet_5",
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high",
+            "provider": {
+              "allow_fallbacks": false
+            }
+          }
+        },
+        "anthropic/claude-fable-5": {
+          "name": "openrouter_claude_fable_5",
+          "reasoning": true,
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          },
+          "options": {
+            "reasoningEffort": "high",
+            "provider": {
+              "allow_fallbacks": false
+            }
+          }
+        }
+      }
+    },
+    "cerebras": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "pi-iterative-goal cerebras",
+      "options": {
+        "baseURL": "https://api.cerebras.ai/v1",
+        "apiKey": "{env:CEREBRAS_API_KEY}"
+      },
+      "models": {
+        "gpt-oss-120b": {
+          "name": "cerebras_gpt_oss_120b",
+          "reasoning": false,
+          "limit": {
+            "context": 128000,
+            "output": 32000
+          }
+        },
+        "zai-glm-4.7": {
+          "name": "cerebras_glm_4_7",
+          "reasoning": false,
+          "limit": {
+            "context": 131072,
+            "output": 32768
+          }
+        },
+        "gemma-4-31b": {
+          "name": "cerebras_gemma_4_31b",
+          "reasoning": false,
+          "limit": {
+            "context": 128000,
+            "output": 32000
+          }
+        }
+      }
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 12000
+  },
+  "watcher": {
+    "ignore": [
+      ".git/",
+      "node_modules/",
+      "dist/",
+      ".pi/iterative-goal/managed/",
+      "*.log"
+    ]
+  }
+}

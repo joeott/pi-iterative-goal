@@ -1,0 +1,92 @@
+[
+  {
+    "id": "C0-OUS-001",
+    "severity": "medium",
+    "category": "pass-through-abstraction",
+    "requirementIds": ["C0"],
+    "message": "headerFactory hot-potato: /goal-reset pulled the factory out of the PhaseIndicatorHandle via getHeaderFactory() only to hand it back to clearPhaseSurfaces(); getHeaderFactory existed on the public interface solely for this one consumer.",
+    "location": "src/ui/goal-commands.ts:224, src/ui/phase-indicator.ts:191-196,263-264",
+    "status": "resolved",
+    "resolution": "getHeaderFactory() deleted from the public interface; handle.clearSurfaces(ctx) closes over the module-local headerFactory; clearPhaseSurfaces is now a private module function."
+  },
+  {
+    "id": "C0-OUS-002",
+    "severity": "low",
+    "category": "dead-code",
+    "requirementIds": ["C0"],
+    "message": "Dead imports PhaseArtifact and PHASE_ORDER in dashboard.ts post-refactor.",
+    "location": "src/dashboard.ts:15-16",
+    "status": "resolved",
+    "resolution": "Imports deleted."
+  },
+  {
+    "id": "C0-OUS-003",
+    "severity": "low",
+    "category": "duplication",
+    "requirementIds": ["C0"],
+    "message": "clearPhaseSurfaces and the null-state branch of pushSurfaces duplicated the same three clear calls.",
+    "location": "src/ui/phase-indicator.ts:191-196,233-238",
+    "status": "resolved",
+    "resolution": "Single private clearPhaseSurfaces helper now serves both call sites."
+  },
+  {
+    "id": "C0-OUS-004",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C0"],
+    "message": "interval.unref?.() lacked the mandated WHY comment.",
+    "location": "src/ui/phase-indicator.ts:292",
+    "status": "resolved",
+    "resolution": "Added: UI-only timer must not pin the Node event loop in headless/one-shot sessions."
+  },
+  {
+    "id": "C0-OUS-005",
+    "severity": "low",
+    "category": "comments",
+    "requirementIds": ["C0"],
+    "message": "Comment at clearPhaseSurfaces misdescribed the reset mechanism.",
+    "location": "src/ui/phase-indicator.ts:190",
+    "status": "resolved",
+    "resolution": "Reworded: clear() appends no event, so the version feed never fires after /goal-reset — hence the imperative clear."
+  },
+  {
+    "id": "C0-OUS-006",
+    "severity": "low",
+    "category": "api-surface",
+    "requirementIds": ["C0"],
+    "message": "Two teardown paths: session_shutdown inlined clearInterval while handle.stop() (test-only caller) did more.",
+    "location": "src/ui/phase-indicator.ts:295-310",
+    "status": "resolved",
+    "resolution": "Single teardown() body shared by the session_shutdown handler and stop()."
+  },
+  {
+    "id": "C0-OUS-007",
+    "severity": "low",
+    "category": "speculative-generality",
+    "requirementIds": ["C0"],
+    "message": "phaseIndicator?: PhaseIndicatorHandle optional parameter in three register* signatures was always provided by index.ts.",
+    "location": "src/index.ts:155-164",
+    "status": "resolved",
+    "resolution": "Parameter now required in registerGoalRuntimeCommands, registerDashboardCommands, registerHarnessUi; ?. chains dropped; Test 29 passes a stub handle."
+  },
+  {
+    "id": "C0-OUS-008",
+    "severity": "low",
+    "category": "broken-gate",
+    "requirementIds": ["C0", "A5"],
+    "message": "A5 rendered-percent evidence gap: nothing asserted the modal's 'Progress: {pct}%' line renders; DashboardComponent was not exported.",
+    "location": "scripts/smoke-goal-harness.mjs (Test 32), src/dashboard.ts:91",
+    "status": "resolved",
+    "resolution": "DashboardComponent exported; Test 37 asserts the rendered line."
+  },
+  {
+    "id": "C0-OUS-009",
+    "severity": "info",
+    "category": "scope-note",
+    "requirementIds": ["C0"],
+    "message": "Static HarnessDashboard lost its 'Active goal' line despite §4.2(d) declaring it out of scope; deletion is consistent with G6 single-ownership but is a visible behavior change beyond the letter of the spec.",
+    "location": "src/harness-ui.ts:302-343",
+    "status": "resolved",
+    "resolution": "Accepted as scope-creep in the right direction; recorded here as the changelog note."
+  }
+]

@@ -240,7 +240,11 @@ export class PolicyEngine {
         effect: request.effect,
         resource: request.resource,
         maxUses: 1,
-        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+        // Callers may bind the lease TTL to their own enforcement window via
+        // input.leaseTtlMs (e.g. subagent dispatch aligns it with the task
+        // budget timeoutMs, so lease expiry == budget timeout — enforced by
+        // the pool's SIGTERM + write-scope release).
+        expiresAt: new Date(Date.now() + leaseTtlMs(request.input)).toISOString(),
       },
     };
 
@@ -252,6 +256,13 @@ export class PolicyEngine {
 
 function inputFlag(input: unknown, name: string): boolean {
   return !!input && typeof input === "object" && (input as Record<string, unknown>)[name] === true;
+}
+
+function leaseTtlMs(input: unknown): number {
+  const value = input && typeof input === "object"
+    ? (input as Record<string, unknown>).leaseTtlMs
+    : null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 5 * 60_000;
 }
 
 function stringInput(input: unknown, name: string): string | null {
