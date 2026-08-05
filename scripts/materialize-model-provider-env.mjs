@@ -263,7 +263,7 @@ function getAwsIdentity(profile) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.status !== 0) return { ok: false, account: null, reason: result.stderr.trim().split(/\r?\n/).at(-1) ?? "sts failed" };
+  if (result.status !== 0) return { ok: false, account: null, reason: (result.stderr.trim().split(/\r?\n/).slice(-6).join(" | ")) || (result.error ? String(result.error) : "sts failed") };
   try {
     const parsed = JSON.parse(result.stdout);
     return { ok: true, account: parsed.Account, reason: null };
@@ -289,7 +289,7 @@ function putSecret(name, envValues, awsRegion, profile) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    if (result.status !== 0) return { ok: false, reason: result.stderr.trim().split(/\r?\n/).at(-1) ?? "aws cli failed" };
+    if (result.status !== 0) return { ok: false, reason: (result.stderr.trim().split(/\r?\n/).slice(-6).join(" | ")) || (result.error ? String(result.error) : "aws cli failed") };
     return { ok: true, reason: null };
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
